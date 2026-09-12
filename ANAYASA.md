@@ -1,4 +1,4 @@
-# 📜 ANAYASA v11 (SON) — BRN Teknoloji ERP Çalışma Sistemi
+# 📜 ANAYASA v12 (SON) — BRN Teknoloji ERP Çalışma Sistemi
 
 > Tek geçerli kaynak bu dosyadır.
 
@@ -8,22 +8,27 @@
 
 > **"Kalıcı zipsiz kural" diye bir şey YOKTUR ve hiç olmadı.**
 > KOD / VERİ MODELİ / İŞ MANTIĞI / ROTA / DAVRANIŞ / GÜVENLİK değiştiren HER paket
-> (D009 ve sonrası çoğu paket) için:
->
-> **KÖPRÜ güncel kaynak kodu ZIP olarak hazırlar → GM1 zip'i indirir, testleri
-> BİZZAT çalıştırır, kodu/DB'yi inceler → SONRA karar verir.**
->
-> Metin/raw-link yalnızca **SAF DOKÜMANTASYON** paketlerinde (kod/veri/mantık
-> değişikliği YOK — örn. D008) yeterlidir; bu bir İSTİSNADIR, KURAL DEĞİLDİR.
->
-> *Not: "zipsiz kural" ifadesi, köprünün bir ara dönem yazdığı hatalı bir nottan
-> kaynaklandı; GM1 bunu reddetti ve v10'dan beri doğru kural yukarıdaki gibidir.
-> Bu maddeyi hiçbir belge geçersiz kılamaz.*
+> (D009 ve sonrası çoğu paket) için: **ZIP teslim edilir → GM1 testleri BİZZAT çalıştırır.**
+> Metin/raw-link yalnızca **SAF DOKÜMANTASYON** paketlerinde yeterlidir (istisna).
 
-**ZIP formatı (standart):** sansürlü (gerçek isim → `MÜŞTERİ-A/B`, marka →
-`MARKA-A/B/C`, belge no → `BELGE-NNN`, tutar → demo) + demo seed'li DB + testler
-tek zip içinde + **MD5/SHA256**. PNG/resim zip'e GİRMEZ. Ayrıca ek TXT kanıt
-paketi İSTENMEZ (zip yeterli — GM1 kendi testini kendisi koşturur).
+**ZIP formatı (standart):** sansürlü (gerçek isim → `MÜŞTERİ-A/B`, marka → `MARKA-A/B/C`,
+belge no → `BELGE-NNN`, tutar → demo) + demo seed'li DB + testler tek zip içinde +
+**MD5/SHA256**. PNG/resim zip'e GİRMEZ. Ayrı ek TXT kanıt paketi İSTENMEZ.
+
+---
+
+## ⭐ İKİNCİ KURAL — CLAUDE'A DOSYA NASIL ULAŞIR (teknik gerçek, kesin)
+
+> **Claude web'in sandbox'ında İNTERNET YOK.** Bu yüzden:
+>
+> - **ZIP (binary) → link ile ASLA çekemez** ("[binary data]" yer tutucusu döner).
+>   → ZIP, **kullanıcı tarafından Claude sohbetine DOSYA OLARAK YÜKLENİR.**
+> - **Metin (.md/.txt) → raw link ile OKUYABİLİR** (fetch eder).
+>   → Direktif/rapor/denetim/özet metinleri raw link ile verilir; yükleme gerekmez.
+>
+> **KÖPRÜ'NÜN STANDART GÖREVİ:** kod paketlerinde sansürlü ZIP'i hazırlar, kullanıcıya
+> "bu dosyayı indir → Claude'a sürükle-bırak" der, denetim paketini (md) raw link ile verir.
+> Hash doğrulaması için zip'in MD5/SHA256'sı denetim paketinde yazar.
 
 ---
 
@@ -41,7 +46,7 @@ paketi İSTENMEZ (zip yeterli — GM1 kendi testini kendisi koşturur).
 | Repo | Görünürlük | İçerik |
 |---|---|---|
 | `BRN-Teknoloji-ERP` | 🔒 PRIVATE | **kod/**, ham kanıtlar, her şeyin aslı |
-| `claude` | 🌍 PUBLIC | GM1 paneli: direktif/rapor/denetim/docs/kanıt — SANSÜRLÜ |
+| `claude` | 🌍 PUBLIC | GM1 paneli: direktif/rapor/denetim/docs/kanıt/zip — SANSÜRLÜ |
 
 **Senkron:** Otomatik değil; KÖPRÜ yapar. Public = private'ın SANSÜRLÜ YANSIMASI.
 
@@ -49,25 +54,25 @@ paketi İSTENMEZ (zip yeterli — GM1 kendi testini kendisi koşturur).
 
 ```
 1. Kral → Claude'a "şu görevi direktif yaz / şu raporu denetle"
-2. Claude → public repoyu okur (kod paketi ise zip'i indirip testleri BİZZAT çalıştırır) → karar
+2. Claude → metinleri raw link ile okur; kod paketi ise zip'i SOBBETTEKİ DOSYADAN açıp testleri çalıştırır → karar
 3. Kral → kararı BU pencereye yapıştırır
 4. KÖPRÜ → private repoya işler + sansürlü kopyayı public'e koyar + DURUM günceller
 5. Kral → Coder'a "devam et" → Coder kodlar, private'a rapor+kanıt push'lar
 6. KÖPRÜ → rapor/kanıt/kodun sansürlü hallerini public'e koyar + ZIP + denetim paketi hazırlar
+   → ZIP'i kullanıcıya "indir → Claude'a yükle" diye sunar; md paketini raw link verir
 7. 1. adıma dön
 ```
 
 ## 4) MİKRO-KARAR PROTOKOLÜ
 
-Coder, emin olmadığı bir tasarım kararında (örn. CSRF uygulaması) **kodlamaya başlamadan
-önce** 2-3 seçenekle sorar → Kral GM1'e iletir → GM1 seçer → karar `D0XX-mikro-karar.md`
-dosyasına KÖPRÜ tarafından kaydedilir ve her iki repoya işlenir. Coder o dosyaya göre ilerler.
+Coder, emin olmadığı bir tasarım kararında kodlamaya başlamadan 2-3 seçenekle sorar →
+Kral GM1'e iletir → GM1 seçer → karar `D0XX-mikro-karar.md` olarak KÖPRÜ tarafından
+kaydedilir ve iki repoya işlenir. Coder o dosyaya göre ilerler.
 
 ## 5) PUBLIC'E GİREN / GİRMEYEN
 
 - ✅ GİRER: direktifler, raporlar, denetimler, paket md'leri, DURUM/ROL/ANAYASA/BRİFİNG,
-  `docs/`, test çıktıları, regresyon logları, dosya listeleri, **sansürlü ZIP**, mikro-kararlar,
-  gerektiğinde sansürlü kod metni.
+  `docs/`, test çıktıları, regresyon logları, dosya listeleri, **sansürlü ZIP**, mikro-kararlar.
 - ❌ GİRMEZ: PNG/resim, sansürsüz kod, `data/*.db` (sansürsüz), gerçek müşteri adı/belge no/tutar.
 
 ## 6) VARDIYA (Claude hakkı bitince)
@@ -79,10 +84,9 @@ dosyasına KÖPRÜ tarafından kaydedilir ve her iki repoya işlenir. Coder o do
 
 - ✅ YAPAR: kararları işlemek, sansür + senkron, ZIP/metin paket hazırlamak, raw link vermek,
   coder iddialarını TARAFSIZ doğrulamak (testleri kendi çalıştırmak).
-- ❌ YAPMAZ: direktif/denetim KARARI (GM1'in), kod yazmak (coder'ın), GM1'in kararlarını değiştirmek.
+- ❌ YAPMAZ: direktif/denetim KARARI (GM1'in), kod yazmak (coder'ın), GM1 kararlarını değiştirmek.
 
 ## 8) MEVCUT DURUM
 
-- Proje v1.39.0. **D001–D008 ONAYLANDI.**
-- **D009 (Güvenlik & Sağlamlık) AKTİF** — CSRF tasarımı: **HİBRİT** (GM1 onayı, mikro-karar
-  `gm-direktifleri/D009-mikro-karar.md`'de). Teslim: **ZIP**.
+- Proje v1.40.0 (D009 kodlu). **D001–D008 ONAYLANDI.**
+- **D009 (Güvenlik) — GM1 denetimi bekleniyor** (zip kullanıcıya verildi, Claude'a yüklenecek).
