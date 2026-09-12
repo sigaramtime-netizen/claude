@@ -1,0 +1,113 @@
+======================================================================
+F3 (v1.33.0) — TEST ÇIKTILARI (taze koşum)
+Üretim zamanı : 2026-09-11 16:28:14
+======================================================================
+
+######################################################################
+BÖLÜM A — python3 test_f3_arama.py  (F3, taze)
+######################################################################
+== F3 / Ortak Arama (type-ahead) — e2e testi ==
+======================================================================
+BÖLÜM 1 — /api/ara: stok (kod/ad/barkod/boş/yok/limit)
+======================================================================
+  ✅ 1. test_api_stok_kod_ile: tam kod → ST döner  → [{'id': 3, 'varyant_id': 0, 'kod': 'BUZ-510-VST-003', 'ad': 'Vestel 510L No-Frost Buzdolabı', 'varyant_ad': '', 'barkod': '8691234500035', 'birim': 'Adet', 'kdv_orani': 20.0, 'alis_fiyat': 16000.0, 'satis_fiyat': 19499.0, 'iskonto_orani': 3.0}]
+  ✅ 2. test_api_stok_ad_ile: q=Vestel → ad içeren stok(lar)  → 3 kayıt
+  ✅ 3. test_api_stok_barkod_ile: barkod → BUZ-510-VST-003  → [{'id': 3, 'varyant_id': 0, 'kod': 'BUZ-510-VST-003', 'ad': 'Vestel 510L No-Frost Buzdolabı', 'varyant_ad': '', 'barkod': '8691234500035', 'birim': 'Adet', 'kdv_orani': 20.0, 'alis_fiyat': 16000.0, 'satis_fiyat': 19499.0, 'iskonto_orani': 3.0}]
+  ✅ 4. test_api_stok_kismi: kısmi kod → 1..20 kayıt  → 2 kayıt
+  ✅ 7a. test_api_bos_sorgu (stok): ilk 20 kayıt  → 11 kayıt
+  ✅ 8a. test_api_yok (stok): []  → []
+======================================================================
+BÖLÜM 2 — /api/ara: cari (kod/unvan/boş/filtre/yok)
+======================================================================
+  ✅ 5. test_api_cari_kod_ile: tam kod → BAT-001  → [{'id': 1, 'kod': 'BAT-001', 'unvan': 'Batman Çarşı Elektronik', 'il': 'Batman', 'iskonto_orani': 5.0}]
+  ✅ 6. test_api_cari_unvan_ile: q=Batman → Batman Çarşı Elektronik  → [{'id': 1, 'kod': 'BAT-001', 'unvan': 'Batman Çarşı Elektronik', 'il': 'Batman', 'iskonto_orani': 5.0}]
+  ✅ 7b. test_api_bos_sorgu (cari): ilk 20 kayıt  → 9 kayıt
+  ✅ 7c. cari_tip=Alis filtresi: yalnız tedarikçi/herikisi  → 3 kayıt — ['TED-002', 'MSU-001', 'TED-001']
+  ✅ 8b. test_api_yok (cari): []  → []
+======================================================================
+BÖLÜM 3 — K1 izolasyon + limit 20
+======================================================================
+  ✅ 9a. K1: B'de A stoku /api/ara'da görünmüyor
+  ✅ 9b. K1: B'de A carisi /api/ara'da görünmüyor
+  ✅ 9c. K1: B'de A'nın BUZ stoğu görünmüyor
+  ✅ 10. test_api_limit: 30 stokta en fazla 20 döner  → 20 kayıt
+  ✅ 9d. B kendi stoğunu görüyor
+======================================================================
+BÖLÜM 4 — Form POST: typeahead hidden input ile belge üretimi
+======================================================================
+  ✅ 11. test_form_post_typeahead_cari: cari_id hidden → fatura doğru cariyle oluştu
+  ✅ 12. test_form_post_typeahead_stok: k_stok_id hidden → kalem doğru stok
+  ✅ 13. test_irsaliye_typeahead: irsaliye cari+stok hidden ile oluştu
+  ✅ 14. test_siparis_typeahead: sipariş cari+stok hidden ile oluştu
+  ✅ 15. test_teklif_typeahead: teklif cari+stok hidden ile oluştu
+  ✅ 16a. POS adla arama: q=Vestel → en az 1 ürün
+  ✅ 16b. POS satışı (hidden stok input) → Onaylı fatura
+======================================================================
+BÖLÜM 5 — Statik dosya + template widget kontrolü
+======================================================================
+  ✅ 17. test_js_dosya_var: /static/js/typeahead.js 200 + initTypeahead
+  ✅ 18. test_template_toggle_var: fatura/form.html typeahead div + data-tip=cari
+  ✅ 19. 11 şablonun hepsinde typeahead widget var (tek bileşen)  → []
+  ✅ 20. Tek endpoint: template/js'lerde eski arama ucu çağrısı yok  → []
+  ✅ 21. api.py'de tek /api/ara route'u + sarmalayıcılar
+======================================================================
+TEMİZLİK + BÜTÜNLÜK
+======================================================================
+  ✅ 22.1 FK bütünlüğü  → []
+  ✅ 22.2 F3TEST kalıntısı yok  → 0
+
+=== SONUÇ: 30 başarılı / 0 başarısız ===
+TÜM F3 ARAMA TESTLERİ GEÇTİ ✅
+
+######################################################################
+BÖLÜM B — python3 test_f2_kdv.py  (F2 regresyon, taze)
+######################################################################
+== F2 / KDV Dahil-Hariç — e2e testi ==
+  ✅ 1.1 kdv_ayikla(120,20)==100
+  ✅ 1.2 kdv_ayikla(118,18)==100
+  ✅ 1.3 kdv_ayikla(110,10)==100
+  ✅ 2.1 kdv_hesapla(100,20)==20
+  ✅ 2.2 kdv_hesapla(97.46,18)==17.54
+  ✅ 3.1 dahil fatura kalem net=100  → 100.0
+  ✅ 3.2 dahil fatura genel=120  → 120.0
+  ✅ 3.3 dahil fatura kdv_dahil=1
+  ✅ 4.1 hariç fatura kalem net=100
+  ✅ 4.2 dahil/hariç aynı net
+  ✅ 4.3 hariç fatura kdv_dahil=0
+  ✅ 10.1 düzenlemede kdv-dahil checkbox 'checked'
+  ✅ 10.2 satır verisi NET (100) — JS brüt gösterir
+  ✅ 10.3 hariç faturada checkbox işaretsiz
+  ✅ 5.1 dahil fiş = 120/600(100)/391(20)  → [('120', 120.0, 0.0), ('600', 0.0, 100.0), ('391', 0.0, 20.0)]
+  ✅ 5.2 hariç fiş aynı  → [('120', 120.0, 0.0), ('600', 0.0, 100.0), ('391', 0.0, 20.0)]
+  ✅ 6.1 irsaliye kalem net=100
+  ✅ 6.2 irsaliye genel=120
+  ✅ 6.3 irsaliye kdv_dahil=1
+  ✅ 6.4 F1: irsaliye cari BORÇ=120  → {'borc': 120.0}
+  ✅ 6.5 F1: irsaliye fişi 120/600/391  → [('120', 120.0, 0.0), ('600', 0.0, 100.0), ('391', 0.0, 20.0)]
+  ✅ 7.1 sipariş kalem net=100
+  ✅ 7.2 sipariş genel=120 + bayrak
+  ✅ 8.1 teklif kalem net=100
+  ✅ 8.2 teklif genel=120 + bayrak
+  ✅ 9.1 POS fatura kalem net=100  → 100.0
+  ✅ 9.2 POS fatura genel=120
+  ✅ 11.1 KDV %0 dahil==hariç==100
+  ✅ 12.1 115 brüt %18 → net 97.46  → 97.46
+  ✅ 12.2 kdv 17.54  → 17.54
+  ✅ 12.3 toplam 115.00 (kuruş kaybı yok)  → 115.0
+  ✅ 13.1 FK bütünlüğü  → []
+  ✅ 13.2 yetim yevmiye yok  → []
+  ✅ 13.3 F2TEST kalıntısı yok
+
+=== SONUÇ: 34 başarılı / 0 başarısız ===
+TÜM F2 KDV TESTLERİ GEÇTİ ✅
+
+######################################################################
+BÖLÜM C — TAM REGRESYON: 17 paket (taze). GM beklentisi 390/390 (372+18)
+idi; F3 18 yerine 30 kontrol içeriyor → dürüst toplam 372+30 = 402.
+######################################################################
+  TOPLAM  402 başarılı / 0 başarısız (17 paket, tam çıktı: kanit_regresyon_f3.log)
+
+######################################################################
+BÖLÜM D — pytest DÜRÜST NOT: proje pytest kullanmaz; python3 test_x.py
+koşulur. pytest 'collected 0 items' döner. Gerçek koşum BÖLÜM A/B/C.
+######################################################################

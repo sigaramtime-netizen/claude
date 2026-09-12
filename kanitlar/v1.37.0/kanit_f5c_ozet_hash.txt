@@ -1,0 +1,14 @@
+===== Brn Teknoloji ERP — F5-C (v1.37.0) — KANIT ÖZETİ + HASH =====
+Zaman damgası: 2026-09-12 07:43:24
+Sürüm: 1.37.0
+
+--- Kanıt dosyaları (sha256) ---
+9bd83b8f8aa234da9cd1fc25d0ad68cb100f1e39877d06d8eee697c4aa0d3b25  kanitlar/v1.37.0/kanit_f5c_dosya_listesi.txt
+64769e229ed033867e412c32221f762750adf5d9a94a1cd3f17faf272e306e79  kanitlar/v1.37.0/kanit_f5c_degisen_dosyalar.txt
+5640663bd0a4cbb268b19005bb140785d52fdee7ce0942a2dd40606f72139c1e  kanitlar/v1.37.0/kanit_f5c_test_ciktisi.txt
+
+--- Kritik kaynak dosyalar (sha256) ---
+039b7c38c231aad1a9ed0f4ac1f8197894205d6152386789e769eeb3e87d03a3  kod/beyanname.py
+630158107c0616d37acefa7639faa8ea2327a7029f56afdcba9cd6540bd9e7d2  kod/templates/beyanname/index.html
+63914417eb7e6a95d1d9720bee0175d2ab4c03935ff14b1812bf4aefe7702e9b  kod/test_f5c_beyanname.py
+5fae162c93f20fc0e53d0533653d21e4658028270d94f4e9a04a95dd881b8bf0  kod/config.py

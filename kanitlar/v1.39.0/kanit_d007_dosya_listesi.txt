@@ -1,0 +1,76 @@
+===== Brn Teknoloji ERP — D007 (v1.39.0) — DOSYA LİSTESİ =====
+Tarih: 2026-09-12 12:54:41
+Sürüm: 1.39.0 (Kullanıcı Bildirimleri & UX/İş Mantığı İyileştirmeleri — 10 madde)
+
+--- git status (değişen dosyalar) ---
+ M DURUM.md
+ M kod/api.py
+ M kod/config.py
+ M kod/core.py
+ M kod/db.py
+ M kod/fatura.py
+ M kod/irsaliye.py
+ M kod/muhasebe.py
+ M kod/pos.py
+ M kod/siparis.py
+ M kod/static/js/form-satir.js
+ M kod/stok.py
+ M kod/teklif.py
+ M kod/templates/banka/hareket_form.html
+ M kod/templates/cek_senet/form.html
+ M kod/templates/fatura/form.html
+ M kod/templates/garanti/form.html
+ M kod/templates/irsaliye/detay.html
+ M kod/templates/irsaliye/form.html
+ M kod/templates/kartoteks/cari.html
+ M kod/templates/kartoteks/stok.html
+ M kod/templates/kasa/hareket_form.html
+ M kod/templates/pos/satis.html
+ M kod/templates/siparis/form.html
+ M kod/templates/stok/detay.html
+ M kod/templates/stok/form.html
+ M kod/templates/stok/hareket_form.html
+ M kod/templates/stok/sayim_detay.html
+ M kod/templates/stok/transfer_detay.html
+ M kod/templates/teklif/form.html
+ M kod/templates/yazdir/belge.html
+ M kod/test_f2_kdv.py
+ M kod/test_f6_cila.py
+?? kanitlar/v1.39.0/
+?? kod/test_d007_iyilestirmeler.py
+
+--- git diff --stat ---
+ DURUM.md                               |  2 +-
+ kod/api.py                             | 20 ++++++----
+ kod/config.py                          |  2 +-
+ kod/core.py                            |  1 +
+ kod/db.py                              | 19 +++++++++
+ kod/fatura.py                          |  4 +-
+ kod/irsaliye.py                        | 48 ++++++++++++++++-------
+ kod/muhasebe.py                        | 13 ++++---
+ kod/pos.py                             |  2 +-
+ kod/siparis.py                         |  4 +-
+ kod/static/js/form-satir.js            | 12 +++++-
+ kod/stok.py                            | 62 ++++++++++++++++++++++++++----
+ kod/teklif.py                          |  4 +-
+ kod/templates/banka/hareket_form.html  |  7 ++--
+ kod/templates/cek_senet/form.html      | 11 +++---
+ kod/templates/fatura/form.html         | 10 ++---
+ kod/templates/garanti/form.html        |  6 +--
+ kod/templates/irsaliye/detay.html      |  6 +++
+ kod/templates/irsaliye/form.html       | 37 +++++++++++++++---
+ kod/templates/kartoteks/cari.html      | 19 +++++----
+ kod/templates/kartoteks/stok.html      | 17 ++++++---
+ kod/templates/kasa/hareket_form.html   |  7 ++--
+ kod/templates/pos/satis.html           | 13 ++++---
+ kod/templates/siparis/form.html        | 10 ++---
+ kod/templates/stok/detay.html          | 15 ++++++++
+ kod/templates/stok/form.html           | 70 +++++++++++++++++++++++++++++++---
+ kod/templates/stok/hareket_form.html   | 23 ++++++-----
+ kod/templates/stok/sayim_detay.html    |  7 ++--
+ kod/templates/stok/transfer_detay.html |  7 ++--
+ kod/templates/teklif/form.html         | 10 ++---
+ kod/templates/yazdir/belge.html        |  3 ++
+ kod/test_f2_kdv.py                     |  6 ++-
+ kod/test_f6_cila.py                    |  2 +-
+ 33 files changed, 351 insertions(+), 128 deletions(-)

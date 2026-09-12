@@ -1,0 +1,299 @@
+================================================================================
+BRN TEKNOLOJİ ERP — PROJE DOKÜMANTASYONU
+Sürüm: v1.34.0  |  Tarih: 2026-09-11
+Hazırlayan: Arena.ai Agent Mode (asistan)
+Amaç: GitHub'a yüklenecek projenin TAM dökümü (klasör/dosya yapısı, sistem
+       mimarisi, tüm .py modülleri, sürüm geçmişi, testler, kanıtlar, yapılan
+       işlemler). GM bu dosyayı okuyarak yapılanları denetleyip yönlendirecek.
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+1) PROJE ÖZETİ
+────────────────────────────────────────────────────────────────────────────────
+Proje     : Brn Teknoloji ERP (İşletme Yönetim Sistemi)
+Dil       : Python 3 (stdlib: http.server/wsgiref + sqlite3 — harici framework YOK)
+Veritabanı: SQLite (data/erp.db) — 65 tablo
+Web       : wsgiref tabanlı basit HTTP sunucu, port 8080, host 0.0.0.0
+Şablon    : Jinja2 benzeri kendi render katmanı (core.py içinde)
+UI Dili   : Türkçe
+Kurulum   : pip gerektirmez (sadece Python stdlib). Playwright SADECE ekran
+            görüntüsü almak için kullanılır (opsiyonel, çalışma zamanı değil).
+
+TEMEL MİMARİ KURALLAR (proje genelinde geçerli):
+  - K1  : Çoklu şirket izolasyonu — tüm veri tablolarında sirket_id; her sorgu
+          aktif şirkete göre süzülür (sessionler.sirket_id).
+  - Tek DB + sirket_id (İstek 3, Seçenek A). Şirket geçişi /sirket/gec.
+  - Rota kaydı import ile yapılır: her modül `from core import route` kullanarak
+    `@route(r"/yol", methods=(...), roles=(...))` ile kaydolur.
+  - Yetki matrisi: rol bazlı (Admin, Muhasebe, Satis, Servis, Depo).
+  - Audit: her kritik işlem audit_log tablosuna yazılır.
+  - Belge numaraları: şirket başına bağımsız sayaç (db.sonraki_belge_no).
+
+────────────────────────────────────────────────────────────────────────────────
+2) KLASÖR / DOSYA YAPISI (KÖK: /home/user/erp)
+────────────────────────────────────────────────────────────────────────────────
+erp/
+├── app.py                → Giriş noktası: sunucuyu başlatır, tüm modülleri import eder
+├── config.py             → Yollar, firma adı, SURUM="1.34.0", PARA_BIRIMLERI
+├── core.py               → ÇEKİRDEK: route/redirect/flash/audit/render_template/
+│                            session/CSRF/izin sistemi + Jinja benzeri render + filtreler
+├── db.py                 → VERİTABANI: SCHEMA (65 tablo), migration, seed veri,
+│                            get_conn(), sirket_id(), sonraki_belge_no(), aktif_eb()
+├── entegrator.py         → e-Dönüşüm entegratör soyutlaması + MockEntegrator (F4)
+│
+│   ── MODÜLLER (her biri kendi rota grubunu kaydeder) ──
+├── cari.py               → Cari kartlar (müşteri/tedarikçi/herikisi), hareketler
+├── stok.py               → Stok kartı, seviye, hareket, sayım, transfer (1218 satır)
+├── kasa.py               → Kasa + kasa hareketleri
+├── banka.py              → Banka hesapları + hareketler
+├── sube.py               → Şube / Depo
+├── teklif.py             → Satış teklifi
+├── siparis.py            → Sipariş (teslim takibi, kısmi teslimat)
+├── irsaliye.py           → İrsaliye (Satış/Alış/Transfer) + stok/cari uygulama
+├── fatura.py             → Fatura (Satış/Alış) + KDV/net + otomatik yevmiye
+├── cek_senet.py          → Çek/Senet takibi
+├── doviz.py              → Döviz kurları
+├── ekler.py              → Ek dosya (attachment) yükleme/indirme
+├── servis.py             → Servis iş emirleri (Faz 3)
+├── garanti.py            → Seri no + garanti takibi (Faz 3)
+├── notlar.py             → Notlar (Faz 3)
+├── edonusum.py           → e-Dönüşüm: giden e-Fatura/e-Arşiv/e-İrsaliye + gelen
+│                           kutuları + entegratör ayarları (Faz 4 — 1002 satır)
+├── muhasebe.py           → Genel Muhasebe: hesap planı + yevmiye/fiş (Faz 5)
+├── kartoteks.py          → Kartoteks (cari hesap ekstresi) (Faz 5)
+├── transfer.py           → Depo transferi (Faz 5)
+├── finansal.py           → Finansal analiz (Faz 5)
+├── beyanname.py          → Beyanname (KDV vb.) (Faz 5)
+├── demirbas.py           → Demirbaş + amortisman + zimmet (Faz 5)
+├── ayarlar.py            → Sistem yönetimi: kullanıcılar, şirketler, entegratör (Faz 6.1)
+├── api.py                → /api/ara canlı arama JSON ucu (F3 — stok+cari)
+├── sirket.py             → Çoklu şirket oturum geçişi (İstek 3)
+├── satin_alma.py         → Satın Alma Talebi (B1)
+├── alinan_teklif.py      → Alınan Teklif + değerlendirme (B2)
+├── eksik_teslimat.py     → Eksik teslimatlar + satın alma raporu (B3)
+├── pos.py                → POS (Satış Noktası) (C)
+├── bakim.py              → Bakım Sözleşmesi (D)
+├── crm.py                → CRM aktivite/görev takibi (E)
+├── bildirim_saglayici.py → Bildirim gönderimi (SMS/e-posta)
+├── yedek_al.py           → Yedek alma yardımcısı
+│
+│   ── TESTLER (18 paket, toplam 424 kontrol) ──
+├── test_alinan_teklif.py        (23)  ├── test_f2_kdv.py            (34)
+├── test_bakim.py                (29)  ├── test_f3_arama.py          (30)
+├── test_belge_sayac_e2e.py      ( 9)  ├── test_f4_edonusum.py       (22)
+├── test_coklu_sirket.py         (16)  ├── test_izolasyon_e2e.py     (22)
+├── test_crm.py                  (25)  ├── test_izolasyon_mali_e2e.py(19)
+├── test_eksik_teslimat.py       (21)  ├── test_manuel_satir.py      (28)
+├── test_f1_mali.py              (25)  ├── test_pos.py               (41)
+│                                       ├── test_satin_alma_talep.py (23)
+│                                       ├── test_silme_kurallari.py  (23)
+│                                       ├── test_sirket_yonetimi.py  (19)
+│                                       └── test_teklif_siparis_manuel.py (15)
+│
+│   ── EKRAN GÖRÜNTÜSÜ SCRIPTLERİ (Playwright) ──
+├── ekran_f1.py, ekran_f2.py, ekran_f3.py, ekran_f4.py, ekran_goruntuleri.py
+│
+├── data/
+│   └── erp.db              → SQLite veritabanı (909 KB, 65 tablo, seed verili)
+├── templates/              → 133 HTML şablonu, 32 alt dizin:
+│   ├── ayarlar/  bakim/  banka/  beyanname/  bildirimler/  cari/  cek_senet/
+│   ├── crm/  demirbas/  doviz/  e_fatura/  e_irsaliye/  edonusum/  fatura/
+│   ├── finansal/  garanti/  gelen/  irsaliye/  kartoteks/  kasa/  muhasebe/
+│   ├── notlar/  pos/  satin_alma/  servis/  siparis/  stok/  sube/  teklif/
+│   └── transfer/   + base.html (ana iskelet/üst bar/yan menü)
+├── static/                → style.css, typeahead.js, form-satir.js vb.
+├── uploads/               → ham e-belge XML'leri (ek_dosya) + yüklenen dosyalar
+└── docs/                  → 47 Markdown dokümanı (aşağıda liste)
+
+/home/user/            (proje DIŞI, teslim alanı)
+├── indirme/           → Zipsiz protokol kanıt sitesi (port 8090) + TXT/PNG kanıtlar
+├── uploads/           → GM emir dosyaları (F4-EMIR-PAKETI-arena-ai-icindir.txt vb.)
+└── BrnTeknoloji-ERP-v1.2X.X-kaynak.zip → eski sürüm arşivleri (1.27.0 … 1.31.0)
+
+────────────────────────────────────────────────────────────────────────────────
+3) VERİTABANI — 65 TABLO
+────────────────────────────────────────────────────────────────────────────────
+Master Data : cari_kart, cari_grup, stok_kart, stok_varyant, stok_tedarikci,
+              kategori, marka, depo, sube, kasa, banka_hesap, doviz_kur,
+              demirbas_kategori, hesap (hesap planı)
+İşlem       : teklif, siparis, irsaliye, fatura, cek_senet, pos_satis,
+              satin_alma_talebi, alinan_teklif, servis_kayit, bakim_sozlesme,
+              crm_aktivite, depo_transfer, demirbas, stok_sayim, butce
+Kalem       : teklif_kalem, siparis_kalem, irsaliye_kalem, fatura_kalem,
+              satin_alma_talebi_kalem, alinan_teklif_kalem, depo_transfer_kalem,
+              stok_sayim_kalem, servis_parca, bakim_sozlesme_cihaz/fatura,
+              demirbas_amortisman, demirbas_zimmet
+Hareket/Defter: cari_hareket, stok_hareket, stok_seviye, stok_seri,
+              kasa_hareket, banka_hareket, yevmiye, yevmiye_kalem
+e-Dönüşüm   : e_belge (giden), gelen_belge (gelen), entegrator_ayar (K1 PK)
+Sistem      : kullanici, kullanici_sirket, sirket, sessionler, audit_log,
+              bildirimler, bildirim_gonderim, notlar, ek_dosya, meta
+
+ÖNEMLİ: e_belge / gelen_belge / entegrator_ayar F4 ile birlikte aktif.
+        fatura_kalem/irsaliye_kalem stok_id NULLABLE (manuel satır desteği).
+
+────────────────────────────────────────────────────────────────────────────────
+4) SÜRÜM GEÇMİŞİ (CHANGELOG özeti)
+────────────────────────────────────────────────────────────────────────────────
+v1.27.0 – v1.27.4 : Erken sürümler (faz 1/2 altyapı, kasa/banka/stok/sube,
+                    çek-senet, döviz, fatura/irsaliye/sipariş/teklif)
+v1.28.0            : Faz 3 (servis/garanti/notlar) + ara düzeltmeler
+v1.29.0            : D paketi — Bakım Sözleşmesi (seed_irsaliye, bakim.py dict(r),
+                    db.py tablo-varlık koruması düzeltmeleriyle kapandı)
+v1.30.0            : E paketi — CRM (yalnızca aktivite/görev takibi;
+                    fırsat/huni/teklif dönüşümü YOK)
+v1.31.0            : F1 — Mali Etki (fatura/irsaliye onayında cari+yevmiye;
+                    kaynaklı fatura mali etki üretmez)
+v1.32.0            : F2 — KDV Dahil (DB'de hep NET; kdv=net×oran; tek kaynak core;
+                    5 belge tipi aynı davranış)
+v1.33.0            : F3 — Ortak Arama (tek /api/ara + tek typeahead.js;
+                    14 noktada aynı widget)
+v1.34.0            : F4 — e-Dönüşüm Mock/Sandbox (giden e-Fatura/e-Arşiv/e-İrsaliye
+                    + gelen kutuları + entegratör ayarları)  ← GÜNCEL
+
+────────────────────────────────────────────────────────────────────────────────
+5) F4 (v1.34.0) — YAPILAN İŞLEMLER (BU OTURUMDA)
+────────────────────────────────────────────────────────────────────────────────
+GM emri: /home/user/uploads/F4-EMIR-PAKETI-arena-ai-icindir.txt
+
+a) db.py
+   - entegrator_ayar tablosu eklendi (sirket_id PRIMARY KEY → K1; entegrator,
+     api_anahtar, test_modu, updated_at).
+   - Yetim e-belge koruması: üst fatura/irsaliye silinince e_belge/gelen_belge
+     bağları TRIGGER ile otomatik temizlenir (trg_fatura_sil_ebelge,
+     trg_irsaliye_sil_ebelge). Böylece FK ihlali (PRAGMA foreign_key_check) asla
+     kalmaz — uygulama ve test bağlantılarında (FK OFF dahil) çalışır.
+b) entegrator.py
+   - MockEntegrator(test_modu=...) : test modu 1 → gönderim anında Onaylandı
+     (deterministik); test modu 0 → Gönderildi + hash bazlı %10 red / %5 hata.
+   - _entegrator_uret(): entegrator/saglayici + test_modu anahtarlarını tanır;
+     gerçek sağlayıcı (EDM/İzibiz/QNB) API anahtarsız Mock'a düşer (güvenli).
+c) edonusum.py
+   - _aktif_sirket() + K1'li _entegrator() (entegrator_ayar okur, meta fallback).
+   - _olustur(): Alış irsaliyesine de izin (satış+alış); Transfer hariç.
+   - _gonder(): ortak iletim (test modunda anında Onaylandı).
+   - Gelen dönüşümünde eşleşmeyen kalem → manuel satır (stok_id NULL + aciklama).
+   - GM rotaları: /e-fatura, /e-fatura/:id/gonder, /e-fatura/:id/iptal,
+     /e-irsaliye, /e-irsaliye/:id/gonder, /e-fatura/gelen, /e-fatura/gelen/cek,
+     gelen kabul/red/dönüştür, /e-irsaliye/gelen + dönüştür,
+     /ayarlar/edonusum (GET) + /ayarlar/edonusum/kaydet (POST).
+   - Eski /edonusum ve /gelen rotaları geriye dönük korundu.
+d) fatura.py — Satış faturası onayında otomatik e-belge Taslak (try/except;
+   mali etkiyi bloke etmez; tip otomatik eFatura/eArsiv).
+e) irsaliye.py — Satış/Alış irsaliyesi onayında otomatik e-İrsaliye Taslak.
+f) config.py — SURUM="1.34.0", SURUM_TARIHI="2026-09-11".
+g) 5 yeni şablon: templates/e_fatura/{liste,gelen}.html,
+   templates/e_irsaliye/{liste,gelen}.html, templates/ayarlar/edonusum.html.
+h) templates/base.html — yan menü: e-Fatura/e-Arşiv, e-İrsaliye, e-Dönüşüm Gelen.
+   templates/ayarlar/index.html — kart → /ayarlar/edonusum.
+i) test_f4_edonusum.py — 22 kontrol (GM listesi birebir):
+   1 test_cari_mukellef_ayari          2 test_fatura_onay_otomatik_ebeveyn
+   3 test_irsaliye_onay_otomatik_eirsaliye 4 test_gonder_mock_onay
+   5 test_gonder_red_yolu              6 test_cifte_ebeveyn_engeli
+   7 test_gelen_cek_mock               8 test_gelen_liste_k1
+   9 test_gelen_kabul                  10 test_gelen_red
+   11 test_gelen_donustur_fatura       12 test_gelen_donustur_irsaliye
+   13 test_gelen_cifte_donusum_engeli  14 test_gelen_manuel_kalem
+   15 test_alis_faturasi_ebeveyn_yok   16 test_entegrator_ayar_kayit
+   17 test_entegrator_mock_uyari       18 test_f1_mali_etki_korundu
+   19 test_f2_kdv_korundu              20 test_f3_typeahead_korundu
+   21 test_fk_butunluk                 22 test_kalinti_yok
+
+────────────────────────────────────────────────────────────────────────────────
+6) TEST SONUÇLARI
+────────────────────────────────────────────────────────────────────────────────
+F4 testi      : python3 test_f4_edonusum.py → 22/22 GEÇTİ
+TAM REGRESYON : 18 paket → 424/424 GEÇTİ (0 başarısız)
+
+  test_alinan_teklif.py        23   test_f2_kdv.py             34
+  test_bakim.py                29   test_f3_arama.py           30
+  test_belge_sayac_e2e.py       9   test_f4_edonusum.py        22
+  test_coklu_sirket.py         16   test_izolasyon_e2e.py      22
+  test_crm.py                  25   test_izolasyon_mali_e2e.py 19
+  test_eksik_teslimat.py       21   test_manuel_satir.py       28
+  test_f1_mali.py              25   test_pos.py                41
+  test_satin_alma_talep.py     23   test_silme_kurallari.py    23
+  test_sirket_yonetimi.py      19   test_teklif_siparis_manuel.py 15
+                                                     TOPLAM = 424
+
+Not: Proje pytest KULLANMAZ; testler düz Python scriptleridir
+     (python3 test_x.py). `python3 -m pytest` → "collected 0 items"
+     (bu dürüst not kanıt TXT'lerinde yer alır).
+
+────────────────────────────────────────────────────────────────────────────────
+7) KANIT / TESLİM DOSYALARI (ZİPSİZ PROTOKOL)
+────────────────────────────────────────────────────────────────────────────────
+Kural: ZIP YOK. Her pakette TXT kanıt: (1) dosya listesi, (2) değişen kritik
+dosyaların tam içeriği, (3) test çıktıları. PNG isteğe bağlı.
+
+/home/user/indirme/  (port 8090 canlı site → index.html)
+  F4 (v1.34.0):
+    kanit_f4_dosya_listesi.txt       → find . -type f | sort (525 dosya)
+    kanit_f4_degisen_dosyalar.txt    → 2180 satır (tüm değişen kod+şablon+test)
+    kanit_f4_test_ciktisi.txt        → F4 22/22 + pytest dürüst notu
+    kanit_f4_regresyon.log           → 18 paket satır satır (424/424)
+    f4-efatura-giden.png             f4-efatura-gelen.png
+    f4-eirsaliye-giden.png           f4-eirsaliye-gelen.png
+    f4-ayarlar-entegrator.png        f4-ebelge-detay.png
+  F3 (v1.33.0, arşiv):
+    kanit_dosya_listesi.txt  kanit_degisen_dosyalar.txt
+    kanit_test_ciktisi.txt   kanit_regresyon_f3.log
+    f3-cari-typeahead.png  f3-stok-typeahead.png
+    f3-pos-typeahead.png   f3-tedarikci-typeahead.png
+
+SHA256 (F4):
+  kanit_f4_dosya_listesi.txt  bbc3dfc82d695b28…
+  kanit_f4_degisen_dosyalar.txt c2dddd22c56e883c…
+  kanit_f4_test_ciktisi.txt   7b331e8816f2a53b…
+  kanit_f4_regresyon.log      846b264a0722dec3…
+
+────────────────────────────────────────────────────────────────────────────────
+8) docs/ DİZİNİ (47 DOKÜMAN)
+────────────────────────────────────────────────────────────────────────────────
+Faz özetleri : faz1-ozet.md, faz1-kasa/banka/stok/sube-ozet.md, faz1-tamamlandi.md,
+               faz2-teklif/siparis/irsaliye/fatura/cek-senet/doviz-takip-ozet.md,
+               faz3-servis-garanti-ozet.md, faz4-edonusum-ozet.md,
+               faz5-genel-muhasebe/kartoteks/transfer/finansal-analiz/beyanname/
+               demirbas-ozet.md, faz5-plan.md, faz5-tamamlandi.md,
+               faz6-ozet.md, faz6-plan.md, faz6.1-sistem-yonetimi-ozet.md
+Paketler     : B1-satin-alma-talep-ozet.md, B2-alinan-teklif-ozet.md,
+               B3-eksik-teslimat-ozet.md, C-pos-ozet.md, D-bakim-ozet.md,
+               E-crm-ozet.md, F-devir-raporu.md, F1-mali-etki-ozet.md,
+               F2-kdv-dahil-ozet.md, F3-arama-ozet.md, F4-edonusum-ozet.md
+Tasarım      : mimari-kurallar.md, coklu-sirket-tasarimi.md,
+               coklu-sirket-uygulama-plani.md, yedi-istek-ozet.md,
+               yetki-matrisi.md, satir-ekleme-akisi-ozet.md,
+               silme-pasiflestirme-tablosu.md, manuel-satir-ozet.md
+Rapor        : proje-durum-raporu.md, proje-kapanis-raporu.md, KULLANIM.md
+Ekran gör.   : docs/ekran-goruntuleri/ (eski tema) + .../yeni-tema/ (güncel)
+
+────────────────────────────────────────────────────────────────────────────────
+9) ÇALIŞTIRMA TALİMATI
+────────────────────────────────────────────────────────────────────────────────
+  cd /home/user/erp
+  python3 app.py                      # port 8080 → http://localhost:8080
+  Giriş: kullanıcı_adi=admin  sifre=1234
+
+  Test:     python3 test_f4_edonusum.py      (tek paket)
+  Tam test: for t in test_*.py; do python3 $t; done
+  Ekran:    python3 ekran_f4.py              (Playwright gerekir)
+  Kanıt site: cd /home/user/indirme && python3 -m http.server 8090
+
+  NOT: data/erp.db otomatik oluşur (db.init_db → SCHEMA + migration + seed).
+       Sunucu ilk açılışta migration uygular (idempotent).
+
+────────────────────────────────────────────────────────────────────────────────
+10) GITHUB'A YÜKLEME NOTLARI
+────────────────────────────────────────────────────────────────────────────────
+  - Depoya: /home/user/erp içeriğini yükleyin (app.py, *.py, templates/, static/,
+    docs/, test_*.py, data/erp.db OPSİYONEL).
+  - data/erp.db opsiyoneldir; app.py ilk çalıştırmada seed'li veritabanını üretir.
+  - uploads/ dizini XML dosyaları içerir; .gitignore'a eklenebilir.
+  - Bu dokümanı README.md yanına "PROJE-DOKUMANTASYONU.txt" olarak koyun.
+  - GM denetimi için kritik: docs/F4-edonusum-ozet.md, test_f4_edonusum.py,
+    indirme/kanit_f4_*.txt dosyaları.
+
+================================================================================
+SON — BRN TEKNOLOJİ ERP v1.34.0
+Durum: F4 (e-Dönüşüm Mock/Sandbox) kapatıldı. Tam regresyon 424/424.
+================================================================================

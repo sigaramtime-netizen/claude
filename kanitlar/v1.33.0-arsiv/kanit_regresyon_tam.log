@@ -1,0 +1,605 @@
+
+======================================================================
+### test_alinan_teklif.py (exit=0)
+======================================================================
+  ✅ Kalemsiz teklif oluşturulamadı  → once=3 sonra=3
+  ✅ Tedarikçisiz teklif oluşturulamadı
+  ✅ Teklif oluştu (Taslak)  → no=BELGE-NNN
+  ✅ Belge no formatı ALT-yıl-NNN  → BELGE-NNN
+  ✅ Kalem + toplam (2×10000, %20 KDV → 24000)  → toplam=24000.0
+  ✅ Taslak düzenlendi (genel toplam 36000)  → toplam=36000.0
+  ✅ Alındı yapıldı
+  ✅ Satis kazanan seçemedi (yetki)
+  ✅ İlk teklif Kazanan
+  ✅ Tek kazanan kuralı (eski kazanan geri alındı)
+  ✅ Teklif Siparişe Dönüştü
+  ✅ SAP üretildi (Bekliyor, Alis)  → no=BELGE-NNN
+  ✅ SAP kalemi kopyalandı (2×9800, %20 → 23520)  → toplam=23520.0
+  ✅ Bağlı talep de Siparişe Dönüştü
+  ✅ İkinci dönüşüm engellendi (tek SAP)  → sap_adet=1
+  ✅ Ele işaretlendi
+  ✅ Taslak teklif silindi
+  ✅ Alındı teklif silinemedi
+  ✅ USD teklif genel toplam 120 (100 + %20)  → toplam=120.0 kur=30.0
+  ✅ SAP'ye para birimi + kur sabitlendi  → pb=USD kur=30.0
+  ✅ B şirketinde A teklifleri görünmüyor
+  ✅ B'de teklif sayacı bağımsız (BELGE-NNN)  → BELGE-NNN
+  ✅ B teklifi B şirketine damgalı
+
+SONUÇ: 23 başarılı / 0 başarısız
+ALINAN TEKLİF (B2) E2E TESTİ GEÇTİ ✅
+
+
+======================================================================
+### test_bakim.py (exit=0)
+======================================================================
+== D / Bakım Sözleşmesi — e2e testi ==
+  ✅ 1.1 sözleşme oluşturuldu
+  ✅ 1.2 kayıt doğru
+  ✅ 1.3 liste render
+  ✅ 2.1 bitiş ≤ başlangıç engellendi
+  ✅ 2.2 geçersiz cari engellendi
+  ✅ 3.1 cihaz eklendi
+  ✅ 3.2 cihaz silindi
+  ✅ 4.1 fatura dönem kaydı
+  ✅ 4.2 Onaylı SF + tutar  → genel=1440.0
+  ✅ 4.3 cariye borç yazıldı
+  ✅ 4.4 yevmiye fişi üretildi
+  ✅ 4.5 mükerrer fatura engellendi
+  ✅ 5.1 iş emri açıldı
+  ✅ 5.2 arızasız iş emri engellendi
+  ✅ 6.1 yeni sözleşme oluştu
+  ✅ 6.2 yeni dönem başlangıcı
+  ✅ 6.3 cihazlar kopyalandı
+  ✅ 7.1 iptal edildi
+  ✅ 7.2 aktifleştirildi
+  ✅ 8.1 yaklaşıyor rozeti
+  ✅ 8.2 rapor render
+  ✅ 9.1 depo → yeni 403
+  ✅ 9.2 depo → fatura 403
+  ✅ 10.1 2. şirkette liste boş
+  ✅ 10.2 çapraz şirket fatura engellendi
+  ✅ 11.1 FK bütünlüğü  → []
+  ✅ 11.2 yetim yevmiye fişi yok  → []
+  ✅ 11.3 yetim bakim_fatura yok
+  ✅ 11.4 yetim servis->sözleşme yok
+
+=== SONUÇ: 29 başarılı / 0 başarısız ===
+TÜM BAKIM SÖZLEŞMESİ TESTLERİ GEÇTİ ✅
+
+
+======================================================================
+### test_belge_sayac_e2e.py (exit=0)
+======================================================================
+  ✅ A teklifi oluştu  → no=BELGE-NNN
+  ✅ B teklifi oluştu  → no=BELGE-NNN
+  ✅ B sayacı 1'den başladı (bağımsız)  → B no=BELGE-NNN
+  ✅ A no ≠ B no (iki şirket aynı format, ayrı sayaç)  → A=BELGE-NNN B=BELGE-NNN
+  ✅ teklifler farklı şirkete damgalı  → A.sid=1 B.sid=28
+  ✅ aynı belge no iki şirkette bir arada (composite UNIQUE)  → BELGE-NNN → sirketler=[1, 28]
+  ✅ A teklifi Onaylandı  → Onaylandı
+  ✅ B'de A teklifinden sipariş formu ENGELLİ (302)  → status=302
+  ✅ B'de A kaynaklı sipariş ÜRETİLMEDİ
+
+SONUÇ: 9 başarılı / 0 başarısız
+BELGE NO BAĞIMSIZLIĞI + ZİNCİR ENGELİ E2E TESTİ GEÇTİ ✅
+
+
+======================================================================
+### test_coklu_sirket.py (exit=0)
+======================================================================
+======================================================================
+ADIM 1 — DDL / migrasyon
+======================================================================
+  ✅ 1.1 sirket tablosu var
+  ✅ 1.2 kullanici_sirket tablosu var
+  ✅ 1.3 firma tablosu kaldırıldı (→ sirket)
+  ✅ 1.4 sirket.id=1 firma verisini taşıyor
+  ✅ 1.5 tüm kullanıcılar 1. şirkete üye (N-N backfill)
+  ✅ 1.6 composite UNIQUE(sirket_id, kolon) (örneklem 6 tablo)  → []
+  ✅ 1.7 integrity_check
+
+======================================================================
+ADIM 2 — oturum & şirket geçişi
+======================================================================
+  ✅ 2.1 girişte oturum sirket_id=1 atandı
+  ✅ 2.2 ana sayfa aktif şirket adını gösteriyor
+  ✅ 2.3 /sirket/gec oturumu 2. şirkete taşıdı
+  ✅ 2.4 geçiş sonrası aktif şirket adı güncellendi
+  ✅ 2.5 üst bara şirket seçici geldi (2+ şirket)
+  ✅ 2.6 üye olmayan şirkete geçiş engellendi
+  ✅ 2.7 muhasebe üst barda yalnız yetkili şirketleri görür
+  ✅ 2.8 /ayarlar/firma aktif şirketi gösteriyor
+  ✅ 2.9 /ayarlar/firma sirket tablosuna yazıyor
+
+SONUÇ: 16 başarılı / 0 başarısız
+ÇOKLU ŞİRKET (ADIM 1+2) TESTLERİ GEÇTİ ✅
+
+
+======================================================================
+### test_crm.py (exit=0)
+======================================================================
+== E / CRM (Aktivite-Görev) — e2e testi ==
+  ✅ 1.1 liste 200
+  ✅ 1.2 tip/durum etiketleri
+  ✅ 2.1 oluşturuldu
+  ✅ 2.2 kayıt doğru
+  ✅ 3.1 boş başlık engellendi
+  ✅ 3.2 hatırlatma > tarih engellendi
+  ✅ 3.3 geçersiz cari engellendi
+  ✅ 3.4 geçersiz sorumlu engellendi
+  ✅ 4.1 düzenlendi
+  ✅ 5.1 tamamlandı
+  ✅ 5.2 yeniden planlandı
+  ✅ 5.3 iptal edildi
+  ✅ 6.1 hatırlatma bildirimi üretildi
+  ✅ 6.2 mükerrer bildirim yok
+  ✅ 7.1 aktivite silindi
+  ✅ 7.2 bildirimi de temizlendi
+  ✅ 8.1 rapor 200
+  ✅ 9.depo yeni 403
+  ✅ 9.muhasebe yeni 403
+  ✅ 9.satis yeni izinli (200)
+  ✅ 10.1 2. şirkette liste boş
+  ✅ 10.2 çapraz şirket detay engellendi
+  ✅ 11.1 FK bütünlüğü  → []
+  ✅ 11.2 yetim crm bildirimi yok
+  ✅ 11.3 POSTEST cari kalmadı
+
+=== SONUÇ: 25 başarılı / 0 başarısız ===
+TÜM CRM TESTLERİ GEÇTİ ✅
+
+
+======================================================================
+### test_eksik_teslimat.py (exit=0)
+======================================================================
+  ✅ Alış siparişi oluştu (Bekliyor)  → no=BELGE-NNN
+  ✅ Sipariş onaylandı
+  ✅ Alış irsaliyesi oluştu (Taslak)  → no=BELGE-002
+  ✅ teslim_edilen 2 oldu  → teslim=2.0
+  ✅ Sipariş durumu Kısmi
+  ✅ Eksik listede sipariş görünüyor
+  ✅ Eksik tutar TRY (3×100=300)  → listede 300,00 ₺
+  ✅ Gecikme rozeti (1 gün)
+  ✅ kalan_iptal 3 oldu  → iptal=3.0
+  ✅ Sipariş Tamamlandı
+  ✅ Eksikten düştü
+  ✅ Geri al: kalan_iptal 0
+  ✅ Geri al: sipariş Kısmi
+  ✅ Geri al: eksikte tekrar
+  ✅ Kısmi kapat (kalan 2)  → iptal=1.0 kalan=2.0
+  ✅ Aşırı kapat engellendi  → iptal=1.0
+  ✅ Tedarikçi filtresi (cari 6 → sipariş yok)
+  ✅ Rapor render (200)
+  ✅ Raporda sipariş dökümü
+  ✅ B şirketinde A eksikleri görünmüyor
+  ✅ USD teklif detayı |kur ile render (500 yok)  → status=200
+
+SONUÇ: 21 başarılı / 0 başarısız
+EKSİK TESLİMATLAR + RAPOR (B3) E2E TESTİ GEÇTİ ✅
+
+
+======================================================================
+### test_f1_mali.py (exit=0)
+======================================================================
+== F1 / Mali etki: ilk belgede bir kere — e2e testi ==
+  ✅ 1.1 irsaliye onaylandı
+  ✅ 1.2 cariye BORÇ (Satış İrsaliyesi)  → [{'borc': 1200.0, 'alacak': 0.0, 'belge_tipi': 'Satış İrsaliyesi'}]
+  ✅ 1.3 yevmiye fişi (Irsaliye)
+  ✅ 1.4 fiş satırları 120/600/391  → ['120', '600', '391']
+  ✅ 2.1 kaynaklı fatura onaylandı
+  ✅ 2.2 kaynaklı fatura cari hareket ÜRETMEZ  → cari=0
+  ✅ 2.3 kaynaklı fatura yevmiye ÜRETMEZ  → fiş=0
+  ✅ 3.1 irsaliyesiz fatura cari hareket üretir  → cari=1
+  ✅ 3.2 irsaliyesiz fatura yevmiye üretir  → fiş=1
+  ✅ 4.1 alış irsaliyesi cariye ALACAK  → [{'borc': 0.0, 'alacak': 2400.0, 'belge_tipi': 'Alış İrsaliyesi'}]
+  ✅ 4.2 alış fişi 153/191/320 (stoklu)  → [{'kod': '153', 'borc': 2000.0}, {'kod': '191', 'borc': 400.0}, {'kod': '320', 'borc': 0.0}]
+  ✅ 4.3 153 borç = matrah 2000  → 2000.0
+  ✅ 4b.1 alış fişi 770/191/320 (manuel)  → ['770', '191', '320']
+  ✅ 5.1 transfer irsaliye cari hareket ÜRETMEZ  → cari=0
+  ✅ 5.2 transfer irsaliye yevmiye ÜRETMEZ  → fiş=0
+  ✅ 5.3 transfer stok hareketi ÜRETİR (depo transferi)
+  ✅ 6.1 fatura varken iptal engellendi
+  ✅ 7.1 kaynaklı fatura iptal oldu
+  ✅ 7.2 irsaliye cari hareketi hâlâ duruyor
+  ✅ 8.1 irsaliye iptal oldu
+  ✅ 8.2 cari hareket geri alındı  → cari=0
+  ✅ 8.3 yevmiye fişi geri alındı  → fiş=0
+  ✅ 9.1 FK bütünlüğü  → []
+  ✅ 9.2 yetim yevmiye yok  → []
+  ✅ 9.3 F1TEST kalıntısı yok
+
+=== SONUÇ: 25 başarılı / 0 başarısız ===
+TÜM F1 MALİ ETKİ TESTLERİ GEÇTİ ✅
+
+
+======================================================================
+### test_f2_kdv.py (exit=0)
+======================================================================
+== F2 / KDV Dahil-Hariç — e2e testi ==
+  ✅ 1.1 kdv_ayikla(120,20)==100
+  ✅ 1.2 kdv_ayikla(118,18)==100
+  ✅ 1.3 kdv_ayikla(110,10)==100
+  ✅ 2.1 kdv_hesapla(100,20)==20
+  ✅ 2.2 kdv_hesapla(97.46,18)==17.54
+  ✅ 3.1 dahil fatura kalem net=100  → 100.0
+  ✅ 3.2 dahil fatura genel=120  → 120.0
+  ✅ 3.3 dahil fatura kdv_dahil=1
+  ✅ 4.1 hariç fatura kalem net=100
+  ✅ 4.2 dahil/hariç aynı net
+  ✅ 4.3 hariç fatura kdv_dahil=0
+  ✅ 10.1 düzenlemede kdv-dahil checkbox 'checked'
+  ✅ 10.2 satır verisi NET (100) — JS brüt gösterir
+  ✅ 10.3 hariç faturada checkbox işaretsiz
+  ✅ 5.1 dahil fiş = 120/600(100)/391(20)  → [('120', 120.0, 0.0), ('600', 0.0, 100.0), ('391', 0.0, 20.0)]
+  ✅ 5.2 hariç fiş aynı  → [('120', 120.0, 0.0), ('600', 0.0, 100.0), ('391', 0.0, 20.0)]
+  ✅ 6.1 irsaliye kalem net=100
+  ✅ 6.2 irsaliye genel=120
+  ✅ 6.3 irsaliye kdv_dahil=1
+  ✅ 6.4 F1: irsaliye cari BORÇ=120  → {'borc': 120.0}
+  ✅ 6.5 F1: irsaliye fişi 120/600/391  → [('120', 120.0, 0.0), ('600', 0.0, 100.0), ('391', 0.0, 20.0)]
+  ✅ 7.1 sipariş kalem net=100
+  ✅ 7.2 sipariş genel=120 + bayrak
+  ✅ 8.1 teklif kalem net=100
+  ✅ 8.2 teklif genel=120 + bayrak
+  ✅ 9.1 POS fatura kalem net=100  → 100.0
+  ✅ 9.2 POS fatura genel=120
+  ✅ 11.1 KDV %0 dahil==hariç==100
+  ✅ 12.1 115 brüt %18 → net 97.46  → 97.46
+  ✅ 12.2 kdv 17.54  → 17.54
+  ✅ 12.3 toplam 115.00 (kuruş kaybı yok)  → 115.0
+  ✅ 13.1 FK bütünlüğü  → []
+  ✅ 13.2 yetim yevmiye yok  → []
+  ✅ 13.3 F2TEST kalıntısı yok
+
+=== SONUÇ: 34 başarılı / 0 başarısız ===
+TÜM F2 KDV TESTLERİ GEÇTİ ✅
+
+
+======================================================================
+### test_izolasyon_e2e.py (exit=0)
+======================================================================
+======================================================================
+KURULUM — ikinci şirket (ISOB)
+======================================================================
+======================================================================
+A ŞİRKETİ (id=1) — kayıt oluşturma
+======================================================================
+  ✅ K1 girişte aktif şirket = 1
+  ✅ K2 cari A oluştu (HTTP)
+  ✅ K3 cari A sirket_id=1
+  ✅ K4 stok A oluştu (HTTP)
+  ✅ K5 stok A sirket_id=1
+  ✅ K6 fatura A oluştu (Taslak, HTTP)
+  ✅ K7 fatura A sirket_id=1
+======================================================================
+B ŞİRKETİNE GEÇİŞ — izolasyon doğrulaması
+======================================================================
+  ✅ K8 B'ye geçildi (oturum sirket_id)
+  ✅ K9 cari A, B'nin cari listesinde görünmüyor
+  ✅ K10 stok A, B'nin stok listesinde görünmüyor
+  ✅ K11 fatura A, B'nin fatura listesinde görünmüyor
+  ✅ K12 /api/cari/ara B'de A cari dönmüyor
+  ✅ K13 /api/stok/ara B'de A stok dönmüyor
+  ✅ K14 B, A cari detayını göremiyor
+  ✅ K15 B, A stok detayını göremiyor
+  ✅ K16 B, A faturasını göremiyor
+======================================================================
+B ŞİRKETİNDE KAYIT — ters yön izolasyonu
+======================================================================
+  ✅ K17 cari B oluştu
+  ✅ K18 cari B sirket_id=2
+  ✅ K19 A'ya geri dönüldü
+  ✅ K20 cari B, A'nın listesinde görünmüyor
+  ✅ K21 cari A, A'nın listesinde görünüyor
+======================================================================
+TEMİZLİK
+======================================================================
+  ✅ K22 temizlik sonrası ISO kaydı kalmadı
+
+SONUÇ: 22 başarılı / 0 başarısız
+İZOLASYON (CARİ / FATURA / STOK) E2E TESTİ GEÇTİ ✅
+
+
+======================================================================
+### test_izolasyon_mali_e2e.py (exit=0)
+======================================================================
+  ✅ A kasa hareketi kaydedildi  → status=302
+  ✅ A banka hareketi kaydedildi  → status=302
+  ✅ A kasa/banka hareketleri şirket 1'e damgalı  → kasa=[1]
+  ✅ A yevmiye fişleri şirket 1'e damgalı  → fiş=[1, 1]
+  ✅ A mizanı: 100 KASA +1000 (açılış)  → 100=52700.0 (önce 51700.0)
+  ✅ A mizanı: 102 BANKALAR +2000 (açılış)  → 102=305429.98 (önce 303429.98)
+  ✅ A mizanı dengeli (borç=alacak)  → 972718.78/972718.78
+  ✅ B aktif şirket oldu
+  ✅ B kasa listesinde A kasası YOK
+  ✅ B banka listesinde A hesabı YOK
+  ✅ B'de A banka ekstresi ENGELLİ (302)  → status=302
+  ✅ B'den A kasasına hareket ENGELLİ (403)  → status=403
+  ✅ B'den A banka hesabına hareket ENGELLİ (403)  → status=403
+  ✅ B mizanı: 100 KASA = 0 (A fişleri görünmüyor)  → 100=0
+  ✅ B mizanı: 102 BANKALAR = 0  → 102=0
+  ✅ B kendi hareketi sonrası 100 KASA = 5000  → 100=5000.0
+  ✅ B mizanı kendi başına dengeli  → 5000.0/5000.0
+  ✅ A mizanı B'den etkilenmedi (100/102 aynı)  → 100=52700.0 102=305429.98
+  ✅ hesap planı A=27 / B=27  → A=27 B=27
+
+SONUÇ: 19 başarılı / 0 başarısız
+KASA/BANKA + MUHASEBE İZOLASYON E2E TESTİ GEÇTİ ✅
+
+
+======================================================================
+### test_manuel_satir.py (exit=0)
+======================================================================
+Kaynaklar: müşteri=1 Batman Çarşı Elektronik | tedarik=5 Vestel Bölge Distribütörü A.Ş. | stok=1 MARKA-B 43" Crystal UHD 4K TV | seviye depo=1 miktar=10.0
+
+======================================================================
+TEST A — Satış faturası: stok + manuel satır (600'a tek satır yazılır)
+======================================================================
+  ✅ A1 fatura oluştu (TRY, doviz_kur=1)  → id=65 kur=1.0
+  ✅ A2 toplamlar 1200/240/1440  → 1200.0/240.0/1440.0
+  ✅ A3 kalemler: stok(1)+manuel(NULL)  → [(1, None), (None, 'Kargo Ücreti')]
+  ✅ A4 yevmiye: 600 tek satır = 1200 ALACAK (manuel dahil)  → 600 satırları: [<sqlite3.Row object at 0x7fc6d6ceed10>]
+  ✅ A4b 120 borç=1440, 391 alacak=240  → 120=[1440.0] 391=[240.0]
+  ✅ A5 fiş dengeli  → 1440.0/1440.0
+  ✅ A6 iptal sonrası yevmiye/cari hareket temiz
+
+======================================================================
+TEST B — Alış faturası: stok + manuel satır (153 stok / 770 manuel)
+======================================================================
+  ✅ B1 153=500 (stoklu), 770=100 (manuel)  → 153=[500.0] 770=[100.0]
+  ✅ B2 KDV 191=120  → 191=[120.0]
+  ✅ B3 fiş dengeli (720/720)  → 720.0/720.0
+
+======================================================================
+TEST C — İrsaliye: stok + manuel satır (stok_hareket yalnız stoklu satırda)
+======================================================================
+  ✅ C1 kalemler stok+manuel  → [(1, None), (None, 'Montaj Hizmeti')]
+  ✅ C2 stok_hareket yalnız stoklu satır (1 kayıt, miktar -2)  → [(1, -2.0)]
+  ✅ C3 stok_seviye -2 (manuel dokunmadı)  → 10.0 → 8.0
+  ✅ C4 iptal sonrası seviye eskiye döndü  → 10.0 (beklenen 10.0)
+
+======================================================================
+TEST D — İrsaliye → Fatura: manuel satır taşınır
+======================================================================
+  ✅ D1 fatura formunda manuel ad + rozet görünüyor
+  ✅ D2 fatura kalemlerinde manuel satır korundu  → [(1, None), (None, 'Montaj Hizmeti')]
+  ✅ D3 irsaliye iptali stoğu geri aldı  → 10.0 (beklenen 10.0)
+
+======================================================================
+REGRESYON — ana sayfalar 200
+======================================================================
+  ✅ GET / → 200
+  ✅ GET /fatura → 200
+  ✅ GET /irsaliye → 200
+  ✅ GET /stok → 200
+  ✅ GET /muhasebe → 200
+  ✅ GET /kartoteks → 200
+  ✅ GET /ayarlar → 200
+
+======================================================================
+NİHAİ
+======================================================================
+  ✅ mizan dengeli  → 969718.78 / 969718.78
+  ✅ test verisi temizlendi (NULL satır=0)  → NULL satır: 0
+  ✅ stok seviyesi başlangıca döndü  → 10.0 (beklenen 10.0)
+  ✅ yetim stok_hareket yok  → yetim: 0
+
+======================================================================
+SONUÇ: 28 ✅ / 0 ❌
+
+
+======================================================================
+### test_pos.py (exit=0)
+======================================================================
+== C / POS — e2e testi ==
+  ✅ 1.1 terminal listesi render
+  ✅ 1.2 yeni terminal oluşturuldu
+  ✅ 1.3 terminal düzenleme
+  ✅ 1.4 terminal pasifleştirildi
+  ✅ 1.5 pasif terminalle satış engellendi
+  ✅ 2.1 satış tamamlandı (fatura redirect)
+  ✅ 2.2 Onaylı Satış Faturası üretildi
+  ✅ 2.3 fatura kalemi
+  ✅ 2.4 pos_satis kaydı + komisyon  → kom=0.86
+  ✅ 2.5 ödeme satırları (2 adet)
+  ✅ 2.6 kart komisyonu satırda
+  ✅ 2.7 bankaya net tutar yattı  → net=47.14
+  ✅ 2.8 kasaya nakit girdi
+  ✅ 2.9 cari net sıfır (tam tahsilat)
+  ✅ 2.10 stok düşümü (POS Çıkışı)
+  ✅ 2.11 yevmiye: Fatura+Kasa+Banka fişleri  → {'Banka', 'Kasa', 'Fatura'}
+  ✅ 2.12 taksit bilgisi
+  ✅ 3.1 havale komisyonsuz net yattı
+  ✅ 4.1 veresiye tutarı
+  ✅ 4.2 fatura vadesi yazıldı
+  ✅ 4.3 cari veresiye borcu kaldı  → net=80.0
+  ✅ 4.4 veresiye ödeme satırı
+  ✅ 5.1 çek kaydı oluştu
+  ✅ 5.2 alınan çek cariye ALACAK
+  ✅ 5.3 çek yevmiyesi üretildi
+  ✅ 5.4 ödeme satırı çek referanslı
+  ✅ 6.1 perakende müşteri kullanıldı
+  ✅ 7.1 stok yetersiz engellendi
+  ✅ 7.2 ödeme fazlası engellendi
+  ✅ 7.3 vadesiz çek/senet engellendi
+  ✅ 7.4 yabancı şirket ürünü engellendi
+  ✅ 8.1 satış listesi render
+  ✅ 8.2 satış detayı render
+  ✅ 8.3 günlük rapor render
+  ✅ 9.1 depo → /pos 403
+  ✅ 9.2 depo → satış POST 403
+  ✅ 10.1 2. şirkette terminal listesi boş
+  ✅ 10.2 çapraz şirket terminaliyle satış engellendi
+  ✅ 11.1 yetim pos_satis yok  → yetim=0
+  ✅ 11.2 yabancı anahtar bütünlüğü  → []
+  ✅ 11.3 yetim yevmiye fişi yok (kaynak silinmiş)  → []
+
+=== SONUÇ: 41 başarılı / 0 başarısız ===
+TÜM POS TESTLERİ GEÇTİ ✅
+
+
+======================================================================
+### test_satin_alma_talep.py (exit=0)
+======================================================================
+  ✅ Kalemsiz talep oluşturulamadı  → once=2 sonra=2 status=200
+  ✅ Talep oluştu (Taslak)  → no=BELGE-NNN
+  ✅ Belge no formatı SAT-yıl-NNN  → BELGE-NNN
+  ✅ Kalem kopyalandı
+  ✅ Tedarikçi damgalandı
+  ✅ Taslak düzenlendi (miktar 6)  → miktar=6.0
+  ✅ Onaya gönderildi
+  ✅ Satis onaylayamadı (yetki)
+  ✅ Admin onayladı  → durum=Onaylandı onaylayan=1
+  ✅ Talep Siparişe Dönüştü
+  ✅ SAP üretildi (Bekliyor, Alis)  → no=BELGE-NNN
+  ✅ SAP belge no SAP-yıl-NNN  → BELGE-NNN
+  ✅ SAP kalemi kopyalandı (miktar 6)
+  ✅ SAP kalemi stok bağlı
+  ✅ İkinci dönüştürme engellendi (tek SAP)  → sap_adet=1
+  ✅ Onaylanmış talep silinemedi
+  ✅ Taslak talep silindi
+  ✅ Nedensiz red engellendi
+  ✅ Nedenli red işlendi
+  ✅ B şirketinde A talepleri görünmüyor
+  ✅ B'de talep sayacı bağımsız (BELGE-NNN)  → BELGE-NNN
+  ✅ B talebi B şirketine damgalı
+  ✅ B talebi manuel satırlı
+
+SONUÇ: 23 başarılı / 0 başarısız
+SATIN ALMA TALEBİ (B1) E2E TESTİ GEÇTİ ✅
+
+
+======================================================================
+### test_silme_kurallari.py (exit=0)
+======================================================================
+
+======================================================================
+TEST 1 — Teklif silme + düzenleme kilidi
+======================================================================
+  ✅ T1 taslak teklif silindi  → status=302
+  ✅ T1b silme audit izi kaldı
+  ✅ T2 onaylı teklif silinemedi
+  ✅ T3 onaylı teklif düzenlenemedi (sunucu kilidi)
+
+======================================================================
+TEST 2 — Sipariş silme
+======================================================================
+  ✅ S1 bekleyen sipariş silindi
+  ✅ S2 onaylı sipariş silinemedi
+
+======================================================================
+TEST 3 — İrsaliye silme
+======================================================================
+  ✅ I1 taslak irsaliye silindi
+  ✅ I2 onaylı irsaliye silinemedi
+
+======================================================================
+TEST 4 — Fatura silme
+======================================================================
+  ✅ F1 taslak fatura silindi
+  ✅ F2 onaylı fatura silinemedi
+
+======================================================================
+TEST 5 — Çek/Senet silme
+======================================================================
+  ✅ C1 bekleyen çek silindi
+  ✅ C1b mali iz geri alındı (cari_hareket)
+  ✅ C1c mali iz geri alındı (yevmiye)
+  ✅ C2 tahsil edilmiş çek silinemedi
+
+======================================================================
+TEST 6 — Cari silme (tüm referanslar taranır)
+======================================================================
+  ✅ Cari1 (taslak teklife bağlı) silinemedi
+  ✅ Cari2 (referanssız) silindi
+
+======================================================================
+TEST 7 — Stok silme
+======================================================================
+  ✅ Stok1 (seviyeli) silinemedi
+  ✅ Stok2 (referanssız) silindi
+
+======================================================================
+TEST 8 — Transfer ve sayım (Taslak silinebilir)
+======================================================================
+  ✅ TR1 taslak transfer silindi
+  ✅ SY1 taslak sayım silindi
+
+======================================================================
+TEST 9 — Demirbaş: amortisman varken silme engellenir
+======================================================================
+  ✅ DMB1 amortismanlı demirbaş silinemedi
+
+======================================================================
+TEST 10 — Servis parça: tamamlanmış serviste silme engellenir
+======================================================================
+  ✅ SRV1 açık serviste parça silindi
+  ✅ SRV2 tamamlanmış serviste parça silinemedi
+
+======================================================================
+SONUÇ: 23 başarılı / 0 başarısız
+TÜM SİLME TESTLERİ GEÇTİ ✅
+
+
+======================================================================
+### test_sirket_yonetimi.py (exit=0)
+======================================================================
+  ✅ yeni şirket POST → 302  → status=302
+  ✅ şirket kaydı oluştu
+  ✅ hesap planı seed (27)  → 27 kayıt
+  ✅ demirbaş kategorileri seed (5)  → 5 kayıt
+  ✅ varsayılan depo seed (1)  → 1 kayıt
+  ✅ seed idempotent (tekrar çağrı 27 kalır)  → 27 kayıt
+  ✅ admin yeni şirkete N-N üye
+  ✅ admin şirkete geçebildi  → aktif=37
+  ✅ sirketler sayfası 200 + yeni şirket listeleniyor
+  ✅ şirket güncelleme çalışıyor
+  ✅ test kullanıcı oluştu (üyelik: yalnız şirket 1)
+  ✅ üyelik yalnız şirket 1 (yeni şirket YOK)
+  ✅ kullanıcı varsayılan şirketi = 1  → aktif=1
+  ✅ üyeliksiz şirkete geçiş ENGELLENDİ  → aktif=1 (302=302)
+  ✅ üyelik eklendi (şirket 2)
+  ✅ üyelik sonrası şirkete geçebildi  → aktif=37
+  ✅ şirket pasifleştirildi (2 aktif varken)
+  ✅ son aktif şirket pasifleştirme ENGELLENDİ  → şirket1 aktif=1
+  ✅ şirket yeniden aktifleştirildi
+
+SONUÇ: 19 başarılı / 0 başarısız
+ŞİRKET YÖNETİMİ (ADIM 5) TESTİ GEÇTİ ✅
+
+
+======================================================================
+### test_teklif_siparis_manuel.py (exit=0)
+======================================================================
+Kaynaklar: müşteri=1 Batman Çarşı Elektronik | stok=1 MARKA-B 43" Crystal UHD 4K TV (Adet) | depo=1
+
+======================================================================
+TEST T — Teklif: stok + manuel satır (birim + görünen ad taşınır)
+======================================================================
+  ✅ T1 teklif oluştu  → id=26
+  ✅ T2 kalemler: stok + manuel(NULL stok_id)  → [(1, None), (None, 'Kargo Ücreti')]
+  ✅ T3 manuel açıklama korundu  → Kargo Ücreti
+  ✅ T4 stoklu satırda birim + görünen ad korundu  → birim=Adet ga=Özel Tanıtım Adı
+  ✅ T5 manuel satırda birim korundu  → Adet
+  ✅ T6 tutarlar: stok net + manuel net  → 35998.0/200.0
+  ✅ T7 teklif stok hareketi üretmez
+  ✅ T8 teklif→sipariş manuel satırı taşır
+
+======================================================================
+TEST S — Sipariş (Müşteri): stok + manuel; onay K11 manueli atlar
+======================================================================
+  ✅ S1 sipariş oluştu  → id=30
+  ✅ S2 kalemler: stok + manuel  → [(1, None), (None, 'Montaj Hizmeti')]
+  ✅ S3 manuel açıklama + birim
+  ✅ S4 onay başarılı  → Onaylandı
+  ✅ S5 rezervasyon yalnız stoklu satır için (1 adet)  → 0 → 1.0
+  ✅ S6 sipariş→irsaliye manuel satırı taşır
+  ✅ S7 iptal rezervasyonu geri alır  → 0.0
+
+Temizlik tamam.
+
+======================================================================
+SONUÇ: 15 başarılı / 0 başarısız
+TÜM TESTLER GEÇTİ ✅
+

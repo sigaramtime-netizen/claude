@@ -1,0 +1,55 @@
+== F4 / e-Dönüşüm (Mock/Sandbox) — e2e testi ==
+aktif sirket_id: 1
+======================================================================
+BÖLÜM 1 — Otomatik e-belge üretimi (tip + taslak)
+======================================================================
+  ✅ 1. test_cari_mukellef_ayari: mükellef→eFatura, değil→eArsiv (otomatik)  → ea=EFatura, eb=EArsiv
+  ✅ 2. test_fatura_onay_otomatik_ebeveyn: Satış onayı → e_belge Taslak + tip doğru  → BELGE-NNN / Taslak
+======================================================================
+BÖLÜM 2 — e-İrsaliye otomatik üretim
+======================================================================
+  ✅ 3. test_irsaliye_onay_otomatik_eirsaliye: Satış irsaliyesi onayı → EIrsaliye Taslak  → BELGE-NNN / EIrsaliye
+======================================================================
+BÖLÜM 3 — Gönderim + durum makinesi
+======================================================================
+  ✅ 4. test_gonder_mock_onay: test modu 1 → Gönderildi→Onaylandı + ETN  → durum=Onaylandı, ettn=ETTN-95E23C71A285
+  ✅ 5. test_gonder_red_yolu: test_modu 0 → Gönderildi; red → Reddedildi; tekrar gönder → Onaylandı  → Gönderildi → Reddedildi → Onaylandı
+  ✅ 6. test_cifte_ebeveyn_engeli: aynı fatura 2. kez e_belge üretemez  → e_belge sayısı=1
+======================================================================
+BÖLÜM 4 — Gelen kutusu
+======================================================================
+  ✅ 7. test_gelen_cek_mock: /e-fatura/gelen/cek → en az 1 e-Fatura geldi  → 1 belge
+  ✅ 8. test_gelen_liste_k1: Şirket B'de A'nın geleni görünmez
+  ✅ 9. test_gelen_kabul: gelen e-Fatura Kabul
+  ✅ 10. test_gelen_red: gelen belge Red
+======================================================================
+BÖLÜM 5 — Gelen dönüşümü (Alış Faturası / İrsaliyesi)
+======================================================================
+  ✅ 11. test_gelen_donustur_fatura: e-Fatura → Alış Faturası TASLAK + kalemler eşleşti  → BELGE-NNN kalem=[4, 7]
+  ✅ 12. test_gelen_donustur_irsaliye: e-İrsaliye → Alış İrsaliyesi TASLAK  → BELGE-002 kalem=[3, 5]
+  ✅ 13. test_gelen_cifte_donusum_engeli: aynı gelen 2. kez dönüştürülemez  → fatura sayısı 1→1
+  ✅ 14. test_gelen_manuel_kalem: eşleşmeyen kalem manuel satır (stok_id NULL + aciklama)  → kalem=[(4, ''), (None, 'XXX-BILINMEYEN-999 B')]
+======================================================================
+BÖLÜM 6 — Kapsam/altın kural kontrolleri
+======================================================================
+  ✅ 15. test_alis_faturasi_ebeveyn_yok: Alış faturası e-Fatura oluşturmaz
+  ✅ 16. test_entegrator_ayar_kayit: Mock → EDM + api_anahtar, K1 (sirket_id PK)  → {'sirket_id': 1, 'entegrator': 'EDM', 'api_anahtar': 'key-123456', 'test_modu': 1, 'updated_at': '2026-09-11 17:35:34'}
+  ✅ 17. test_entegrator_mock_uyari: Mock seçiliyken simülasyon hint'i görünüyor
+  ✅ 18. test_f1_mali_etki_korundu: e-Fatura Gönder → cari/yevmiye artmadı  → cari 38→39→39, yevmiye 37→38→38
+  ✅ 19. test_f2_kdv_korundu: KDV dahil → net kayıt + XML'de net doğru  → ara=100.0, kdv=20.0, genel=120.0
+  ✅ 20. test_f3_typeahead_korundu: /api/ara hâlâ çalışıyor  → [{'id': 3, 'varyant_id': 0, 'kod': 'BUZ-510-VST-003', 'ad': 'Vestel 510L No-Frost Buzdolabı', 'varyant_ad': '', 'barkod': '8691234500035', 'birim': 'Adet', 'kdv_orani': 20.0, 'alis_fiyat': 16000.0, 'satis_fiyat': 19499.0, 'iskonto_orani': 3.0}]
+======================================================================
+TEMİZLİK + BÜTÜNLÜK
+======================================================================
+  ✅ 21. test_fk_butunluk: FK check boş  → []
+  ✅ 22. test_kalinti_yok: F4TEST kalıntısı yok  → kalıntı=0, F4B=0
+
+=== SONUÇ: 22 başarılı / 0 başarısız ===
+TÜM F4 E-DÖNÜŞÜM TESTLERİ GEÇTİ ✅
+
+no tests ran in 0.94s
+
+======================================================================
+PYTEST NOTU (dürüstlük): proje pytest kullanmıyor; testler düz script.
+python3 -m pytest test_f4_edonusum.py -q  →  no tests ran (collected 0 items)
+Gerçek çıktı yukarıdaki 'python3 test_f4_edonusum.py' çalışmasıdır (22/22).

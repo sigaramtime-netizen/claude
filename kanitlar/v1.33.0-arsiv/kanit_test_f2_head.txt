@@ -1,0 +1,105 @@
+======================================================================
+KANIT 2 / 3  —  head -100 test_f2_kdv.py
+Üretim zamanı : 2026-09-11 15:39:30
+Dosya         : test_f2_kdv.py  (TOPLAM 267 satır)
+======================================================================
+# -*- coding: utf-8 -*-
+"""F2 — KDV Dahil / Hariç fiyat girişi e2e testi.
+
+Kural: DB'de HER ZAMAN NET (KDV hariç) tutulur; KDV dahil girilen fiyat
+core.kdv_ayikla ile geriye ayrıştırılır. Mizan/kar-zarar bozulmaz.
+
+Çalıştırma: sunucu 8080'de çalışırken  python3 test_f2_kdv.py
+"""
+import datetime
+import re
+import sqlite3
+
+import requests
+
+import core
+
+BASE = "http://127.0.0.1:8080"
+DB = "data/erp.db"
+MARK = "F2TEST"
+
+ok, fail = [], []
+
+
+def check(name, cond, detay=""):
+    (ok if cond else fail).append(name)
+    print(("  ✅ " if cond else "  ❌ ") + name + (f"  → {detay}" if detay else ""))
+
+
+def db(q, *a):
+    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    r = c.execute(q, a).fetchall(); c.close(); return r
+
+
+def db1(q, *a):
+    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    r = c.execute(q, a).fetchone(); c.close(); return r
+
+
+def dbx(q, *a):
+    c = sqlite3.connect(DB); c.execute(q, a); c.commit(); c.close()
+
+
+def giris():
+    s = requests.Session()
+    r = s.post(BASE + "/giris", data={"kullanici_adi": "admin", "sifre": "1234"},
+               allow_redirects=False)
+    assert r.status_code == 302, "giriş başarısız"
+    return s
+
+
+def satir(kdv_dahil, fiyat, kdv="20", stok_id="", manuel_ad="F2TEST hizmet"):
+    """Tek satırlık form verisi (manuel satır — stok/rezervasyona dokunmaz)."""
+    return [("k_stok_id", stok_id), ("k_varyant_id", "0"),
+            ("k_manuel_ad", manuel_ad if not stok_id else ""),
+            ("k_birim", "Adet"), ("k_goruntu_ad", ""),
+            ("k_miktar", "1"), ("k_birim_fiyat", str(fiyat)),
+            ("k_iskonto", "0"), ("k_kdv", str(kdv))] + \
+           ([("kdv_dahil", "1")] if kdv_dahil else [])
+
+
+def fatura_olustur(s, kdv_dahil, fiyat, kdv="20", aciklama=MARK):
+    data = [("tip", "Satis"), ("cari_id", "1"), ("tarih", datetime.date.today().isoformat()),
+            ("para_birimi", "TRY"), ("doviz_kur", ""), ("vade", ""),
+            ("aciklama", aciklama), ("action", "kaydet")] + satir(kdv_dahil, fiyat, kdv)
+    r = s.post(BASE + "/fatura/yeni", data=data, allow_redirects=False)
+    loc = r.headers.get("Location") or ""
+    assert "/fatura/" in loc, f"fatura oluşmadı: {r.status_code} {loc}"
+    return int(loc.rstrip("/").split("/")[-1])
+
+
+def temizle_fatura(fid):
+    dbx("DELETE FROM yevmiye_kalem WHERE yevmiye_id IN "
+        "(SELECT id FROM yevmiye WHERE kaynak_modul='Fatura' AND kaynak_id=?)", fid)
+    dbx("DELETE FROM yevmiye WHERE kaynak_modul='Fatura' AND kaynak_id=?", fid)
+    dbx("DELETE FROM cari_hareket WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=?", fid)
+    dbx("DELETE FROM audit_log WHERE tablo='fatura' AND kayit_id=?", fid)
+    dbx("DELETE FROM fatura_kalem WHERE fatura_id=?", fid)
+    dbx("DELETE FROM fatura WHERE id=?", fid)
+
+
+def temizle_irsaliye(iid):
+    dbx("DELETE FROM yevmiye_kalem WHERE yevmiye_id IN "
+        "(SELECT id FROM yevmiye WHERE kaynak_modul='Irsaliye' AND kaynak_id=?)", iid)
+    dbx("DELETE FROM yevmiye WHERE kaynak_modul='Irsaliye' AND kaynak_id=?", iid)
+    dbx("DELETE FROM cari_hareket WHERE ilgili_modul='Irsaliye' AND ilgili_kayit_id=?", iid)
+    dbx("DELETE FROM stok_hareket WHERE ilgili_modul='Irsaliye' AND ilgili_kayit_id=?", iid)
+    dbx("DELETE FROM audit_log WHERE tablo='irsaliye' AND kayit_id=?", iid)
+    dbx("DELETE FROM irsaliye_kalem WHERE irsaliye_id=?", iid)
+    dbx("DELETE FROM irsaliye WHERE id=?", iid)
+
+
+def temizle_teklif(tid):
+    dbx("DELETE FROM audit_log WHERE tablo='teklif' AND kayit_id=?", tid)
+    dbx("DELETE FROM teklif_kalem WHERE teklif_id=?", tid)
+    dbx("DELETE FROM teklif WHERE id=?", tid)
+
+
+def temizle_siparis(sid):
+    dbx("DELETE FROM audit_log WHERE tablo='siparis' AND kayit_id=?", sid)
+    dbx("DELETE FROM siparis_kalem WHERE siparis_id=?", sid)

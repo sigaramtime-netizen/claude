@@ -1,0 +1,18 @@
+===== Brn Teknoloji ERP — F5-A (v1.35.0) — KANIT ÖZETİ + HASH =====
+Zaman damgası: 2026-09-11 20:00:42
+Sürüm: 1.35.0
+
+--- Kanıt dosyaları (sha256) ---
+88cca7880305c0e9f7776456f410a578bba14bf72ee970c6f8600e8b1d48057f  kanitlar/v1.35.0/kanit_f5a_dosya_listesi.txt
+b44fafc3065ce77251dc3607afd74b00f73faffe487673ec691e507004bf82ad  kanitlar/v1.35.0/kanit_f5a_degisen_dosyalar.txt
+68f4e2ffb6cb770fd6b798c0dbfe363e5d58b6a7af00d5ef3af7038dbe00bf0f  kanitlar/v1.35.0/kanit_f5a_test_ciktisi.txt
+
+--- Kritik kaynak dosyalar (sha256) ---
+07259ff518eab12ef938ea025c053af94c43e1f62c80e75d522a8d01ca4cc6c5  kod/db.py
+9887f89b837ac67317d1e32b601c949ff16e67a31ae79dccc17e9678ffa3b4fc  kod/finansal.py
+e6872594b6acb3704e515e331ec9a02ef5cb590ce11afcc513767506b92394e6  kod/app.py
+edc5c5039cc0d996456b4faa5dc6c0e80341c53bac299396621ec7de6c6db4d4  kod/config.py
+464c808dad93a4f25c951c1c7e7b1dc60906f6ca2a1cc5b953b8ee48478eedb3  kod/templates/finansal/butce.html
+5c9bd1a8728b32962af3d4021e94b7e9d905129aedfe1975312d2e5c9c524789  kod/templates/finansal/index.html
+12a445048cfa46b127317a0f5317c77ddf9873efca588f1527b3b1c8d6a83740  kod/templates/dashboard.html
+0d66f73fb30d069f036c727d5af926ac02418c1a763174e355db9d5fcc227e62  kod/test_f5a_finansal.py

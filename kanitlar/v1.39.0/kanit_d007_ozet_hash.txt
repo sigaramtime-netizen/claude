@@ -1,0 +1,54 @@
+===== Brn Teknoloji ERP — D007 (v1.39.0) — ÖZET + HASH =====
+Tarih: 2026-09-12 12:54:54
+
+SÜRÜM: 1.39.0
+KAPSAM: 10 madde (kullanıcı bildirimleri) — kritik: stok marka inline ekleme
+
+--- Veri Modeli (migrasyon, idempotent PRAGMA) ---
+  stok_kart: + tevkifat_orani REAL DEFAULT 0, istisna_kodu, grubu, ana_grup, alt_grup,
+             ozel_kod1, ozel_kod2, ozel_kod3, model
+  irsaliye : + doviz_kur REAL DEFAULT 1 (para_birimi zaten vardı)
+  FK/UNIQUE: YOK (yeni); mevcut FK korundu.
+
+--- Test Sonuçları ---
+  test_d007_iyilestirmeler.py : 30 başarılı / 0 başarısız
+  TAM REGRESYON (23 dosya)    : 526 başarılı / 0 başarısız
+  FK bütünlüğü (PRAGMA foreign_key_check): 0 satır
+  D007TEST kalıntısı: 0
+
+--- Madde bazlı özet ---
+  1  KDV dahil/hariç → <select> (fatura/irsaliye/siparis/teklif/pos + form-satir.js/pos JS)
+  2  Stok marka inline ekleme → POST /api/marka/ekle (Ajax, sirket_id=K1) + +Marka butonu (KRİTİK)
+  3  Stok kart 8 ek alan + model → form/liste(grubu)/detay + INSERT/UPDATE
+  4  Typeahead TTEC fix → api.py _stok_ara ORDER BY sadeleştirildi + seri_lot_takibi eklendi
+  5  İrsaliye döviz USD/EUR/GBP → para_birimi+doviz_kur; cari hareket + yevmiye TL çevrimi (K18)
+  6  Eksi stok izni → irsaliye _stok_kontrol_ve_uygula: kontrol → UYARI log, onay bloke edilmez
+  7  Cari kartoteks typeahead → kartoteks/cari.html (typeahead + auto-submit)
+  8  MÜŞTERİ-A 2 irsaliye (alış+satış) → _cari_rows/cari_ekstre doğrulandı; HerIkisi cari e2e test
+  9  Detay sayfalarında Sil butonu → fatura/irsaliye/siparis/teklif detay (mevcut, doğrulandı)
+  10 Tüm cari/stok select'leri typeahead → kasa/banka/cek_senet/garanti/stok hareket/sayım/transfer
+
+--- SHA-256 (değişen kritik kaynak dosyalar) ---
+b143447d9e6891dddab995628427f89a31f904b5c477e6bd959803cbe3573778  api.py
+faf3c7b0de206892a6073cad287aad39be3bf2a87a8eaa27c9a5c8dc29650bc9  config.py
+e461f5024f9561be08b1e01fa14f27a982ccadda766eccb6b5b9131f52d5ff5b  core.py
+9168d2b2b28497c534045c8d856b9e8d6b0bf974cc46addb702e0dab1c4ce8b0  db.py
+205ada40589a44e15c546de15fa6bbb461aa2d3e9f2364b209d54139d8581835  fatura.py
+5d1aa53b0412867620098250b410a1b3a8f83447aa3be5307f9baa28e7df77bf  irsaliye.py
+3c09ef8d177e9265d6157461f2fc203feb7a58a0dffed2ed6b167731943138bf  muhasebe.py
+34cb0a29ae9172f1917c530f66c5dd5efb990121e63005dea5b59209e4e278b2  pos.py
+4c30a8b5e25d654237a34f866818d892da7efcec558619c029fefbd8eec58bed  siparis.py
+2f200e11a62403db9bc34040f74648e9ddb627febb863807118fff3ad114ca69  static/js/form-satir.js
+fae2cde8f2400f0838cc81051c828221cb88cc26eb2f57c101dec625e3db779c  stok.py
+1ee97fcdf54628259de7edf21e802c31151d20cf143024dc005dcf7476afa454  teklif.py
+70bc10c032dc8cb034533447586ed410d60c1ea948baf1face16df24eb6e3799  test_d007_iyilestirmeler.py
+25a66d34149fd283b17079c71c59e0b5be0ed6d33e72df698a3bbfe6c1028346  test_f2_kdv.py
+f7e3855143aee02984cad06378b2fc7a6060c8abd2c7f3b745085ecb6e9129e7  test_f6_cila.py
+
+--- SHA-256 (kanıt dosyaları) ---
+3971a62df1157018103bc678747b2e75ca062e1e11298dbde3549324219580bf  D007-tam-regresyon.txt
+e700f8fd66ae8c5923468944ba36ba547cab1d29eb3e900f8e4b50286c2e0965  D007-test-ciktisi.txt
+6a7ff398aede7bb7408d7e49dd3e34416e49b84521fcdd25dde6d104fc3b77c9  kanit_d007_degisen_dosyalar.txt
+853c57b5aa9d9717fe1dda9960681122abc926fa914b1437bf49cef38d378fc4  kanit_d007_dosya_listesi.txt
+f1392a1adef4f53a2e3b47da64f1a9945040c0dc5d29e95294005ddb38429354  kanit_d007_ozet_hash.txt
+a3e224cccc5f588167783bbeb3c09bb9ff7db743ebfb2822e3a369b0b0efc087  pytest-gosterim.txt

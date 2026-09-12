@@ -1,0 +1,64 @@
+== D007 / Kullanıcı Bildirimleri İyileştirmeleri (v1.39.0) — e2e testi ==
+======================================================================
+BÖLÜM A — KDV dahil/hariç select (madde 1)
+======================================================================
+  ✅ 1. test_kdv_select_fatura: kdv_dahil=1 → net 100  → {'birim_fiyat': 100.0}
+  ✅ 1b. fatura formunda kdv_dahil <select> var
+  ✅ 2. test_kdv_select_irsaliye: kdv_dahil=1 → net 100  → {'birim_fiyat': 100.0}
+  ✅ 2b. irsaliye formunda kdv_dahil <select> var
+  ✅ 3. test_kdv_select_teklif_siparis_pos: 3 şablon daha select  → teklif/siparis=True, pos=True
+======================================================================
+BÖLÜM B — Stok marka inline ekleme (madde 2, KRİTİK)
+======================================================================
+  ✅ 4. test_marka_inline_ekle: POST /api/marka/ekle → 200 + id  → {'id': 13, 'ad': 'D007TTECMARKA'}
+  ✅ 4b. stok formunda + Marka butonu var
+  ✅ 4c. inline marka ile stok kaydedildi → marka_id set  → {'marka_id': 13}
+======================================================================
+BÖLÜM C — Stok kart 8 ek alan (madde 3)
+======================================================================
+  ✅ 5. test_stok_ek_alanlar_kayit: 8 alan + model doğru  → {'model': 'GH6', 'tevkifat_orani': 50.0, 'grubu': 'Elektronik', 'ozel_kod1': 'BRN-1'}
+  ✅ 6. test_stok_ek_alanlar_guncelle: değerler korunur + model güncellenir  → {'id': 97, 'kod': 'D007-STK-ALAN', 'ad': 'D007 Markalı Ürün', 'barkod': '', 'marka_id': 13, 'kategori_id': None, 'birim': 'Adet', 'kdv_orani': 20.0, 'otv_orani': 0.0, 'alis_fiyat': 0.0, 'satis_fiyat': 0.0, 'para_birimi': 'TRY', 'iskonto_orani': 0.0, 'kritik_stok': 0.0, 'seri_lot_takibi': 0, 'varyant_takibi': 0, 'teknik_ozellikler': '', 'aktif': 1, 'created_by': 1, 'updated_by': 1, 'created_at': '2026-09-12 12:53:56', 'updated_at': '2026-09-12 12:53:56', 'tip': 'Urun', 'garanti_suresi_ay': 24, 'sirket_id': 1, 'tevkifat_orani': 50.0, 'istisna_kodu': '351', 'grubu': 'Elektronik', 'ana_grup': 'Beyaz Eşya', 'alt_grup': 'TV', 'ozel_kod1': 'BRN-1', 'ozel_kod2': 'BRN-2', 'ozel_kod3': 'BRN-3', 'model': 'GH6-v2'}
+======================================================================
+BÖLÜM D — Typeahead TTEC filtre bug (madde 4)
+======================================================================
+  ✅ 7. test_api_ara_TTEC: q=TTEC → tam 1 kayıt (TTEC)  → 1 kayıt
+  ✅ 7b. q=T → 1'den fazla kayıt (geniş liste)  → 14 kayıt
+  ✅ 8. test_typeahead_irsaliye: form-satir.js /api/ara?tip=stok kullanıyor
+======================================================================
+BÖLÜM E — İrsaliye döviz USD + TL çeviri (madde 5)
+======================================================================
+  ✅ 9. test_irsaliye_doviz_usd: para_birimi=USD kur=30 kaydedildi  → {'para_birimi': 'USD', 'doviz_kur': 30.0, 'genel_toplam': 100.0}
+  ✅ 9b. cari hareket TL çevrilmiş (100 USD × 30 = 3000 TL)  → {'borc': 3000.0, 'para_birimi': 'USD', 'doviz_kur': 30.0}
+  ✅ 10. test_irsaliye_doviz_tl_ceviri_muhasebe: yevmiye TL dengeli (borç=alacak)  → borç=3000.0, alacak=3000.0
+======================================================================
+BÖLÜM F — Eksi stok izni (madde 6)
+======================================================================
+  ✅ 11. test_eksi_stok_izin: stok 8 → satış 10 onay BAŞARILI → seviye -2  → sev=-2.0
+  ✅ 11b. iptal → seviye 8'e geri döner  → {'miktar': 8.0}
+  ✅ 12. test_eksi_stok_fatura: fatura stok 99 isterken oluşur (stok engeli yok)
+======================================================================
+BÖLÜM G — Cari kartoteks typeahead + MÜŞTERİ-A 2 irsaliye (madde 7-8)
+======================================================================
+  ✅ 13. test_kartoteks_cari_typeahead: /api/ara cari MÜŞTERİ-A filtresi + typeahead UI  → 1 kayıt
+  ✅ 14. test_cari_ekstre_2_irsaliye: MÜŞTERİ-A'ta 2 irsaliye satırı (borç 1000 + alacak 500)  → 2 satır, borç=1000.0, alacak=500.0
+  ✅ 15. test_kartoteks_cari_2_irsaliye: kartoteks toplamı + bakiye 500  → bakiye=500.0
+======================================================================
+BÖLÜM H — Detay Sil butonu + typeahead genelleme (madde 9-10)
+======================================================================
+  ✅ 16. test_sil_butonu_detay: 4 detay sayfada Sil formu
+  ✅ 17. test_typeahead_genel_cari: select name=cari_id → 0
+  ✅ 18. test_typeahead_genel_stok: select name=stok_id → 0
+======================================================================
+BÖLÜM I — Regresyon: F6 / F5c / F5b / F1 / K1 (madde 19-21)
+======================================================================
+  ✅ 19. test_f6_korundu: bildirim/yetki/saglik/edonusum 200
+  ✅ 20. test_f5c_f5b_f1_korundu: beyanname/demirbas/butce/fatura/irsaliye 200
+  ✅ 21. test_k1_korundu: D007 verisi başka şirkette yok  → 0
+======================================================================
+BÖLÜM J — FK bütünlüğü + kalıntı (madde 22)
+======================================================================
+  ✅ 22.1 test_fk_kalinti: FK bütünlüğü (foreign_key_check = 0)  → []
+  ✅ 22.2 D007TEST kalıntısı yok  → 0
+
+=== SONUÇ: 30 başarılı / 0 başarısız (toplam 30) ===
+TÜM D007 İYİLEŞTİRME TESTLERİ GEÇTİ ✅

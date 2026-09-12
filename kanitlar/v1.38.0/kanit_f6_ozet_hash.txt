@@ -1,0 +1,21 @@
+===== Brn Teknoloji ERP — F6 (v1.38.0) — KANIT ÖZETİ + HASH =====
+Zaman damgası: 2026-09-12 08:36:31
+Sürüm: 1.38.0
+
+--- Kanıt dosyaları (sha256) ---
+9ee43f653b19a3700f06501de279d70c1806efdcdb8df806f398cae1c4475b2a  kanitlar/v1.38.0/kanit_f6_dosya_listesi.txt
+7240fb0636c0d62855370e127109f93c6b2d865d9734ce1abb09107c5314ac44  kanitlar/v1.38.0/kanit_f6_degisen_dosyalar.txt
+792aaef67d3d0ded19a38634d486922e8081ff820c07561945c3b04acbc87557  kanitlar/v1.38.0/kanit_f6_test_ciktisi.txt
+
+--- Kritik kaynak dosyalar (sha256) ---
+47532b900ede3d54978597bbaa014bb8ee0a2d36f0cae2554ce96166151ac577  kod/app.py
+510627fe3b1f05771ae34754f2c50590481376203b057eb921c074933a4b0c00  kod/core.py
+f23d1254131f4be17381e022665a5cabc335f82b54ab88bab10b2744871914c9  kod/fatura.py
+97baa7065697ea3c4e993e6430faab7de05b8685461cd6a44d127adafe2ec35e  kod/irsaliye.py
+fa5a40f8f689775fdfa8196227d6d0ed7d38c4f9b4482084f0d8f066e0b995bf  kod/siparis.py
+02e755ee01ab0d533013948e06cb60c50695b6cfd27ed922af97667bf6213380  kod/sube.py
+2404f23992ef7138191e9851b05886a46845bcc241f6e14a9d4c9e1d98d691be  kod/templates/yazdir/belge.html
+666c28e553ecfd4d5754a89312ac824a70b05c0a3378aeebe2b3b79875926004  kod/templates/yetkiler.html
+a8775ff8ac038add00fa8f7ce6b2a8d80c0c4074409917a20ed0d1dbf3cecb9a  kod/templates/sube/liste.html
+8d9899536fd72b1e30940de7649679ca351c593bc32d4491451f91e52311f5c1  kod/test_f6_cila.py
+a80128be526cc983726d951196c26851a8800819f32705c54b36b719462a95a4  kod/config.py

@@ -1,0 +1,15 @@
+===== Brn Teknoloji ERP — F5-B (v1.36.0) — KANIT ÖZETİ + HASH =====
+Zaman damgası: 2026-09-11 20:27:00
+Sürüm: 1.36.0
+
+--- Kanıt dosyaları (sha256) ---
+05b19a24ec933aeb1a3696645679b12022cbcd9ab4879d611b1be081397d9363  kanitlar/v1.36.0/kanit_f5b_dosya_listesi.txt
+cc692f53bc4c55ca36ff3ff9b55515f847e0d847e8d56410f7e0fe18c61f563a  kanitlar/v1.36.0/kanit_f5b_degisen_dosyalar.txt
+635a196c89d17204ba9942ef34caae96d47c3f7ffa30afbaee32f48776d5b6bd  kanitlar/v1.36.0/kanit_f5b_test_ciktisi.txt
+
+--- Kritik kaynak dosyalar (sha256) ---
+3d553ee16c158f99119440e636e8f46ca0e58d0ecc3cfcdfbf3af899895baf76  kod/demirbas.py
+5252065ad9b03dac807ed03c4a23513cf6f623395cbe6ab90134f0df72154ec0  kod/templates/demirbas/index.html
+889178cd6c33d5dd7b00ab0506c013edfbf684ade3dd055a7c1129d1147c55b2  kod/templates/demirbas/detay.html
+72b623cb4b45d19cdd461f1713cd6ebfbc1f69fbf7593a69def72c53cd1a59f1  kod/test_f5b_demirbas.py
+5f8109be56ab4b0fa213c844a5d093adb4ef28f08ce341ff2cdf7ba3900eb76a  kod/config.py

@@ -1,0 +1,4 @@
+=== pytest dürüst gösterim (proje pytest KULLANMAZ; e2e scriptleri) ===
+$ python3 -m pytest -q
+
+no tests ran in 8.24s
