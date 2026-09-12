@@ -1,6 +1,7 @@
-# 📜 ANAYASA v9 (SON) — BRN Teknoloji ERP Çalışma Sistemi
+# 📜 ANAYASA v10 (SON) — BRN Teknoloji ERP Çalışma Sistemi
 
-> Tek geçerli kaynak bu dosyadır. v8'den tek fark: **Claude'a İÇERİK NASIL GİDER** kuralı netleşti.
+> Tek geçerli kaynak bu dosyadır.
+> v9'dan farkı: "Claude'a ZIP gönderilmez" kuralı GM1 tarafından reddedildi → v10 doğru kuralı yazar.
 
 ---
 
@@ -18,64 +19,66 @@
 | Repo | Görünürlük | İçerik |
 |---|---|---|
 | `BRN-Teknoloji-ERP` | 🔒 PRIVATE | **kod/**, ham kanıtlar, her şeyin aslı |
-| `claude` | 🌍 PUBLIC | GM1 paneli: direktif/rapor/denetim/docs/kanıt — hepsi SANSÜRLÜ METİN |
+| `claude` | 🌍 PUBLIC | GM1 paneli: direktif/rapor/denetim/docs/kanıt — SANSÜRLÜ |
 
-**Senkron:** Otomatik değil; KÖPRÜ yapar. Public her zaman private'ın SANSÜRLÜ YANSIMASIDIR.
+**Senkron:** Otomatik değil; KÖPRÜ yapar. Public = private'ın SANSÜRLÜ YANSIMASI.
 
-## 3) ⭐ CLAUDE'A İÇERİK NASIL GİDER (EN ÖNEMLİ KURAL)
+## 3) ⭐ CLAUDE'A İÇERİK NASIL GİDER (EN ÖNEMLİ KURAL — GM1 onaylı)
 
-**KURAL: Claude'a ASLA ZIP ve RESİM (PNG) GÖNDERİLMEZ. Her şey METİN olur.**
+İKİ DURUM:
 
-Neden:
-- Claude web, GitHub'daki **zip'i (binary) indirip açamıyor** → görmezden geliyor/eksik görüyor.
-- Claude web, **resim (PNG) okuyamıyor**.
-- Zip/uzun dosya **kotayı erken bitiriyor**.
+### A) KOD / VERİ MODELİ / İŞ MANTIĞI / ROTA / DAVRANIŞ DEĞİŞİKLİĞİ OLAN PAKETLER
+(D009 ve sonrası çoğu paket bu sınıftadır.)
+- KÖPRÜ güncel kaynak kodu **ZIP** hazırlar: PNG/resim YOK, kod+seed SANSÜRLÜ
+  (gerçek isim → MÜŞTERİ-A), demo seed'li DB dahil.
+- Zip public repoda `paketler/` altına konur; denetim paketi md'sine ZIP LİNKİ eklenir.
+- **GM1 zip'i indirir, testleri BİZZAT ÇALIŞTIRIR, kodu/DB'yi inceler, SONRA karar verir.**
+- "Rapor doğru yazılmış" yaklaşımıyla ONAY VERİLMEZ — bağımsız doğrulama ŞART.
 
-Çözüm (kalıcı):
-- Claude'un ihtiyacı olan HER ŞEY public repoda **ayrı .md/.txt dosyası** olarak durur.
-- Claude bunları **raw link** ile okur (tek seferde küçük metin, kota dostu):
-  `https://raw.githubusercontent.com/sigaramtime-netizen/claude/main/<YOL>`
-- Kod incelemesi gerekiyorsa, ilgili dosya(lar) **metin olarak** public'e konur (`.py` içeriği
-  `.txt`/`.md` içine). Kod public'e çıkmadan önce SANSÜRLENİR (gerçek isim → MÜŞTERİ-A).
-- Ekran görüntüsü istenen kanıtlarda: PNG YERİNE coder **metin kanıt** verir
-  (test çıktısı, HTTP durum listesi, dosya listesi). Görsel kanıt gerekirse köprü
-  ekranı "şu sayfa 200 döndü, şu alanlar mevcut" diye METNE çevirir.
+### B) SAF DOKÜMANTASYON PAKETLERİ
+(kod/veri/mantık değişikliği YOK — örn. D008)
+- Metin (raw link) okuması YETERLİDİR; zip gerekmez.
+- Bu bir **İSTİSNADIR**, kural DEĞİLDİR.
+
+### GENEL KURALLAR (her iki durumda)
+- ZIP içine PNG/resim GİRMEZ (görüntü gerekmiyor).
+- Public'e çıkan her şey (zip dahil) SANSÜRLÜDÜR.
+- KÖPRÜ, GM1'den ÖNCE coder iddialarını TARAFSIZ doğrular (testleri kendi çalıştırır).
+  Bu, GM1'in bağımsız çalıştırmasının YERİNİ TUTMAZ — yardımcı kanıttır.
+- Raw link formatı: `https://raw.githubusercontent.com/sigaramtime-netizen/claude/main/<YOL>`
 
 ## 4) GÜNLÜK DÖNGÜ
 
 ```
 1. Kral → Claude'a "şu görevi direktif yaz / şu raporu denetle"
-2. Claude → public repoyu RAW LİNK ile okur → kararını metin yazar
+2. Claude → public repoyu okur (kod paketi ise zip'i indirir + test çalıştırır) → karar yazar
 3. Kral → kararı BU pencereye yapıştırır
-4. KÖPRÜ → private repoya işler + sansürlü METİN kopyayı public'e koyar + DURUM günceller
-5. Kral → Coder'a "devam et" → Coder kodlar, private'a rapor+kanıt (metin) push'lar
-6. KÖPRÜ → yeni rapor/kanıt/kodun sansürlü METİN hallerini public'e koyar + denetim paketi hazırlar
+4. KÖPRÜ → private repoya işler + sansürlü kopyayı public'e koyar + DURUM günceller
+5. Kral → Coder'a "devam et" → Coder kodlar, private'a rapor+kanıt push'lar
+6. KÖPRÜ → rapor/kanıt/kodun sansürlü hallerini public'e koyar + zip + denetim paketi hazırlar
 7. 1. adıma dön
 ```
 
 ## 5) PUBLIC'E GİREN / GİRMEYEN
 
-- ✅ GİRER (metin): direktifler, raporlar, denetimler, paket md'leri, DURUM/ROL/ANAYASA/BRİFİNG,
-  `docs/` (tüm faz özetleri), test ÇIKTILARI, regresyon logları, dosya listeleri,
-  gerektiğinde SANSÜRLÜ kod metni.
-- ❌ GİRMEZ: ZIP, PNG/resim, `data/*.db`, ham `kod/*.py` (sansürsüz), gerçek müşteri adı/belge no/tutar.
+- ✅ GİRER: direktifler, raporlar, denetimler, paket md'leri, DURUM/ROL/ANAYASA/BRİFİNG,
+  `docs/`, test çıktıları, regresyon logları, dosya listeleri, **sansürlü ZIP** (kod paketleri için),
+  gerektiğinde sansürlü kod metni.
+- ❌ GİRMEZ: PNG/resim, `data/*.db` (sansürsüz haliyle), sansürsüz kod, gerçek müşteri adı/belge no/tutar.
 
-**SANSÜR:** gerçek isim → `MÜŞTERİ-A/B`, marka → `MARKA-A/B/C`, belge no → `BELGE-NNN`,
-gerçek tutar → demo tutarlar.
+**SANSÜR:** gerçek isim → `MÜŞTERİ-A/B`, marka → `MARKA-A/B/C`, belge no → `BELGE-NNN`, tutar → demo.
 
 ## 6) VARDIYA (Claude hakkı bitince)
 
 - Kullanıcı ARENA GM2'ye yazar → GM2 GitHub'daki son durumu okuyup kaldığı yerden sürdürür.
-- Claude geri gelince iş Claude'a döner. İş kaybı olmaz.
+- Claude geri gelince iş Claude'a döner.
 
 ## 7) KÖPRÜ NE YAPAR / YAPMAZ
 
-- ✅ YAPAR: kararları işlemek, sansür + senkron, metin paket hazırlamak, raw link vermek,
-  coder iddialarını TARAFSIZ doğrulamak (testleri kendi çalıştırıp kanıt üretmek).
-- ❌ YAPMAZ: direktif/denetim KARARI vermek (GM1'in), kod yazmak (coder'ın).
+- ✅ YAPAR: kararları işlemek, sansür + senkron, zip/metin paket hazırlamak, raw link vermek,
+  coder iddialarını TARAFSIZ doğrulamak.
+- ❌ YAPMAZ: direktif/denetim KARARI (GM1'in), kod yazmak (coder'ın).
 
 ## 8) MEVCUT DURUM
 
-- Proje v1.39.0. D001–D007 ONAYLANDI.
-- **D008: 1.tur REVİZYON** (köprü zip hatası → 5 doküman Claude'a ulaşmadı; dokümanlar
-  aslında mevcut). 2.tur: dokümanlar public'te METİN olarak, GM1 okuyacak.
+- Proje v1.39.0. **D001–D008 ONAYLANDI.** Sıradaki: D009 (GM1 planlayacak).
