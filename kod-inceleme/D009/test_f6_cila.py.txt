@@ -1,0 +1,211 @@
+# -*- coding: utf-8 -*-
+"""F6 — Son Cila (Bildirim API + Yetki CSV + Yazdırma + Şube Özet + Sağlık) v1.38.0 e2e testi.
+
+GM D006 direktifindeki 18 senaryo, canlı sunucuya HTTP ile. Kurallar:
+- YENİ TABLO YOK / MIGRATION YOK; harici PDF kütüphanesi YOK (sade HTML print).
+- K1: bildirimler + şube özeti sirket_id ile süzülür; izole_sube korunur.
+- /yetkiler/csv yalnız Admin (Depo 403); /api/bildirimler, /api/sube/ozet, /api/saglik,
+  /x/<id>/yazdir giriş yapmış herkes (K1/şube izolasyonu korunur).
+- F4/F5 serisi bozulmaz. MARK="F6TEST" ile kalıntı bırakılmaz.
+
+Çalıştırma: sunucu 8080'de çalışırken  python3 test_f6_cila.py
+"""
+import sqlite3
+
+import requests
+
+BASE = "http://127.0.0.1:8080"
+DB = "data/erp.db"
+MARK = "F6TEST"
+
+ok, fail = [], []
+
+
+def check(name, cond, detay=""):
+    (ok if cond else fail).append(name)
+    print((("  ✅ " if cond else "  ❌ ") + name + (f"  → {detay}" if detay else "")))
+
+
+def db(q, *a):
+    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    r = c.execute(q, a).fetchall(); c.close(); return r
+
+
+def db1(q, *a):
+    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    r = c.execute(q, a).fetchone(); c.close(); return r
+
+
+def dbx(q, *a):
+    c = sqlite3.connect(DB); c.execute(q, a); c.commit(); c.close()
+
+
+def giris(kadi="admin"):
+    s = requests.Session()
+    r = s.post(BASE + "/giris", data={"kullanici_adi": kadi, "sifre": "1234"},
+               allow_redirects=False)
+    assert r.status_code == 302, f"giriş başarısız: {kadi}"
+    return s
+
+
+def gec(s, sid):
+    s.post(BASE + "/sirket/gec", data={"sirket_id": str(sid), "next": "/"},
+           allow_redirects=False)
+
+
+def temizle():
+    # F6TEST bildirimleri + test şirketi
+    dbx("DELETE FROM bildirimler WHERE baslik LIKE ?", f"%{MARK}%")
+    for s2 in [r["id"] for r in db("SELECT id FROM sirket WHERE kod=?", f"{MARK}B")]:
+        dbx("DELETE FROM bildirimler WHERE sirket_id=?", s2)
+        dbx("DELETE FROM kullanici_sirket WHERE sirket_id=?", s2)
+        dbx("DELETE FROM entegrator_ayar WHERE sirket_id=?", s2)
+        dbx("DELETE FROM sirket WHERE id=?", s2)
+
+
+temizle()
+
+# ============================================================================
+print("=" * 72)
+print("F6 v1.38.0 — 18 kontrol (canlı sunucuya HTTP)")
+print("=" * 72)
+admin = giris("admin")
+
+# 1) test_bildirim_api ---------------------------------------------------------
+d = admin.get(BASE + "/api/bildirimler").json()
+check("1. test_bildirim_api", isinstance(d, list) and len(d) >= 1
+      and "tip" in d[0] and "baslik" in d[0],
+      f"{len(d)} bildirim, alanlar={sorted(d[0].keys()) if d else None}")
+
+# 2) test_bildirim_api_filtre --------------------------------------------------
+dbx("INSERT INTO bildirimler(tip, baslik, mesaj, okundu, sirket_id) "
+    "VALUES('uyari', ?, 'test', 0, 1)", f"{MARK} uyarı")
+dbx("INSERT INTO bildirimler(tip, baslik, mesaj, okundu, sirket_id) "
+    "VALUES('bilgi', ?, 'test', 0, 1)", f"{MARK} bilgi")
+d = admin.get(BASE + "/api/bildirimler?tip=uyari").json()
+check("2. test_bildirim_api_filtre",
+      all(b["tip"] == "uyari" for b in d) and any(b["baslik"] == f"{MARK} uyarı" for b in d),
+      f"{len(d)} uyarı bildirimi")
+
+# 3) test_bildirim_api_k1 ------------------------------------------------------
+dbx("INSERT INTO sirket(kod, unvan, aktif) VALUES(?,?,1)", f"{MARK}B", f"{MARK} İkinci Şirket")
+s2 = db1("SELECT id FROM sirket WHERE kod=?", f"{MARK}B")["id"]
+dbx("INSERT OR IGNORE INTO kullanici_sirket(kullanici_id, sirket_id) "
+    "SELECT id, ? FROM kullanici WHERE kullanici_adi='admin'", s2)
+gec(admin, s2)
+d_b = admin.get(BASE + "/api/bildirimler").json()
+basliklar_b = {b["baslik"] for b in d_b}
+gec(admin, 1)
+check("3. test_bildirim_api_k1", f"{MARK} uyarı" not in basliklar_b,
+      "Şirket B'de A'nın F6TEST bildirimi görünmez")
+
+# 4) test_yetki_html -----------------------------------------------------------
+r = admin.get(BASE + "/yetkiler")
+check("4. test_yetki_html", r.status_code == 200 and "Rota" in r.text and "Yetki" in r.text,
+      "/yetkiler → 200 + Rota/Yetki başlıkları")
+
+# 5) test_yetki_csv ------------------------------------------------------------
+r = admin.get(BASE + "/yetkiler/csv")
+lines = r.text.replace("\ufeff", "").splitlines()
+check("5. test_yetki_csv",
+      r.status_code == 200 and "text/csv" in r.headers.get("Content-Type", "")
+      and lines[0].startswith("Rota Pattern;Method") and len(lines) >= 5,
+      f"CT={r.headers.get('Content-Type')}, satır={len(lines)}")
+
+# 6) test_yetki_csv_yetki ------------------------------------------------------
+depo = giris("depo")
+r = depo.get(BASE + "/yetkiler/csv", allow_redirects=False)
+check("6. test_yetki_csv_yetki", r.status_code == 403, f"Depo → {r.status_code}")
+
+# 7) test_yazdir_fatura --------------------------------------------------------
+fid = db1("SELECT id FROM fatura WHERE durum='Onaylandı' AND sirket_id=1 ORDER BY id LIMIT 1")
+fno = db1("SELECT fatura_no FROM fatura WHERE id=?", fid["id"])["fatura_no"]
+h = admin.get(BASE + f"/fatura/{fid['id']}/yazdir").text
+check("7. test_yazdir_fatura", fno in h and "Yazdır" in h,
+      f"fatura_no={fno} + Yazdır düğmesi")
+
+# 8) test_yazdir_irsaliye ------------------------------------------------------
+iid = db1("SELECT id FROM irsaliye WHERE sirket_id=1 ORDER BY id LIMIT 1")
+ino = db1("SELECT irsaliye_no FROM irsaliye WHERE id=?", iid["id"])["irsaliye_no"]
+h = admin.get(BASE + f"/irsaliye/{iid['id']}/yazdir").text
+check("8. test_yazdir_irsaliye", ino in h and "Yazdır" in h, f"irsaliye_no={ino}")
+
+# 9) test_yazdir_siparis -------------------------------------------------------
+sid = db1("SELECT id FROM siparis WHERE sirket_id=1 ORDER BY id LIMIT 1")
+sno = db1("SELECT siparis_no FROM siparis WHERE id=?", sid["id"])["siparis_no"]
+h = admin.get(BASE + f"/siparis/{sid['id']}/yazdir").text
+check("9. test_yazdir_siparis", sno in h and "Yazdır" in h, f"siparis_no={sno}")
+
+# 10) test_yazdir_k1 -----------------------------------------------------------
+gec(admin, s2)
+r = admin.get(BASE + f"/fatura/{fid['id']}/yazdir", allow_redirects=False)
+gec(admin, 1)
+check("10. test_yazdir_k1", r.status_code in (403, 302),
+      f"Şirket B'de A faturası yazdır → {r.status_code}")
+
+# 11) test_sube_api ------------------------------------------------------------
+d = admin.get(BASE + "/api/sube/ozet").json()
+subeler = d.get("subeler") or []
+check("11. test_sube_api", isinstance(subeler, list) and len(subeler) >= 1
+      and "fatura_adet" in subeler[0] and "kasa_bakiye" in subeler[0],
+      f"{len(subeler)} şube, alanlar={sorted(subeler[0].keys()) if subeler else None}")
+
+# 12) test_sube_api_k1 ---------------------------------------------------------
+gec(admin, s2)
+d_b = admin.get(BASE + "/api/sube/ozet").json()
+ids_b = {s["id"] for s in (d_b.get("subeler") or [])}
+gec(admin, 1)
+check("12. test_sube_api_k1", 1 not in ids_b,
+      f"Şirket B'de şube id'leri={ids_b} (A şubesi 1 yok)")
+
+# 13) test_saglik --------------------------------------------------------------
+r = admin.get(BASE + "/saglik")
+check("13. test_saglik", r.status_code == 200 and '"durum":"ok"' in r.text,
+      "/saglik korundu")
+
+# 14) test_api_saglik ----------------------------------------------------------
+d = admin.get(BASE + "/api/saglik").json()
+check("14. test_api_saglik",
+      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.40.0",
+      f"surum={d.get('surum')}, db={d.get('db')}")
+
+# 15) test_f5c_korundu ---------------------------------------------------------
+r1 = admin.get(BASE + "/beyanname", allow_redirects=False)
+r2 = admin.get(BASE + "/api/beyanname/ozet", allow_redirects=False)
+check("15. test_f5c_korundu", r1.status_code == 200 and r2.status_code == 200,
+      f"/beyanname={r1.status_code}, /api/beyanname/ozet={r2.status_code}")
+
+# 16) test_f5b_f5a_korundu -----------------------------------------------------
+r1 = admin.get(BASE + "/demirbas", allow_redirects=False)
+r2 = admin.get(BASE + "/finansal/butce", allow_redirects=False)
+check("16. test_f5b_f5a_korundu", r1.status_code == 200 and r2.status_code == 200,
+      f"/demirbas={r1.status_code}, /finansal/butce={r2.status_code}")
+
+# 17) test_f4_korundu ----------------------------------------------------------
+r1 = admin.get(BASE + "/edonusum", allow_redirects=False)
+r2 = admin.get(BASE + "/api/ara", params={"q": "TV"}, allow_redirects=False)
+check("17. test_f4_korundu", r1.status_code == 200 and r2.status_code == 200,
+      f"/edonusum={r1.status_code}, /api/ara={r2.status_code}")
+
+# ---- temizlik + 18) kalıntı kontrolü ------------------------------------------
+dbx("DELETE FROM bildirimler WHERE baslik LIKE ?", f"%{MARK}%")
+dbx("DELETE FROM kullanici_sirket WHERE sirket_id=?", s2)
+dbx("DELETE FROM entegrator_ayar WHERE sirket_id=?", s2)
+dbx("DELETE FROM bildirimler WHERE sirket_id=?", s2)
+dbx("DELETE FROM sirket WHERE id=?", s2)
+
+fk_check = db("PRAGMA foreign_key_check")
+kalinti = {
+    "bildirim": db("SELECT COUNT(*) c FROM bildirimler WHERE baslik LIKE ?", f"%{MARK}%")[0]["c"],
+    "sirket": db("SELECT COUNT(*) c FROM sirket WHERE kod=?", f"{MARK}B")[0]["c"],
+}
+temiz_mi = len(fk_check) == 0 and all(v == 0 for v in kalinti.values())
+check("18. test_fk_kalinti", temiz_mi,
+      f"foreign_key_check={len(fk_check)} satır, kalıntı={kalinti}")
+
+print("=" * 72)
+print(f"SONUÇ: {len(ok)}/18 geçti, {len(fail)} başarısız")
+if fail:
+    print("BAŞARISIZ:", fail)
+    raise SystemExit(1)
+print("TÜM KONTROLLER GEÇTİ ✅")

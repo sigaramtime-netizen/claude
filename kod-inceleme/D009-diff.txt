@@ -1,0 +1,572 @@
+diff --git a/kod/CHANGELOG.md b/kod/CHANGELOG.md
+index 4ef21aa..ee85e55 100644
+--- a/kod/CHANGELOG.md
++++ b/kod/CHANGELOG.md
+@@ -8,6 +8,36 @@ Biçim: [Keep a Changelog](https://keepachangelog.com) · Sürümleme: **v1.MINO
+ 
+ ---
+ 
++## v1.40.0 — 2026-09-11
++
++### Eklenen — D009: Güvenlik & Sağlamlık Sertleştirme
++İşlevsel kapsamın aksine giriş/oturum/dosya/SQL katmanına yönelik denetim + düzeltme turu
++(veri modeli/iş mantığı K1-K32 değişmedi):
++
++- **Kaba kuvvet koruması (`/giris`):** kullanıcı bazında 5 art arda hatalı denemeden sonra
++  15 dakika kilit; `kullanici` tablosuna `basarisiz_giris_sayisi` + `kilit_bitis`
++  (idempotent migrasyon; yeni FK yok). Başarılı girişte sayaç/kilit sıfırlanır.
++- **Oturum süresi:** 12 saat hareketsizlik sonrası oturum sunucu tarafında silinir
++  (`son_erisim` güncellenir — 5 dk throttle); token üretimi zaten
++  `secrets.token_urlsafe(32)` (kriptografik); `/cikis` sunucu tarafı silmeyi sürdürür.
++- **CSRF (hibrit, GM onaylı):** durum değiştiren POST'larda (1) `csrf` gizli alanı varsa
++  oturum token'ıyla eşleşmeli; (2) Origin/Referer başlığı varsa host eşleşmeli
++  (cross-site → 403); (3) ikisi de yoksa (eski test istekleri) geriye dönük uyumluluk için
++  dokunulmaz. Formlarda `csrf` gizli alanı zaten mevcuttu — sunucu tarafı doğrulama eklendi.
++- **SQL enjeksiyon taraması:** tüm sorgular parametrik (`?` placeholder); ham string
++  birleştirme YOK (f-string'ler yalnız sabit/whitelist kolon-adı + sabit WHERE parçaları).
++  Kod değişikliği gerekmedi — grep + test kanıtı.
++- **Dosya yükleme:** mevcut korumalar doğrulandı (uzantı beyaz listesi jpg/png/pdf,
++  sunucu tarafı 15 MB limit, sunucu üretimli güvenli dosya adı → path traversal yok);
++  testle kanıtlandı.
++
++### Testler
++- `test_d009_guvenlik.py` YENİ — **18/18** (SQL enjeksiyon, oturum, kaba kuvvet,
++  CSRF, dosya yükleme, yetki matrisi, FK).
++- Tam regresyon (24 dosya) **545/545**; K1/şirket izolasyonu + rol davranışı değişmedi.
++
++---
++
+ ## v1.39.0 — 2026-09-11
+ 
+ ### Eklenen — D007: Kullanıcı Bildirimleri & İyileştirmeler (10 madde)
+diff --git a/kod/app.py b/kod/app.py
+index 3df25f4..cd666ee 100644
+--- a/kod/app.py
++++ b/kod/app.py
+@@ -274,6 +274,14 @@ def _cari_vade_tarama(sid=None):
+ # --------------------------------------------------------------------------
+ # Kimlik doğrulama
+ # --------------------------------------------------------------------------
++BRUTE_ESIK = 5            # bu kadar art arda hatalı denemeden sonra kilit
++BRUTE_KILIT_DAKIKA = 15   # kilit süresi (dakika)
++
++
++def _simdi():
++    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
++
++
+ @route(r"/giris", methods=("GET", "POST"))
+ def giris(req):
+     if req.user:
+@@ -285,36 +293,60 @@ def giris(req):
+         conn = db.get_conn()
+         u = conn.execute("SELECT * FROM kullanici WHERE kullanici_adi=?", (kadi,)).fetchone()
+         conn.close()
+-        if u and u["aktif"] and db.dogrula_sifre(sifre, u["sifre_hash"]):
+-            # Eski SHA-256 formatındaki hash'i girişte sessizce PBKDF2'ye yükselt.
+-            if not db.hash_guncel_mi(u["sifre_hash"]):
++        if u and u["aktif"]:
++            # D009 — kaba kuvvet: kilit bitiş süresi dolmadıysa girişe izin verme.
++            if u["kilit_bitis"] and u["kilit_bitis"] > _simdi():
++                flash(req, "Çok fazla hatalı deneme. Hesabınız 15 dakika kilitlendi.", "danger")
++                return redirect("/giris")
++            if db.dogrula_sifre(sifre, u["sifre_hash"]):
++                # Başarılı giriş: sayacı ve kilidi sıfırla.
++                conn = db.get_conn()
++                if u["basarisiz_giris_sayisi"] or u["kilit_bitis"]:
++                    conn.execute("UPDATE kullanici SET basarisiz_giris_sayisi=0, kilit_bitis=NULL WHERE id=?",
++                                 (u["id"],))
++                    conn.commit()
++                conn.close()
++                # Eski SHA-256 formatındaki hash'i girişte sessizce PBKDF2'ye yükselt.
++                if not db.hash_guncel_mi(u["sifre_hash"]):
++                    conn = db.get_conn()
++                    conn.execute("UPDATE kullanici SET sifre_hash=? WHERE id=?",
++                                 (db.hash_sifre(sifre), u["id"]))
++                    conn.commit()
++                    conn.close()
++                token = secrets.token_urlsafe(32)
+                 conn = db.get_conn()
+-                conn.execute("UPDATE kullanici SET sifre_hash=? WHERE id=?",
+-                             (db.hash_sifre(sifre), u["id"]))
++                # İstek 3: girişte aktif şirketi kullanıcının ilk yetkili şirketine ata
++                # (oturum bazlı geçişin başlangıç değeri; sonrasında /sirket/gec ile değişir).
++                if u["rol"] == "Admin":
++                    ilk = conn.execute(
++                        "SELECT id FROM sirket WHERE aktif=1 ORDER BY id LIMIT 1").fetchone()
++                else:
++                    ilk = conn.execute(
++                        "SELECT sirket_id AS id FROM kullanici_sirket WHERE kullanici_id=? "
++                        "ORDER BY sirket_id LIMIT 1", (u["id"],)).fetchone()
++                conn.execute("INSERT INTO sessionler(token, kullanici_id, sirket_id) VALUES(?,?,?)",
++                             (token, u["id"], ilk["id"] if ilk else None))
+                 conn.commit()
+                 conn.close()
+-            token = secrets.token_urlsafe(32)
++                loc = nxt if nxt.startswith("/") else "/"
++                if req.is_https():
++                    # Çerez engelliyse URL-token yedeği ile oturumu taşı (önizleme iframe'i).
++                    loc = loc + ("&" if "?" in loc else "?") + "sid=" + token
++                resp = redirect(loc)
++                set_cookie(resp, "erp_session", token, max_age=60 * 60 * 12, https=req.is_https())
++                return resp
++            # Hatalı şifre: sayacı artır, eşiğe ulaşırsa kilitle.
+             conn = db.get_conn()
+-            # İstek 3: girişte aktif şirketi kullanıcının ilk yetkili şirketine ata
+-            # (oturum bazlı geçişin başlangıç değeri; sonrasında /sirket/gec ile değişir).
+-            if u["rol"] == "Admin":
+-                ilk = conn.execute(
+-                    "SELECT id FROM sirket WHERE aktif=1 ORDER BY id LIMIT 1").fetchone()
+-            else:
+-                ilk = conn.execute(
+-                    "SELECT sirket_id AS id FROM kullanici_sirket WHERE kullanici_id=? "
+-                    "ORDER BY sirket_id LIMIT 1", (u["id"],)).fetchone()
+-            conn.execute("INSERT INTO sessionler(token, kullanici_id, sirket_id) VALUES(?,?,?)",
+-                         (token, u["id"], ilk["id"] if ilk else None))
++            n = (u["basarisiz_giris_sayisi"] or 0) + 1
++            kilit = None
++            if n >= BRUTE_ESIK:
++                kilit = (datetime.datetime.now() + datetime.timedelta(minutes=BRUTE_KILIT_DAKIKA)) \
++                    .strftime("%Y-%m-%d %H:%M:%S")
++                n = 0
++            conn.execute("UPDATE kullanici SET basarisiz_giris_sayisi=?, kilit_bitis=? WHERE id=?",
++                         (n, kilit, u["id"]))
+             conn.commit()
+             conn.close()
+-            loc = nxt if nxt.startswith("/") else "/"
+-            if req.is_https():
+-                # Çerez engelliyse URL-token yedeği ile oturumu taşı (önizleme iframe'i).
+-                loc = loc + ("&" if "?" in loc else "?") + "sid=" + token
+-            resp = redirect(loc)
+-            set_cookie(resp, "erp_session", token, max_age=60 * 60 * 12, https=req.is_https())
+-            return resp
+         flash(req, "Kullanıcı adı veya şifre hatalı.", "danger")
+         return redirect("/giris")
+     return render_template("giris.html", hata=None, next=req.q("next") or "/")
+diff --git a/kod/config.py b/kod/config.py
+index d3a0d65..ddaefbf 100644
+--- a/kod/config.py
++++ b/kod/config.py
+@@ -16,7 +16,7 @@ FIRMA_ADI = "Brn Teknoloji"
+ FIRMA_ALT = "İşletme Yönetim Sistemi"
+ 
+ # Uygulama sürümü — her geliştirme partisinde artırılır; CHANGELOG.md ile birlikte izlenir.
+-SURUM = "1.39.0"
++SURUM = "1.40.0"
+ SURUM_TARIHI = "2026-09-11"
+ 
+ # K18 — Döviz Takip: desteklenen para birimleri (TRY temel; kurlar doviz_kur tablosunda).
+diff --git a/kod/core.py b/kod/core.py
+index 6561176..0568147 100644
+--- a/kod/core.py
++++ b/kod/core.py
+@@ -333,6 +333,46 @@ def set_cookie(resp, key, value, max_age=None, path="/", https=False):
+ # --------------------------------------------------------------------------
+ # Oturum
+ # --------------------------------------------------------------------------
++def _origin_host(req):
++    """Origin/Referer başlığından host çıkar (yoksa None)."""
++    ov = req.environ.get("HTTP_ORIGIN") or req.environ.get("HTTP_REFERER")
++    if not ov:
++        return None
++    m = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:]+)", ov)
++    return m.group(1).lower() if m else None
++
++
++def _host_host(req):
++    h = req.environ.get("HTTP_HOST") or req.environ.get("HTTP_X_FORWARDED_HOST") or ""
++    return h.split(":")[0].lower()
++
++
++def csrf_gecerli(req):
++    """D009 — Hibrit CSRF kontrolü.
++
++    (1) `csrf` alanı varsa oturum token'ıyla birebir eşleşmeli (gerçek tarayıcı formu).
++    (2) Origin/Referer başlığı varsa host eşleşmeli (cross-site istek → 403).
++    (3) İkisi de yoksa (eski test istekleri, başlıksız clients) dokunulmaz —
++        geriye dönük uyumluluk için bilinçli karar (GM onaylı).
++    """
++    if req.method != "POST":
++        return True
++    tok = (req.form.get("csrf") or "").strip()
++    if tok:
++        return tok == (req.session_token or "")
++    oh = _origin_host(req)
++    if oh:
++        hh = _host_host(req)
++        if oh == hh:
++            return True
++        if oh in ("127.0.0.1", "localhost", "::1") and hh in ("127.0.0.1", "localhost", "::1"):
++            return True  # yerel geliştirme ortamı (Origin ile Host arasında yazım farkı)
++        if oh.endswith(".e2b.app") or hh.endswith(".e2b.app"):
++            return True  # önizleme proxy'si
++        return False
++    return True
++
++
+ def load_session(req):
+     # Önce çerez, yoksa URL-token yedeği (çerezin engellendiği önizleme iframe'leri için).
+     tok = req.session_token or req.q("sid")
+@@ -346,6 +386,18 @@ def load_session(req):
+         "LEFT JOIN sube sb ON sb.id = u.sube_id WHERE s.token = ?",
+         (tok,),
+     ).fetchone()
++    if row:
++        # D009 — oturum süresi: 12 saat hareketsizlik sonrası oturumu sunucu tarafında sil.
++        stale = conn.execute(
++            "SELECT 1 FROM sessionler WHERE token=? AND "
++            "(COALESCE(son_erisim, olusturma) < datetime('now','localtime','-12 hours'))",
++            (tok,),
++        ).fetchone()
++        if stale:
++            conn.execute("DELETE FROM sessionler WHERE token=?", (tok,))
++            conn.commit()
++            conn.close()
++            return
+     if row and row["aktif"]:
+         req.session = tok
+         req.session_token = tok
+@@ -364,6 +416,18 @@ def load_session(req):
+         u["sirket_id"] = aktif
+         u["sirket_ad"] = next((s["unvan"] for s in sirketler if s["id"] == aktif), "")
+         u["sirketler"] = sirketler
++        # D009 — son erişim zamanını güncelle (yazma yükünü sınırlamak için 5 dakikada bir).
++        upd = conn.execute(
++            "SELECT 1 FROM sessionler WHERE token=? AND "
++            "(son_erisim IS NULL OR son_erisim < datetime('now','localtime','-5 minutes'))",
++            (tok,),
++        ).fetchone()
++        if upd:
++            conn.execute(
++                "UPDATE sessionler SET son_erisim=datetime('now','localtime') WHERE token=?",
++                (tok,),
++            )
++            conn.commit()
+         conn.close()
+         req.user = u
+     else:
+@@ -748,6 +812,9 @@ def app(environ, start_response):
+         for rx, methods, fn, roles in ROUTES:
+             m = rx.match(req.path)
+             if m and req.method in methods:
++                if req.method == "POST" and not csrf_gecerli(req):
++                    resp = Response("Geçersiz istek (CSRF koruması).", "403 Forbidden")
++                    return resp(environ, start_response)
+                 if roles is not None:
+                     if not req.user:
+                         nxt = urllib.parse.quote(req.path)
+diff --git a/kod/db.py b/kod/db.py
+index 0401056..e6c2a5d 100644
+--- a/kod/db.py
++++ b/kod/db.py
+@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS kullanici (
+     rol           TEXT NOT NULL CHECK (rol IN ('Admin','Muhasebe','Satis','Servis','Depo')),
+     aktif         INTEGER NOT NULL DEFAULT 1,
+     sube_id       INTEGER REFERENCES sube(id),
+-    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
++    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
++    basarisiz_giris_sayisi INTEGER NOT NULL DEFAULT 0,
++    kilit_bitis             TEXT
+ );
+ 
+ CREATE TABLE IF NOT EXISTS sessionler (
+@@ -844,6 +846,12 @@ def _migrate(conn):
+     cols = {r["name"] for r in conn.execute("PRAGMA table_info(kullanici)")}
+     if "sube_id" not in cols:
+         conn.execute("ALTER TABLE kullanici ADD COLUMN sube_id INTEGER REFERENCES sube(id)")
++    # D009 — kaba kuvvet koruması: kullanıcı bazında başarısız giriş sayacı + kilit bitişi.
++    cols = {r["name"] for r in conn.execute("PRAGMA table_info(kullanici)")}
++    if "basarisiz_giris_sayisi" not in cols:
++        conn.execute("ALTER TABLE kullanici ADD COLUMN basarisiz_giris_sayisi INTEGER NOT NULL DEFAULT 0")
++    if "kilit_bitis" not in cols:
++        conn.execute("ALTER TABLE kullanici ADD COLUMN kilit_bitis TEXT")
+     cols = {r["name"] for r in conn.execute("PRAGMA table_info(kasa)")}
+     if "sube_id" not in cols:
+         conn.execute("ALTER TABLE kasa ADD COLUMN sube_id INTEGER REFERENCES sube(id)")
+diff --git a/kod/test_d009_guvenlik.py b/kod/test_d009_guvenlik.py
+new file mode 100644
+index 0000000..5b6c8fe
+--- /dev/null
++++ b/kod/test_d009_guvenlik.py
+@@ -0,0 +1,268 @@
++# -*- coding: utf-8 -*-
++"""D009 — Güvenlik & Sağlamlık Denetimi (v1.40.0) e2e testi.
++
++18 kontrol. Sunucu 8080'de çalışırken:
++    python3 test_d009_guvenlik.py
++
++Kapsam (GM direktifi D009):
++  A1-2   SQL enjeksiyonu (login + arama) etkisiz
++  B3-5   Oturum: kriptografik token + /cikis sunucu tarafı silme + süre sınırı
++  C6-8   Kaba kuvvet: 5 yanlış → kilit, 6. deneme reddi, kilit kalkınca giriş
++  D9-11  CSRF (hibrit): yanlış token 403, cross-origin 403, legacy POST çalışır
++  E12-15 Dosya yükleme: path traversal temizliği, .exe reddi, boyut limiti, pdf kabul
++  F16-17 Yetki matrisi: /api/* anonim kapalı, /saglik sağlık probu açık
++  G18    FK bütünlüğü + D009TEST kalıntısı yok
++"""
++import os
++import sqlite3
++
++import requests
++
++import db as dbutil
++from config import UPLOAD_DIR
++
++BASE = "http://127.0.0.1:8080"
++DB = "data/erp.db"
++MARK = "D009TEST"
++
++ok, fail = [], []
++
++
++def check(name, cond, detay=""):
++    (ok if cond else fail).append(name)
++    print((("  ✅ " if cond else "  ❌ ") + name + (f"  → {detay}" if detay else "")))
++
++
++def db(q, *a):
++    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
++    r = c.execute(q, a).fetchall(); c.close(); return r
++
++
++def db1(q, *a):
++    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
++    r = c.execute(q, a).fetchone(); c.close(); return r
++
++
++def dbx(q, *a):
++    c = sqlite3.connect(DB); c.execute(q, a); c.commit(); c.close()
++
++
++def giris(kadi="admin", sifre="1234"):
++    s = requests.Session()
++    r = s.post(BASE + "/giris", data={"kullanici_adi": kadi, "sifre": sifre},
++               allow_redirects=False)
++    return s, r
++
++
++def aktif_token(s):
++    return s.cookies.get("erp_session")
++
++
++# =============================================================================
++# BÖLÜM A — SQL Enjeksiyonu
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM A — SQL Enjeksiyonu")
++print("=" * 70)
++
++s, r = giris("admin' OR '1'='1", "x' OR '1'='1")
++check("1. sql_login_injection: ' OR '1'='1 girişi başarısız",
++      r.status_code == 302 and not r.cookies.get("erp_session"),
++      f"status={r.status_code}, cookie={'var' if r.cookies.get('erp_session') else 'yok'}")
++
++s, _ = giris()
++r = s.get(BASE + "/api/ara", params={"tip": "stok", "q": "' OR '1'='1 --"})
++try:
++    js = r.json()
++    temiz = (r.status_code == 200 and isinstance(js, list)
++             and "sqlite" not in r.text.lower() and "traceback" not in r.text.lower())
++except Exception:
++    temiz = False
++check("2. sql_arama_injection: /api/ara enjeksiyon etkisiz (temiz JSON)",
++      temiz, f"status={r.status_code}, tip={type(js).__name__ if 'js' in dir() else '?'}")
++
++# =============================================================================
++# BÖLÜM B — Oturum Güvenliği
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM B — Oturum Güvenliği")
++print("=" * 70)
++
++t1 = aktif_token(s)
++s2, _ = giris()
++t2 = aktif_token(s2)
++check("3. oturum token kriptografik + benzersiz",
++      bool(t1) and bool(t2) and t1 != t2 and len(t1) >= 32,
++      f"len={len(t1 or '')}, farklı={t1 != t2}")
++
++tok = t2
++s2.get(BASE + "/cikis")
++kalan = db1("SELECT COUNT(*) c FROM sessionler WHERE token=?", tok)["c"]
++check("4. /cikis sunucu tarafında oturumu siler", kalan == 0, f"kalan={kalan}")
++
++s3, _ = giris()
++tok3 = aktif_token(s3)
++dbx("UPDATE sessionler SET son_erisim=datetime('now','localtime','-13 hours') WHERE token=?", tok3)
++r = s3.get(BASE + "/", allow_redirects=False)
++check("5. oturum süresi: 12 saati aşan hareketsizlik erişimi reddeder",
++      r.status_code == 302 and r.headers.get("Location", "").startswith("/giris"),
++      f"status={r.status_code}")
++
++# =============================================================================
++# BÖLÜM C — Kaba Kuvvet (Brute-Force) Koruması
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM C — Kaba Kuvvet Koruması")
++print("=" * 70)
++
++conn = dbutil.get_conn()
++conn.execute("INSERT INTO kullanici(kullanici_adi, ad_soyad, sifre_hash, rol) VALUES(?,?,?,?)",
++             (MARK, "D009 Test", dbutil.hash_sifre("dogru123"), "Depo"))
++conn.commit(); conn.close()
++
++for _ in range(5):
++    requests.post(BASE + "/giris",
++                  data={"kullanici_adi": MARK, "sifre": "yanlis"}, allow_redirects=False)
++row = db1("SELECT basarisiz_giris_sayisi n, kilit_bitis k FROM kullanici WHERE kullanici_adi=?", MARK)
++check("6. 5 yanlış deneme → hesap kilitlenir", row["k"] is not None,
++      f"sayaç={row['n']}, kilit={row['k']}")
++
++s6, r6 = giris(MARK, "dogru123")
++check("7. kilitliyken doğru şifre bile reddedilir (6. deneme)",
++      r6.status_code == 302 and not r6.cookies.get("erp_session"),
++      f"status={r6.status_code}, cookie={'var' if r6.cookies.get('erp_session') else 'yok'}")
++
++dbx("UPDATE kullanici SET kilit_bitis=NULL WHERE kullanici_adi=?", MARK)
++s7, r7 = giris(MARK, "dogru123")
++check("8. kilit kalkınca doğru şifre girişi başarılı",
++      r7.status_code == 302 and bool(r7.cookies.get("erp_session")),
++      f"status={r7.status_code}")
++
++# D009TEST kullanıcısını (child satırlarıyla) tamamen temizle
++dbx("DELETE FROM kullanici_sirket WHERE kullanici_id=(SELECT id FROM kullanici WHERE kullanici_adi=?)", MARK)
++dbx("DELETE FROM sessionler WHERE kullanici_id=(SELECT id FROM kullanici WHERE kullanici_adi=?)", MARK)
++dbx("DELETE FROM audit_log WHERE kullanici_id=(SELECT id FROM kullanici WHERE kullanici_adi=?)", MARK)
++dbx("DELETE FROM kullanici WHERE kullanici_adi=?", MARK)
++
++# =============================================================================
++# BÖLÜM D — CSRF (Hibrit)
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM D — CSRF (Hibrit)")
++print("=" * 70)
++
++s8, _ = giris()
++r = s8.post(BASE + "/stok/yeni", data={"csrf": "YANLIS-TOKEN", "ad": MARK, "kod": MARK},
++            allow_redirects=False)
++check("9. yanlış csrf token'lı POST → 403", r.status_code == 403, f"status={r.status_code}")
++
++r = s8.post(BASE + "/stok/yeni", data={"ad": MARK, "kod": MARK},
++            headers={"Origin": "https://evil.example.com"}, allow_redirects=False)
++check("10. cross-origin token'sız POST → 403", r.status_code == 403, f"status={r.status_code}")
++
++r = s8.post(BASE + "/stok/yeni",
++            data={"ad": MARK + " ürün", "kod": MARK, "birim": "Adet", "kdv_orani": "18"},
++            allow_redirects=False)
++check("11. token'sız + Origin'siz (legacy) POST çalışıyor (regresyon)",
++      r.status_code != 403, f"status={r.status_code}")
++dbx("DELETE FROM stok_kart WHERE kod=?", MARK)
++
++# =============================================================================
++# BÖLÜM E — Dosya Yükleme Güvenliği
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM E — Dosya Yükleme Güvenliği")
++print("=" * 70)
++
++fid = (db1("SELECT id FROM fatura ORDER BY id DESC LIMIT 1") or {"id": 1})["id"]
++
++
++def _ek_temizle(ad):
++    for r in db("SELECT dosya_yolu FROM ek_dosya WHERE dosya_adi=?", ad):
++        try:
++            os.remove(os.path.join(UPLOAD_DIR, r["dosya_yolu"]))
++        except OSError:
++            pass
++    dbx("DELETE FROM ek_dosya WHERE dosya_adi=?", ad)
++
++
++_ek_temizle("evil.png")
++_ek_temizle("ok.pdf")
++
++r = s8.post(BASE + "/ek/yukle",
++            data={"modul": "Fatura", "kayit_id": str(fid), "geri": "/fatura"},
++            files={"ek": ("../../evil.png", b"fake-png-icerik", "image/png")},
++            allow_redirects=False)
++sat = db1("SELECT dosya_yolu, dosya_adi FROM ek_dosya WHERE ilgili_modul='Fatura' "
++          "AND ilgili_kayit_id=? AND dosya_adi='evil.png' ORDER BY id DESC LIMIT 1", fid)
++check("12. path traversal dosya adı temizlenir (yol güvenli)",
++      r.status_code == 302 and sat is not None and ".." not in sat["dosya_yolu"]
++      and "/" not in sat["dosya_yolu"] and sat["dosya_adi"] == "evil.png",
++      f"status={r.status_code}, yol={sat['dosya_yolu'] if sat else 'YOK'}")
++_ek_temizle("evil.png")
++
++once = db1("SELECT COUNT(*) c FROM ek_dosya WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=?", fid)["c"]
++r = s8.post(BASE + "/ek/yukle",
++            data={"modul": "Fatura", "kayit_id": str(fid), "geri": "/fatura"},
++            files={"ek": ("virus.exe", b"MZ-...", "application/octet-stream")},
++            allow_redirects=False)
++sonra = db1("SELECT COUNT(*) c FROM ek_dosya WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=?", fid)["c"]
++check("13. .exe uzantısı reddedilir", sonra == once, f"önce={once}, sonra={sonra}")
++
++r = s8.post(BASE + "/ek/yukle",
++            data={"modul": "Fatura", "kayit_id": str(fid), "geri": "/fatura"},
++            files={"ek": ("big.pdf", b"x" * (15 * 1024 * 1024 + 1024), "application/pdf")},
++            allow_redirects=False)
++sonra2 = db1("SELECT COUNT(*) c FROM ek_dosya WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=?", fid)["c"]
++check("14. 15 MB üzeri dosya reddedilir", sonra2 == sonra, f"önce={sonra}, sonra={sonra2}")
++
++r = s8.post(BASE + "/ek/yukle",
++            data={"modul": "Fatura", "kayit_id": str(fid), "geri": "/fatura"},
++            files={"ek": ("ok.pdf", b"%PDF-1.4 demo", "application/pdf")},
++            allow_redirects=False)
++okay = db1("SELECT COUNT(*) c FROM ek_dosya WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=? "
++           "AND dosya_adi='ok.pdf'", fid)["c"]
++check("15. jpg/png/pdf (izinli) yüklenir", okay == 1, f"adet={okay}")
++_ek_temizle("ok.pdf")
++
++# =============================================================================
++# BÖLÜM F — Yetki Matrisi
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM F — Yetki Matrisi (/api/*)")
++print("=" * 70)
++
++anon = requests.Session()
++kodlar = []
++for u in ("/api/ara?tip=stok&q=a", "/api/stok/ara?q=a", "/api/cari/ara?q=a",
++          "/api/bildirimler", "/api/sube/ozet", "/api/saglik",
++          "/api/finansal/ozet", "/api/demirbas/ozet", "/api/beyanname/ozet?ay=2026-09"):
++    r = anon.get(BASE + u, allow_redirects=False)
++    kodlar.append((u, r.status_code))
++check("16. /api/* uçları anonim isteklere kapalı (302 → /giris)",
++      all(c == 302 for _, c in kodlar), str(kodlar))
++
++r = anon.get(BASE + "/saglik", allow_redirects=False)
++check("17. /saglik anonim sağlık probu (hassas veri yok, 200 JSON)",
++      r.status_code == 200 and r.json().get("durum") == "ok", f"status={r.status_code}")
++
++# =============================================================================
++# BÖLÜM G — Bütünlük + Kalıntı
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM G — Bütünlük + Kalıntı")
++print("=" * 70)
++
++fk = db1("SELECT COUNT(*) c FROM pragma_foreign_key_check")["c"]
++kalinti = (db1("SELECT COUNT(*) c FROM kullanici WHERE kullanici_adi LIKE ?", MARK + "%")["c"]
++           + db1("SELECT COUNT(*) c FROM stok_kart WHERE kod LIKE ?", MARK + "%")["c"]
++           + db1("SELECT COUNT(*) c FROM ek_dosya WHERE dosya_adi LIKE ?", MARK + "%")["c"])
++check("18. FK bütünlüğü 0 + D009TEST kalıntısı yok", fk == 0 and kalinti == 0,
++      f"fk={fk}, kalıntı={kalinti}")
++
++print()
++print(f"=== SONUÇ: {len(ok)} başarılı / {len(fail)} başarısız (toplam {len(ok) + len(fail)}) ===")
++if fail:
++    print("BAŞARISIZ:", fail)
++    raise SystemExit(1)
++print("TÜM D009 GÜVENLİK TESTLERİ GEÇTİ ✅")
+diff --git a/kod/test_f6_cila.py b/kod/test_f6_cila.py
+index 951e721..0941d0e 100644
+--- a/kod/test_f6_cila.py
++++ b/kod/test_f6_cila.py
+@@ -166,7 +166,7 @@ check("13. test_saglik", r.status_code == 200 and '"durum":"ok"' in r.text,
+ # 14) test_api_saglik ----------------------------------------------------------
+ d = admin.get(BASE + "/api/saglik").json()
+ check("14. test_api_saglik",
+-      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.39.0",
++      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.40.0",
+       f"surum={d.get('surum')}, db={d.get('db')}")
+ 
+ # 15) test_f5c_korundu ---------------------------------------------------------

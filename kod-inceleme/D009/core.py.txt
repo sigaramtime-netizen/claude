@@ -1,0 +1,841 @@
+# -*- coding: utf-8 -*-
+"""Hafif WSGI çekirdeği: yönlendirici, oturum, şablon, yardımcılar."""
+import html
+import json
+import os
+import re
+import threading
+import urllib.parse
+import datetime
+import secrets
+
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+import db
+import config
+from config import TEMPLATES_DIR, STATIC_DIR
+
+# --------------------------------------------------------------------------
+# Sabitler
+# --------------------------------------------------------------------------
+ROLLER = {
+    "Admin": "Yönetici",
+    "Muhasebe": "Muhasebe",
+    "Satis": "Satış",
+    "Servis": "Servis",
+    "Depo": "Depo",
+}
+
+ALL_ROLES = ["Admin", "Muhasebe", "Satis", "Servis", "Depo"]
+
+NAV = [
+    {
+        "baslik": "Stok Yönetimi", "ikon": "📦",
+        "elemanlar": [
+            {"bolum": "Tanımlar"},
+            {"ad": "Stok Kartları", "url": "/stok", "ikon": "📦", "hazir": True},
+            {"ad": "Yeni Stok Kartı", "url": "/stok/yeni", "ikon": "➕", "hazir": True},
+            {"ad": "Depolar", "url": "/stok/depolar", "ikon": "🏬", "hazir": True},
+            {"ad": "Depo / Şube Tanımları", "url": "/sube", "ikon": "🏢", "hazir": True},
+            {"bolum": "İşlemler"},
+            {"ad": "Stok Hareketleri", "url": "/stok/hareketler", "ikon": "⬇️", "hazir": True},
+            {"ad": "Yeni Stok Hareketi", "url": "/stok/hareket/yeni", "ikon": "✚", "hazir": True},
+            {"ad": "Stok Sayımı", "url": "/stok/sayim", "ikon": "🔢", "hazir": True},
+            {"ad": "Depo Transferleri", "url": "/stok/transferler", "ikon": "🔄", "hazir": True},
+            {"ad": "Alış Geçmişi", "url": "/stok/alis-gecmisi", "ikon": "🕘", "hazir": True},
+            {"bolum": "Kartoteks"},
+            {"ad": "Stok Kartoteksi", "url": "/kartoteks/stok", "ikon": "🗂️", "hazir": True},
+            {"ad": "Cari Kartoteks", "url": "/kartoteks/cari", "ikon": "🗃️", "hazir": True},
+        ],
+    },
+    {
+        "baslik": "Satın Alma Yönetimi", "ikon": "🏭",
+        "elemanlar": [
+            {"bolum": "Talep & Teklif"},
+            {"ad": "Satın Alma Talebi", "url": "/satin-alma/talepler", "ikon": "🛒", "hazir": True},
+            {"ad": "Alınan Teklif", "url": "/satin-alma/teklifler", "ikon": "📥", "hazir": True},
+            {"ad": "Teklif Değerlendirme", "url": "/satin-alma/teklifler/karsilastir", "ikon": "⚖️", "hazir": True},
+            {"bolum": "Sipariş & Tedarik"},
+            {"ad": "Alış Siparişi (SAP)", "url": "/siparis?tip=Alis", "ikon": "🧾", "hazir": True},
+            {"ad": "Mal Kabul (Alış İrsaliyesi)", "url": "/irsaliye?tip=Alis", "ikon": "📦", "hazir": True},
+            {"ad": "Alış Faturası", "url": "/fatura?tip=Alis", "ikon": "🧮", "hazir": True},
+            {"bolum": "Raporlar"},
+            {"ad": "Eksik Teslimatlar", "url": "/satin-alma/eksik-teslimatlar", "ikon": "⏱️", "hazir": True},
+            {"ad": "Satın Alma Raporu", "url": "/satin-alma/rapor", "ikon": "📊", "hazir": True},
+        ],
+    },
+    {
+        "baslik": "POS (Satış Noktası)", "ikon": "🏪",
+        "elemanlar": [
+            {"bolum": "İşlemler"},
+            {"ad": "Hızlı Satış", "url": "/pos", "ikon": "🛒", "hazir": True},
+            {"ad": "POS Satışları", "url": "/pos/satislar", "ikon": "🧾", "hazir": True},
+            {"ad": "Günlük Rapor", "url": "/pos/rapor", "ikon": "📊", "hazir": True},
+            {"bolum": "Tanımlar"},
+            {"ad": "Terminaller", "url": "/pos/terminaller", "ikon": "🖥️", "hazir": True},
+        ],
+    },
+    {
+        "baslik": "Satış Yönetimi", "ikon": "🛒",
+        "elemanlar": [
+            {"bolum": "Belge Zinciri"},
+            {"ad": "Teklif", "url": "/teklif", "ikon": "📄", "hazir": True},
+            {"ad": "Sipariş", "url": "/siparis", "ikon": "🛒", "hazir": True},
+            {"ad": "İrsaliye", "url": "/irsaliye", "ikon": "🚚", "hazir": True},
+            {"ad": "Fatura", "url": "/fatura", "ikon": "🧾", "hazir": True},
+            {"bolum": "e-Dönüşüm"},
+            {"ad": "e-Fatura / e-Arşiv", "url": "/edonusum", "ikon": "📨", "hazir": True},
+            {"ad": "Gelen Kutusu", "url": "/gelen", "ikon": "📥", "hazir": True},
+        ],
+    },
+    {
+        "baslik": "Finans Yönetimi", "ikon": "💰",
+        "elemanlar": [
+            {"bolum": "Cari"},
+            {"ad": "Cari Kartları", "url": "/cari", "ikon": "👥", "hazir": True},
+            {"ad": "Cari Gruplar", "url": "/cari/gruplar", "ikon": "📁", "hazir": True},
+            {"ad": "Cari Rapor", "url": "/cari/rapor", "ikon": "📊", "hazir": True},
+            {"bolum": "Kasa / Banka"},
+            {"ad": "Kasa", "url": "/kasa", "ikon": "💰", "hazir": True},
+            {"ad": "Banka", "url": "/banka", "ikon": "🏦", "hazir": True},
+            {"bolum": "Çek / Senet"},
+            {"ad": "Çek / Senet", "url": "/cek_senet", "ikon": "💳", "hazir": True},
+            {"ad": "Vade Takvimi", "url": "/cek_senet/vade", "ikon": "📅", "hazir": True},
+            {"bolum": "Döviz"},
+            {"ad": "Döviz Kurları", "url": "/doviz", "ikon": "💱", "hazir": True},
+            {"ad": "Kur Farkı", "url": "/doviz/kur-farki", "ikon": "🧮", "hazir": True},
+        ],
+    },
+    {
+        "baslik": "Servis Yönetimi", "ikon": "🛠️",
+        "elemanlar": [
+            {"ad": "Servis Takip", "url": "/servis", "ikon": "🎫", "hazir": True},
+            {"ad": "Seri No / Garanti", "url": "/garanti", "ikon": "🛡️", "hazir": True},
+            {"ad": "Bakım Sözleşmesi", "url": "/bakim/sozlesmeler", "ikon": "📜", "hazir": True},
+            {"ad": "Notlar", "url": "/notlar", "ikon": "📝", "hazir": True},
+        ],
+    },
+    {
+        "baslik": "CRM (Müşteri İlişkileri)", "ikon": "📇",
+        "elemanlar": [
+            {"ad": "Aktiviteler", "url": "/crm", "ikon": "📞", "hazir": True},
+            {"ad": "Yeni Aktivite", "url": "/crm/yeni", "ikon": "➕", "hazir": True},
+            {"ad": "CRM Raporu", "url": "/crm/rapor", "ikon": "📊", "hazir": True},
+        ],
+    },
+    {
+        "baslik": "Mali & Analitik", "ikon": "📊",
+        "elemanlar": [
+            {"bolum": "Genel Muhasebe"},
+            {"ad": "Yevmiye / Fişler", "url": "/muhasebe", "ikon": "📗", "hazir": True},
+            {"ad": "Mizan", "url": "/muhasebe/mizan", "ikon": "⚖️", "hazir": True},
+            {"ad": "Büyük Defter", "url": "/muhasebe/defter", "ikon": "📒", "hazir": True},
+            {"ad": "Hesap Planı", "url": "/muhasebe/hesaplar", "ikon": "🗂️", "hazir": True},
+            {"bolum": "Analiz & Rapor"},
+            {"ad": "Beyanname", "url": "/beyanname", "ikon": "📑", "hazir": True},
+            {"ad": "Finansal Analiz", "url": "/finansal", "ikon": "📈", "hazir": True},
+            {"ad": "Demirbaş", "url": "/demirbas", "ikon": "🗄️", "hazir": True},
+            {"ad": "Transfer", "url": "/transfer", "ikon": "🔄", "hazir": True},
+        ],
+    },
+    {
+        "baslik": "Yönetim", "ikon": "⚙️", "admin_only": True,
+        "elemanlar": [
+            {"bolum": "Kontrol Paneli"},
+            {"ad": "Ayarlar", "url": "/ayarlar", "ikon": "⚙️", "hazir": True},
+            {"ad": "Kullanıcılar", "url": "/ayarlar/kullanicilar", "ikon": "👤", "hazir": True},
+            {"ad": "Şirketler", "url": "/ayarlar/sirketler", "ikon": "🏭", "hazir": True},
+            {"ad": "Firma Bilgileri", "url": "/ayarlar/firma", "ikon": "🏢", "hazir": True},
+            {"ad": "Yetki Matrisi", "url": "/yetkiler", "ikon": "🔐", "hazir": True},
+            {"bolum": "Entegrasyon"},
+            {"ad": "Bildirim Kanalı", "url": "/ayarlar/bildirim", "ikon": "📡", "hazir": True},
+            {"ad": "e-Belge Entegratörü", "url": "/ayarlar/entegrator", "ikon": "🔌", "hazir": True},
+        ],
+    },
+]
+
+# --------------------------------------------------------------------------
+# Yönlendirici
+# --------------------------------------------------------------------------
+ROUTES = []
+
+
+def route(path_pattern, methods=("GET",), roles=None):
+    """Rota kaydedici. roles=None => herkese açık."""
+    methods = tuple(m.upper() for m in methods)
+    rx = re.compile("^" + path_pattern + "$")
+
+    def deco(fn):
+        ROUTES.append((rx, methods, fn, roles))
+        return fn
+
+    return deco
+
+
+# --------------------------------------------------------------------------
+# İstek / Yanıt
+# --------------------------------------------------------------------------
+def parse_multipart(body, boundary):
+    """Minimal multipart/form-data çözücü (stdlib; Python 3.13'te cgi kaldırıldı).
+
+    (fields: dict[str, list[str]], files: list[dict]) döner.
+    files öğesi: {"name", "filename", "content_type", "data"(bytes)}.
+    """
+    fields = {}
+    files = []
+    delim = ("--" + boundary).encode("utf-8")
+    for part in body.split(delim):
+        if part.startswith(b"--"):      # kapanış ayracı
+            continue
+        if part.startswith(b"\r\n"):
+            part = part[2:]
+        elif part.startswith(b"\n"):
+            part = part[1:]
+        if part.endswith(b"\r\n"):      # ayırıcıdan önceki tek CRLF
+            part = part[:-2]
+        elif part.endswith(b"\n"):
+            part = part[:-1]
+        if not part:
+            continue
+        if b"\r\n\r\n" in part:
+            head, content = part.split(b"\r\n\r\n", 1)
+        elif b"\n\n" in part:
+            head, content = part.split(b"\n\n", 1)
+        else:
+            continue
+        headers = head.decode("utf-8", "ignore")
+        disp, ctype = "", ""
+        for line in headers.split("\r\n"):
+            low = line.lower()
+            if low.startswith("content-disposition:"):
+                disp = line.split(":", 1)[1].strip()
+            elif low.startswith("content-type:"):
+                ctype = line.split(":", 1)[1].strip()
+        name = filename = None
+        for piece in disp.split(";"):
+            piece = piece.strip()
+            if piece.startswith("name="):
+                name = piece[5:].strip().strip('"')
+            elif piece.startswith("filename="):
+                filename = piece[9:].strip().strip('"')
+        if name is None:
+            continue
+        if filename:
+            files.append({"name": name, "filename": filename,
+                          "content_type": ctype, "data": content})
+        else:
+            fields.setdefault(name, []).append(content.decode("utf-8", "ignore"))
+    return fields, files
+
+
+class Request:
+    def __init__(self, environ):
+        self.environ = environ
+        self.method = environ.get("REQUEST_METHOD", "GET").upper()
+        self.path = environ.get("PATH_INFO", "/") or "/"
+        self.query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+        self.cookies = {}
+        for pair in environ.get("HTTP_COOKIE", "").split(";"):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                self.cookies[k.strip()] = v.strip()
+        self.form = {}
+        self.form_list = {}
+        self.files = []
+        ctype = environ.get("CONTENT_TYPE", "")
+        length = int(environ.get("CONTENT_LENGTH") or 0)
+        body = environ["wsgi.input"].read(length) if length else b""
+        if "application/x-www-form-urlencoded" in ctype and body:
+            parsed = urllib.parse.parse_qs(body.decode("utf-8", "ignore"), keep_blank_values=True)
+            for k, v in parsed.items():
+                self.form_list[k] = v
+                self.form[k] = v[0] if v else ""
+        elif "multipart/form-data" in ctype and body:
+            m = re.search(r'boundary="?([^";]+)"?', ctype)
+            if m:
+                fields, files = parse_multipart(body, m.group(1))
+                for k, v in fields.items():
+                    self.form_list[k] = v
+                    self.form[k] = v[0] if v else ""
+                self.files = files
+        self.session_token = self.cookies.get("erp_session")
+        self.session = None
+        self.user = None
+
+    def q(self, key, default=""):
+        v = self.query.get(key)
+        return v[0] if v else default
+
+    def is_https(self):
+        """Proxy arkasında gerçek şema tespiti (canlı önizleme HTTPS için çerez uyumu)."""
+        proto = self.environ.get("HTTP_X_FORWARDED_PROTO", "") or ""
+        if proto:
+            return proto.split(",")[0].strip().lower() == "https"
+        scheme = self.environ.get("HTTP_X_FORWARDED_SCHEME", "") or ""
+        if scheme:
+            return scheme.split(",")[0].strip().lower() == "https"
+        fwd = self.environ.get("HTTP_FORWARDED", "") or ""
+        if fwd:
+            m = re.search(r"proto=([^;,]+)", fwd, re.IGNORECASE)
+            if m:
+                return m.group(1).strip().strip('"').lower() == "https"
+        # Canlı önizleme host'u her zaman *.e2b.app (HTTPS) — proxy başlığına güvenme.
+        host = self.environ.get("HTTP_HOST", "") or ""
+        if ".e2b.app" in host:
+            return True
+        # Tarayıcı form gönderiminde Origin/Referer gerçek şemayı taşır.
+        for hname in ("HTTP_ORIGIN", "HTTP_REFERER"):
+            v = self.environ.get(hname, "") or ""
+            if v.lower().startswith("https://"):
+                return True
+        return self.environ.get("wsgi.url_scheme", "http") == "https"
+
+
+class Response:
+    def __init__(self, body=b"", status="200 OK", headers=None):
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        self.body = body
+        self.status = status
+        self.headers = [("Content-Type", "text/html; charset=utf-8")]
+        if headers:
+            for k, v in headers:
+                # Aynı isimde başlık varsa değiştir (örn. Content-Type) — çift başlık oluşmasın.
+                for i, (hk, _hv) in enumerate(self.headers):
+                    if hk.lower() == k.lower():
+                        self.headers[i] = (hk, v)
+                        break
+                else:
+                    self.headers.append((k, v))
+
+    def __call__(self, environ, start_response):
+        start_response(self.status, self.headers)
+        return [self.body]
+
+
+def redirect(location, status="302 Found"):
+    return Response(b"", status, [("Location", location)])
+
+
+def set_cookie(resp, key, value, max_age=None, path="/", https=False):
+    if https:
+        # Partitioned (CHIPS): üçüncü taraf çerezleri engelleyen tarayıcılarda
+        # gömülü önizleme iframe'lerinde de oturum çerezini saklar.
+        samesite = "SameSite=None; Secure; Partitioned"
+    else:
+        samesite = "SameSite=Lax"
+    h = f"{key}={value}; Path={path}; HttpOnly; {samesite}"
+    if max_age is not None:
+        h += f"; Max-Age={max_age}"
+    resp.headers.append(("Set-Cookie", h))
+
+
+# --------------------------------------------------------------------------
+# Oturum
+# --------------------------------------------------------------------------
+def _origin_host(req):
+    """Origin/Referer başlığından host çıkar (yoksa None)."""
+    ov = req.environ.get("HTTP_ORIGIN") or req.environ.get("HTTP_REFERER")
+    if not ov:
+        return None
+    m = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:]+)", ov)
+    return m.group(1).lower() if m else None
+
+
+def _host_host(req):
+    h = req.environ.get("HTTP_HOST") or req.environ.get("HTTP_X_FORWARDED_HOST") or ""
+    return h.split(":")[0].lower()
+
+
+def csrf_gecerli(req):
+    """D009 — Hibrit CSRF kontrolü.
+
+    (1) `csrf` alanı varsa oturum token'ıyla birebir eşleşmeli (gerçek tarayıcı formu).
+    (2) Origin/Referer başlığı varsa host eşleşmeli (cross-site istek → 403).
+    (3) İkisi de yoksa (eski test istekleri, başlıksız clients) dokunulmaz —
+        geriye dönük uyumluluk için bilinçli karar (GM onaylı).
+    """
+    if req.method != "POST":
+        return True
+    tok = (req.form.get("csrf") or "").strip()
+    if tok:
+        return tok == (req.session_token or "")
+    oh = _origin_host(req)
+    if oh:
+        hh = _host_host(req)
+        if oh == hh:
+            return True
+        if oh in ("127.0.0.1", "localhost", "::1") and hh in ("127.0.0.1", "localhost", "::1"):
+            return True  # yerel geliştirme ortamı (Origin ile Host arasında yazım farkı)
+        if oh.endswith(".e2b.app") or hh.endswith(".e2b.app"):
+            return True  # önizleme proxy'si
+        return False
+    return True
+
+
+def load_session(req):
+    # Önce çerez, yoksa URL-token yedeği (çerezin engellendiği önizleme iframe'leri için).
+    tok = req.session_token or req.q("sid")
+    if not tok:
+        return
+    conn = db.get_conn()
+    row = conn.execute(
+        "SELECT s.token, s.kullanici_id, s.sirket_id AS sess_sirket_id, "
+        "u.kullanici_adi, u.ad_soyad, u.rol, u.aktif, u.sube_id, sb.ad AS sube_ad "
+        "FROM sessionler s JOIN kullanici u ON u.id = s.kullanici_id "
+        "LEFT JOIN sube sb ON sb.id = u.sube_id WHERE s.token = ?",
+        (tok,),
+    ).fetchone()
+    if row:
+        # D009 — oturum süresi: 12 saat hareketsizlik sonrası oturumu sunucu tarafında sil.
+        stale = conn.execute(
+            "SELECT 1 FROM sessionler WHERE token=? AND "
+            "(COALESCE(son_erisim, olusturma) < datetime('now','localtime','-12 hours'))",
+            (tok,),
+        ).fetchone()
+        if stale:
+            conn.execute("DELETE FROM sessionler WHERE token=?", (tok,))
+            conn.commit()
+            conn.close()
+            return
+    if row and row["aktif"]:
+        req.session = tok
+        req.session_token = tok
+        u = dict(row)
+        u["id"] = u["kullanici_id"]
+        # İstek 3 — çoklu şirket: kullanıcının yetkili olduğu şirketler + aktif şirket çözümlemesi.
+        sirketler = _sirketler_kullanici(conn, u)
+        if not sirketler:
+            conn.close()
+            return
+        aktif = u.get("sess_sirket_id")
+        if aktif not in {s["id"] for s in sirketler}:
+            aktif = sirketler[0]["id"]
+            conn.execute("UPDATE sessionler SET sirket_id=? WHERE token=?", (aktif, tok))
+            conn.commit()
+        u["sirket_id"] = aktif
+        u["sirket_ad"] = next((s["unvan"] for s in sirketler if s["id"] == aktif), "")
+        u["sirketler"] = sirketler
+        # D009 — son erişim zamanını güncelle (yazma yükünü sınırlamak için 5 dakikada bir).
+        upd = conn.execute(
+            "SELECT 1 FROM sessionler WHERE token=? AND "
+            "(son_erisim IS NULL OR son_erisim < datetime('now','localtime','-5 minutes'))",
+            (tok,),
+        ).fetchone()
+        if upd:
+            conn.execute(
+                "UPDATE sessionler SET son_erisim=datetime('now','localtime') WHERE token=?",
+                (tok,),
+            )
+            conn.commit()
+        conn.close()
+        req.user = u
+    else:
+        conn.close()
+
+
+def _sirketler_kullanici(conn, u):
+    """Kullanıcının erişebildiği şirketler (Admin → tümü; diğer → kullanici_sirket N-N)."""
+    if u["rol"] == "Admin":
+        rows = conn.execute(
+            "SELECT id, kod, unvan, aktif FROM sirket WHERE aktif=1 ORDER BY id"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT s.id, s.kod, s.unvan, s.aktif FROM sirket s "
+            "JOIN kullanici_sirket ks ON ks.sirket_id = s.id "
+            "WHERE ks.kullanici_id=? AND s.aktif=1 ORDER BY s.id",
+            (u["id"],),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --------------------------------------------------------------------------
+# Flash mesajları (oturum içi, sunucu hafızasında)
+# --------------------------------------------------------------------------
+_FLASH = {}
+
+
+def flash(req, mesaj, kind="info"):
+    _FLASH.setdefault(req.session_token, []).append((kind, mesaj))
+
+
+def pop_flash(req):
+    if not req.session_token:
+        return []
+    return _FLASH.pop(req.session_token, [])
+
+
+# --------------------------------------------------------------------------
+# Yardımcılar
+# --------------------------------------------------------------------------
+def audit(req, tablo, kayit_id, islem, detay=None):
+    conn = db.get_conn()
+    conn.execute(
+        "INSERT INTO audit_log(kullanici_id, kullanici_adi, tablo, kayit_id, islem, detay) "
+        "VALUES(?,?,?,?,?,?)",
+        (
+            req.user["id"] if req.user else None,
+            req.user["kullanici_adi"] if req.user else None,
+            tablo,
+            kayit_id,
+            islem,
+            json.dumps(detay, ensure_ascii=False) if detay else None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def notify(tip, baslik, mesaj, ilgili_tablo=None, ilgili_id=None, hedef=None, kanal=None,
+           sirket_id=None):
+    """Bildirim oluştur; `hedef` + `kanal` verilirse sağlayıcı üzerinden dışa gönder (Faz 6)."""
+    conn = db.get_conn()
+    cur = conn.execute(
+        "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) "
+        "VALUES(?,?,?,?,?,?)",
+        (tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id if sirket_id is not None else 1),
+    )
+    bid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    if hedef and kanal:
+        try:
+            import bildirim_saglayici  # noqa: F401 — döngü yok (yalnızca db import eder)
+            bildirim_saglayici.gonder(bildirim_id=bid, hedef=hedef, kanal=kanal,
+                                      baslik=baslik, mesaj=mesaj,
+                                      ilgili_tablo=ilgili_tablo, ilgili_id=ilgili_id)
+        except Exception:
+            # Bildirim oluştu bile; dış gönderim başarısız olsa dahi ana akışı bozma.
+            pass
+    return bid
+
+
+def izole_sube(req):
+    """K1 / Faz 6 — şube izolasyonu: Admin olmayan ve bir şubeye atanmış kullanıcının
+    sube_id'sini döndürür; aksi halde None (= tüm şubeler görünür)."""
+    if req.user and req.user.get("rol") != "Admin" and req.user.get("sube_id"):
+        return req.user["sube_id"]
+    return None
+
+
+def sube_koruma(req, kayit_sube_id):
+    """Şubeli kullanıcının `kayit_sube_id` şubeli kayda erişim hakkı var mı? (True=var)"""
+    iz = izole_sube(req)
+    if iz is None:
+        return True
+    return kayit_sube_id == iz
+
+
+def izole_sirket(req):
+    """İstek 3 — aktif şirket id'si (oturum bazlı); kullanıcı yoksa None."""
+    if req.user and req.user.get("sirket_id"):
+        return req.user["sirket_id"]
+    return None
+
+
+def yazdir_belge(r, kalemler, no_key, tip_label):
+    """F6 (v1.38.0) — Fatura/İrsaliye/Sipariş detayını ortak yazdırma şablonu için normalize eder.
+
+    `r` ilgili modülün _detay yardımcısının başlık dict'i, `kalemler` satır listesi.
+    """
+    return {
+        "tip": tip_label,
+        "no": r.get(no_key),
+        "tarih": r.get("tarih"),
+        "vade": r.get("vade") or r.get("teslim_tarihi"),
+        "cari": r.get("cari_unvan") or "—",
+        "cari_kod": r.get("cari_kod") or "",
+        "cari_il": r.get("cari_il") or "",
+        "durum": r.get("durum") or "",
+        "sube_ad": r.get("sube_ad") or "",
+        "para_birimi": r.get("para_birimi") or "TRY",
+        "doviz_kur": r.get("doviz_kur") or 1.0,
+        "aciklama": r.get("aciklama") or "",
+        "kalemler": [dict(k) for k in kalemler],
+        "ara_toplam": r.get("ara_toplam") or 0.0,
+        "iskonto_toplam": r.get("iskonto_toplam") or 0.0,
+        "kdv_toplam": r.get("kdv_toplam") or 0.0,
+        "genel_toplam": r.get("genel_toplam") or 0.0,
+    }
+
+
+def sirket_koruma(req, kayit_sirket_id):
+    """`kayit_sirket_id` aktif şirkete mi ait? (True=erişim var)
+
+    Oturumsuz iç bağlamlarda (ör. toplu fiş üretimi) izolasyon None döner → izin verilir."""
+    iz = izole_sirket(req)
+    if iz is None:
+        return True
+    return kayit_sirket_id == iz
+
+
+# --------------------------------------------------------------------------
+# Şablon motoru
+# --------------------------------------------------------------------------
+def _para(v):
+    try:
+        v = float(v or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    s = f"{abs(v):,.2f}"
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+    sign = "-" if v < 0 else ""
+    return f"{sign}{s} ₺"
+
+
+def _sayi(v):
+    try:
+        v = float(v or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    s = f"{abs(v):,.2f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _kur(v):
+    """Döviz kuru biçimi: 4 ondalık, sembolsüz (örn. 48,4336)."""
+    try:
+        v = float(v or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    s = f"{abs(v):,.4f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _tarih(v):
+    if not v:
+        return ""
+    v = str(v)
+    try:
+        d = datetime.datetime.strptime(v[:10], "%Y-%m-%d")
+        return d.strftime("%d.%m.%Y")
+    except ValueError:
+        return v
+
+
+def _tarihsaat(v):
+    if not v:
+        return ""
+    v = str(v)
+    try:
+        d = datetime.datetime.strptime(v[:19], "%Y-%m-%d %H:%M:%S")
+        return d.strftime("%d.%m.%Y %H:%M")
+    except ValueError:
+        return _tarih(v)
+
+
+def _kisa(v, n=24):
+    v = str(v or "")
+    return v if len(v) <= n else v[: n - 1] + "…"
+
+
+def kdv_ayikla(brut, kdv_oran=0.0):
+    """F2 — Brüt (KDV dahil) tutardan net (KDV hariç) tutarı ayıklar. 2 ondalık yuvarlar.
+
+    Kural: DB'de her zaman NET tutulur; KDV dahil giriş burada geriye ayrıştırılır.
+    Yuvarlama: net = round(brut / (1 + oran/100), 2); KDV asla brut-net farkından
+    hesaplanmaz (kuruş kaymasını önler) — KDV için kdv_hesapla(net, oran) kullanılır.
+    """
+    try:
+        brut = float(brut or 0)
+    except (TypeError, ValueError):
+        brut = 0.0
+    try:
+        oran = float(kdv_oran or 0)
+    except (TypeError, ValueError):
+        oran = 0.0
+    if not oran:
+        return round(brut, 2)
+    return round(brut / (1.0 + oran / 100.0), 2)
+
+
+def kdv_hesapla(net, kdv_oran=0.0):
+    """F2 — Net tutardan KDV tutarını hesaplar. 2 ondalık yuvarlar."""
+    try:
+        net = float(net or 0)
+    except (TypeError, ValueError):
+        net = 0.0
+    try:
+        oran = float(kdv_oran or 0)
+    except (TypeError, ValueError):
+        oran = 0.0
+    return round(net * oran / 100.0, 2)
+
+
+def kdv_dahil_fiyat(net, kdv_oran=0.0):
+    """F2 — Net tutarı KDV dahil (brüt) gösterim fiyatına çevirir. 2 ondalık yuvarlar."""
+    try:
+        net = float(net or 0)
+    except (TypeError, ValueError):
+        net = 0.0
+    try:
+        oran = float(kdv_oran or 0)
+    except (TypeError, ValueError):
+        oran = 0.0
+    return round(net * (1.0 + oran / 100.0), 2)
+
+
+
+_jinja = Environment(
+    loader=FileSystemLoader(TEMPLATES_DIR), autoescape=select_autoescape(["html"])
+)
+_jinja.filters["para"] = _para
+_jinja.filters["sayi"] = _sayi
+_jinja.filters["kur"] = _kur
+_jinja.filters["tarih"] = _tarih
+_jinja.filters["tarihsaat"] = _tarihsaat
+_jinja.filters["kisa"] = _kisa
+_jinja.globals["ROLLER"] = ROLLER
+_jinja.globals["BUGUN"] = datetime.date.today().isoformat()
+_jinja.globals["SURUM"] = config.SURUM
+_jinja.globals["SURUM_TARIHI"] = config.SURUM_TARIHI
+
+_firma_cache = {}
+
+
+def firma():
+    """Aktif şirketin kimlik bilgisi (`sirket` tablosu) — şirket başına önbellek; antet/PDF için."""
+    req = get_req()
+    sid = req.user["sirket_id"] if (req and req.user) else None
+    key = sid or 0
+    if key not in _firma_cache:
+        conn = db.get_conn()
+        row = conn.execute(
+            "SELECT * FROM sirket WHERE id=? ORDER BY id LIMIT 1", (sid or 1,)
+        ).fetchone()
+        conn.close()
+        _firma_cache[key] = dict(row) if row else {}
+    return _firma_cache[key]
+
+
+def firma_yenile():
+    """Şirket önbelleğini temizle (şirket bilgisi düzenlendikten sonra)."""
+    _firma_cache.clear()
+
+
+_local = threading.local()
+
+
+def get_req():
+    return getattr(_local, "req", None)
+
+
+def render_template(name, status="200 OK", **ctx):
+    req = get_req()
+    user = req.user if req else None
+    ctx.setdefault("req", req)
+    ctx.setdefault("user", user)
+    ctx.setdefault("nav", NAV)
+    ctx.setdefault("firma", firma())
+    ctx.setdefault("csrf_token", req.session_token if req else "")
+    ctx.setdefault("flashes", pop_flash(req) if req else [])
+    if req and user:
+        conn = db.get_conn()
+        unread = conn.execute(
+            "SELECT COUNT(*) AS c FROM bildirimler WHERE okundu=0 AND sirket_id=?",
+            (user.get("sirket_id") or 1,),
+        ).fetchone()["c"]
+        conn.close()
+        ctx.setdefault("unread", unread)
+    tpl = _jinja.get_template(name)
+    body = tpl.render(**ctx)
+    return Response(body, status)
+
+
+def path_active(req, url):
+    if url == "/":
+        return req.path == "/"
+    return req.path == url or req.path.startswith(url + "/")
+
+
+# --------------------------------------------------------------------------
+# Statik dosyalar
+# --------------------------------------------------------------------------
+CONTENT_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".map": "application/json",
+}
+
+
+def serve_static(req, start_response):
+    rel = req.path[len("/static/"):]
+    full = os.path.normpath(os.path.join(STATIC_DIR, rel))
+    if not full.startswith(STATIC_DIR):
+        start_response("403 Forbidden", [("Content-Type", "text/plain")])
+        return [b"Forbidden"]
+    if not os.path.isfile(full):
+        start_response("404 Not Found", [("Content-Type", "text/plain")])
+        return [b"Not Found"]
+    ext = os.path.splitext(full)[1].lower()
+    ctype = CONTENT_TYPES.get(ext, "application/octet-stream")
+    with open(full, "rb") as f:
+        data = f.read()
+    start_response("200 OK", [("Content-Type", ctype), ("Content-Length", str(len(data)))])
+    return [data]
+
+
+# --------------------------------------------------------------------------
+# WSGI uygulaması
+# --------------------------------------------------------------------------
+def _respond(req, resp, environ, start_response):
+    # URL-token (sid) akışı: çerez engellendiğinde iç yönlendirmelerde token'ı koru.
+    sid = req.q("sid")
+    if sid and resp.status.startswith("3"):
+        for i, (k, v) in enumerate(resp.headers):
+            if k.lower() == "location" and v.startswith("/") and "sid=" not in v:
+                resp.headers[i] = (k, v + ("&" if "?" in v else "?") + "sid=" + sid)
+                break
+    return resp(environ, start_response)
+
+
+def app(environ, start_response):
+    req = Request(environ)
+    _local.req = req
+    try:
+        if req.path.startswith("/static/"):
+            return serve_static(req, start_response)
+        if req.path == "/favicon.ico":
+            start_response("204 No Content", [])
+            return [b""]
+
+        load_session(req)
+
+        for rx, methods, fn, roles in ROUTES:
+            m = rx.match(req.path)
+            if m and req.method in methods:
+                if req.method == "POST" and not csrf_gecerli(req):
+                    resp = Response("Geçersiz istek (CSRF koruması).", "403 Forbidden")
+                    return resp(environ, start_response)
+                if roles is not None:
+                    if not req.user:
+                        nxt = urllib.parse.quote(req.path)
+                        resp = redirect("/giris?next=" + nxt)
+                        return _respond(req, resp, environ, start_response)
+                    if roles and req.user["rol"] not in roles and req.user["rol"] != "Admin":
+                        resp = Response("Bu sayfa için yetkiniz yok.", "403 Forbidden")
+                        return resp(environ, start_response)
+                resp = fn(req, **m.groupdict())
+                return _respond(req, resp, environ, start_response)
+
+        resp = Response("Sayfa bulunamadı.", "404 Not Found")
+        return resp(environ, start_response)
+    except Exception as e:  # noqa: BLE001
+        import traceback
+
+        traceback.print_exc()
+        resp = Response(
+            "<h1>500 — Sunucu hatası</h1><pre>" + html.escape(str(e)) + "</pre>",
+            "500 Internal Server Error",
+        )
+        return resp(environ, start_response)
+    finally:
+        _local.req = None
