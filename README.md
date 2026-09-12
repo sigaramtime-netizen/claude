@@ -20,3 +20,6 @@ GM1 = Claude. Bu panel Claude'un GitHub'a girmeden projeyi okuyup denetlemesi i�
 | `gm1-paketleri/` | GM1'e hazırlanmış denetim paketleri |
 | `docs/` | 47 teknik doküman (mimari, faz özetleri, tasarımlar) |
 | `kanitlar/` | Test çıktıları, regresyon logları, dosya listeleri |
+
+## 📦 Denetim paketleri (zip)
+- D008 kaynak kod zip: [BRN-Teknoloji-ERP-v1.39.0-D008-GM1-denetim.zip](paketler/BRN-Teknoloji-ERP-v1.39.0-D008-GM1-denetim.zip)

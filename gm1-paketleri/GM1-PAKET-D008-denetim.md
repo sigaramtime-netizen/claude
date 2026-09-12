@@ -178,3 +178,10 @@ kanitlar/v1.39.0/D008-ozet-hash.txt       — sha256
 ==================================================================
 NOT: Kod zip'i (güncel, D008 değişiklikleri dahil) ayrıca verilecek.
 ==================================================================
+
+==================================================================
+5) KOD ZİP LİNKİ (güncel kaynak kod, sansürlü)
+==================================================================
+İndir: https://raw.githubusercontent.com/sigaramtime-netizen/claude/main/paketler/BRN-Teknoloji-ERP-v1.39.0-D008-GM1-denetim.zip
+- İçerik: 66 .py modül + 133 şablon + 47 docs + 23 test + demo seed'li DB
+- Not: Gerçek müşteri adı "MÜŞTERİ-A" olarak sansürlenmiştir. PNG yok.
