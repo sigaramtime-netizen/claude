@@ -1,6 +1,6 @@
-# 📜 ANAYASA v8 (SON) — BRN Teknoloji ERP Çalışma Sistemi
+# 📜 ANAYASA v9 (SON) — BRN Teknoloji ERP Çalışma Sistemi
 
-> Tek geçerli kaynak bu dosyadır. İki repo vardır ve SENKRONİZASYONU KÖPRÜ YAPAR.
+> Tek geçerli kaynak bu dosyadır. v8'den tek fark: **Claude'a İÇERİK NASIL GİDER** kuralı netleşti.
 
 ---
 
@@ -11,57 +11,71 @@
 | **GM1 (beyin)** | **CLAUDE (web)** | Direktif yazar, coder'ı denetler, ONAYLANDI/REVİZYON kararı verir |
 | **GM2 (yedek GM)** | **ARENA GM** (gm@arena) | Claude'un günlük hakkı bitince işi devralır |
 | **Coder** | **ARENA CODER** (coder@arena) | Kodu yazar, test eder, rapor+kanıt yükler |
-| **KÖPRÜ + Danışman** | **ARENA (bu pencere)** | Claude'un kararlarını repolara işler, sansürler, senkron tutar |
+| **KÖPRÜ + Danışman** | **ARENA (bu pencere)** | Claude kararlarını repolara işler, sansürler, senkron tutar, paket hazırlar |
 
-## 2) İKİ REPO (ve senkronizasyon)
+## 2) İKİ REPO
 
 | Repo | Görünürlük | İçerik |
 |---|---|---|
-| `BRN-Teknoloji-ERP` | 🔒 PRIVATE | **kod/**, ham kanıtlar, her şeyin aslı (kaynak) |
-| `claude` | 🌍 PUBLIC | GM1 paneli: direktifler, raporlar, denetimler, docs/, sansürlü kanıtlar, DURUM/ROL/ANAYASA |
+| `BRN-Teknoloji-ERP` | 🔒 PRIVATE | **kod/**, ham kanıtlar, her şeyin aslı |
+| `claude` | 🌍 PUBLIC | GM1 paneli: direktif/rapor/denetim/docs/kanıt — hepsi SANSÜRLÜ METİN |
 
-**SENKRONİZASYON KURALI:** İki repo **otomatik değil**, KÖPRÜ tarafından senkron tutulur:
-- Her Claude kararı → KÖPRÜ önce PRIVATE repoya, sonra SANSÜRLÜ kopyasını PUBLIC repoya işler.
-- Coder private repoya push edince → KÖPRÜ rapor/kanıtın sansürlü halini public'e kopyalar.
-- Kural: public her zaman private'ın SANSÜRLÜ YANSIMASIDIR (kod + gerçek veri ASLA public'e çıkmaz).
+**Senkron:** Otomatik değil; KÖPRÜ yapar. Public her zaman private'ın SANSÜRLÜ YANSIMASIDIR.
 
-## 3) VARDIYA (Claude hakkı bitince)
+## 3) ⭐ CLAUDE'A İÇERİK NASIL GİDER (EN ÖNEMLİ KURAL)
 
-- Claude'un günlük hakkı bitti → kullanıcı **ARENA GM2**'ye yazar → GM2, GitHub'daki
-  son durumu (DURUM.md + denetim-raporlari + gm1-paketleri) okuyarak kaldığı yerden
-  GM işini sürdürür. İş kaybı OLMAZ (her şey repolarda).
-- Claude geri gelince iş yine Claude'a döner.
+**KURAL: Claude'a ASLA ZIP ve RESİM (PNG) GÖNDERİLMEZ. Her şey METİN olur.**
+
+Neden:
+- Claude web, GitHub'daki **zip'i (binary) indirip açamıyor** → görmezden geliyor/eksik görüyor.
+- Claude web, **resim (PNG) okuyamıyor**.
+- Zip/uzun dosya **kotayı erken bitiriyor**.
+
+Çözüm (kalıcı):
+- Claude'un ihtiyacı olan HER ŞEY public repoda **ayrı .md/.txt dosyası** olarak durur.
+- Claude bunları **raw link** ile okur (tek seferde küçük metin, kota dostu):
+  `https://raw.githubusercontent.com/sigaramtime-netizen/claude/main/<YOL>`
+- Kod incelemesi gerekiyorsa, ilgili dosya(lar) **metin olarak** public'e konur (`.py` içeriği
+  `.txt`/`.md` içine). Kod public'e çıkmadan önce SANSÜRLENİR (gerçek isim → MÜŞTERİ-A).
+- Ekran görüntüsü istenen kanıtlarda: PNG YERİNE coder **metin kanıt** verir
+  (test çıktısı, HTTP durum listesi, dosya listesi). Görsel kanıt gerekirse köprü
+  ekranı "şu sayfa 200 döndü, şu alanlar mevcut" diye METNE çevirir.
 
 ## 4) GÜNLÜK DÖNGÜ
 
 ```
 1. Kral → Claude'a "şu görevi direktif yaz / şu raporu denetle"
-2. Claude → public repoyu raw link ile okur → kararını metin yazar
+2. Claude → public repoyu RAW LİNK ile okur → kararını metin yazar
 3. Kral → kararı BU pencereye yapıştırır
-4. KÖPRÜ (ben) → private repoya işler + sansürlü kopyayı public'e koyar + DURUM.md günceller
-5. Kral → Coder'a "devam et" → Coder kodlar, private repoya rapor+kanıt push'lar
-6. KÖPRÜ → yeni raporun sansürlü kopyasını + denetim paketini public'e koyar
+4. KÖPRÜ → private repoya işler + sansürlü METİN kopyayı public'e koyar + DURUM günceller
+5. Kral → Coder'a "devam et" → Coder kodlar, private'a rapor+kanıt (metin) push'lar
+6. KÖPRÜ → yeni rapor/kanıt/kodun sansürlü METİN hallerini public'e koyar + denetim paketi hazırlar
 7. 1. adıma dön
 ```
 
 ## 5) PUBLIC'E GİREN / GİRMEYEN
 
-- ✅ GİRER: direktifler, raporlar, denetimler, paketler, DURUM/ROL/ANAYASA/BRİFİNG,
-  `docs/` (47 doküman), test ÇIKTILARI, regresyon logları, dosya listeleri.
-- ❌ GİRMEZ: `kod/` (.py + şablonlar), `data/erp.db`, EKRAN GÖRÜNTÜLERİ (PNG),
-  `*_degisen_dosyalar.txt` (kod dökümü), gerçek müşteri adı / belge no / gerçek tutar.
+- ✅ GİRER (metin): direktifler, raporlar, denetimler, paket md'leri, DURUM/ROL/ANAYASA/BRİFİNG,
+  `docs/` (tüm faz özetleri), test ÇIKTILARI, regresyon logları, dosya listeleri,
+  gerektiğinde SANSÜRLÜ kod metni.
+- ❌ GİRMEZ: ZIP, PNG/resim, `data/*.db`, ham `kod/*.py` (sansürsüz), gerçek müşteri adı/belge no/tutar.
 
-**SANSÜR EŞLEMELERİ:** gerçek isim → `MÜŞTERİ-A/B`, marka → `MARKA-A/B`,
-belge no → `BELGE-NNN`, gerçek tutar → demo tutarlar.
+**SANSÜR:** gerçek isim → `MÜŞTERİ-A/B`, marka → `MARKA-A/B/C`, belge no → `BELGE-NNN`,
+gerçek tutar → demo tutarlar.
 
-## 6) BEN (KÖPRÜ) NE YAPARIM / YAPMAM
+## 6) VARDIYA (Claude hakkı bitince)
 
-- ✅ YAPARIM: Claude kararlarını işlemek, sansür + senkron, DURUM.md güncellemek,
-  denetim paketleri + brifing hazırlamak, raw link vermek, tıkanıklık desteği.
-- ❌ YAPMAM: kendi başıma direktif/denetim kararı (GM1'in işi), kod yazmak (coder'ın işi).
+- Kullanıcı ARENA GM2'ye yazar → GM2 GitHub'daki son durumu okuyup kaldığı yerden sürdürür.
+- Claude geri gelince iş Claude'a döner. İş kaybı olmaz.
 
-## 7) MEVCUT DURUM
+## 7) KÖPRÜ NE YAPAR / YAPMAZ
 
-- Proje v1.39.0. D001–D006 ONAYLANDI. **D007 KODLANDI → GM1 (Claude) onayı bekliyor.**
-- Public panelde: GM1-BRIFING.md + 47 docs + sansürlü kanıtlar + D007 paketi hazır.
-- Claude'a verilecek ilk link: public `GM1-BRIFING.md` raw linki + D007 paketi.
+- ✅ YAPAR: kararları işlemek, sansür + senkron, metin paket hazırlamak, raw link vermek,
+  coder iddialarını TARAFSIZ doğrulamak (testleri kendi çalıştırıp kanıt üretmek).
+- ❌ YAPMAZ: direktif/denetim KARARI vermek (GM1'in), kod yazmak (coder'ın).
+
+## 8) MEVCUT DURUM
+
+- Proje v1.39.0. D001–D007 ONAYLANDI.
+- **D008: 1.tur REVİZYON** (köprü zip hatası → 5 doküman Claude'a ulaşmadı; dokümanlar
+  aslında mevcut). 2.tur: dokümanlar public'te METİN olarak, GM1 okuyacak.
