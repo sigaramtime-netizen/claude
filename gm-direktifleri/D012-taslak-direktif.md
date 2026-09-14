@@ -1,7 +1,8 @@
-# D012 — TASLAK DİREKTİF (GM2 onayına sunulur)
+# D012 — TASLAK DİREKTİF (SUPERSEDED)
 
-> ⚠️ Bu dosya henüz GM direktifi DEĞİLDİR. Kapsamı GM1 + KRAL önceki turda kararlaştırdı;
-> GM2 (acil yedek, devrede) bunu kesin direktife dönüştürecek. Onay gelince coder kodlar.
+> ⚠️ Bu taslak, GM2'nin kesin direktifiyle yer değiştirdi:
+> `gm-direktifleri/D012-satir-kdv-coklu-doviz-parabirimi-birim-db-v1.43.0.md`
+> (2026-09-14, GM2 acil yedek devrede). Bu dosya yalnızca tarihsel kayıt olarak durur.
 > Kaynak kapsam: `gm-direktifleri/D011-tanimlar-kdv-barkod-doviz-tahsilat.md` (B ve D
 > bölümleri) + KRAL revizyonu (Para Birimi & Birim tablo geçişi).
 > **Sürüm hedefi (öneri):** v1.42.0 → **v1.43.0**
