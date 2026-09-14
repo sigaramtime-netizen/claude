@@ -2,12 +2,12 @@
 
 > Bu dosya: kim ne rolde, tek kaynak. KÖPRÜ (Arena danışman) günceller.
 
-- **GM1 (beyin, karar)**  : CLAUDE (web) — NÖBETTE; D010'u ONAYLADI (v1.41.0)
-- **GM2 (yedek GM)**      : ARENA GM (gm@arena) — GM1 tarafından EŞ-YETKİLİ OLARAK TANINMIYOR
+- **GM1 (beyin, karar)**  : CLAUDE (web) — KOTA DOLDU (ücretsiz hak bitti)
+- **GM2 (acil yedek GM)** : ARENA GM (gm@arena) — DEVREDE
 - **Coder (kod)**         : ARENA CODER (coder@arena)
 - **Danışman + Köprü**    : ARENA (bu pencere — GM kararlarını repoya işler)
 
-## NÖBETTEKİ GM: **GM1 (CLAUDE)** ← vardiya şalteri
+## NÖBETTEKİ GM: **ARENA-GM (GM2 — acil yedek)** ← vardiya şalteri
 
 Son güncelleme: 2026-09-14
 
@@ -26,3 +26,5 @@ Son güncelleme: 2026-09-14
 | 2026-09-14 | **NÖBET GM1'e döndü** | D010 denetimi GM1'de: `devir/D010-gm2-den-gm1.md` |
 | 2026-09-14 | **GM1 süreç kuralı koydu** | "GM2 tanımıyorum; her direktif önce benden geçmeli" → R010 |
 | 2026-09-14 | **KRAL kararı: GM2 = yalnız acil yedek** | Normal akışta tek karar mercii GM1; GM2 yalnız kota-dolu anlarda |
+| 2026-09-14 | **D011 ONAYLANDI (GM1)** | v1.42.0 MÜHÜR → R011 |
+| 2026-09-14 | **NÖBET GM2'ye geçti** (GM1 ücretsiz kotası doldu) | D012 direktifi GM2'de: `devir/D011-gm1-den-gm2.md` |

@@ -15,7 +15,7 @@
 | D009  | Güvenlik & Sağlamlık Denetimi (SQL enjeksiyon, oturum, dosya yükleme, CSRF, kaba kuvvet) | ONAYLANDI | GM2 (Arena GM) nöbette: 18/18 + 545/545 (KÖPRÜ bağımsız doğruladı), CSRF hibrit, kaba kuvvet kilidi, oturum 12s, yetki matrisi temiz — D009 MÜHÜR v1.40.0 ✅ |
 | D010  | Uygulama İçi Yedekleme & Geri Yükleme (yalnız Admin) | ONAYLANDI | GM1 (Claude) bizzat denetledi: test_d010 16/16 + 24 eski test 545/545 = 561/561 (köprü iddiasıyla birebir); path traversal 2 katman, çok şirketli izolasyon tutarlı, geri yükleme WAL-güvenli — D010 MÜHÜR v1.41.0 ✅. GM1 süreç itirazı: direktif GM1'den geçmeden "GM2 onayı" damgası yemiş; sonraki her direktif önce GM1'den geçmeli |
 | D011  | Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod | ONAYLANDI | GM1 bizzat denetledi: 582/582 (ilk tur 2 hata GM1'in ardışık çalıştırmasından, taze zip'te temiz — kod hatası değil); kategori+cari grup inline + pasifleştirme (K32), hızlı barkod 3 formda, K1 izolasyonu — D011 MÜHÜR v1.42.0 ✅ |
-| D012  | Satır Bazlı KDV + Çoklu Döviz + Para Birimi/Birim tablo geçişi (B+D) | BEKLEMEDE | GM1 kapsam kararı + KRAL revizyonu; D011'den sonra; kapsam üst dosyada (`D011-tanimlar-kdv-barkod-doviz-tahsilat.md`) |
+| D012  | Satır Bazlı KDV + Çoklu Döviz + Para Birimi/Birim tablo geçişi (B+D) | BEKLEMEDE | GM1+KRAL kapsamı net (B + D + para birimi/birim tablo geçişi). GM1 kotası doldu → GM2 (acil yedek) devrede. Taslak: `gm-direktifleri/D012-taslak-direktif.md`; GM2 açık kararları netleştirecek (GBP, birim tohumu, sürüm) |
 | D013  | Cari Tahsilat / Ödeme Ekranı (E) | BEKLEMEDE | GM1 kapsam kararı; D012'den sonra |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
