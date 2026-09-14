@@ -1,8 +1,8 @@
 # D011 — Tanım Verileri Yönetimi + Satır Bazlı KDV + Hızlı Barkod + Çoklu Döviz + Cari Tahsilat/Ödeme
 
-> **Durum:** GM1 (Claude) direktifi + **KAPSAM BÖLME KARARI** — 2026-09-14, **Seçenek 3 (3 paket, tematik):**
-> - **D011 = A + C** (Kategori & Para Birimi tanımları + hızlı barkod) — düşük risk, hızlı
-> - **D012 = B + D** (satır bazlı KDV + çoklu döviz) — aynı kalem/toplam yüzeyi, birlikte test
+> **Durum:** GM1 (Claude) direktifi + **KAPSAM BÖLME KARARI** — 2026-09-14, **Seçenek 3 (3 paket, tematik)** + **KRAL revizyonu:**
+> - **D011 = A + C** (Kategori & Cari Grup tanımları + hızlı barkod) — düşük risk, hızlı
+> - **D012 = B + D + Para Birimi/Birim tablo geçişi** (satır KDV + çoklu döviz + sabit liste→tablo) — aynı kalem/toplam yüzeyi, birlikte test
 > - **D013 = E** (cari tahsilat/ödeme ekranı) — bağımsız
 > Sıralama: **D011 → D012 → D013**; her biri kendi zip + testleriyle ayrı ayrı GM1'e gelir,
 > GM1 her birini bağımsız çalıştırıp doğrular.
@@ -26,13 +26,16 @@ Kullanıcının canlı kullanım şikâyetleri + ekran görüntüsü (v1.41.0 bu
 
 ---
 
-## D011-A: Kategori & Para Birimi Tanımları
+## D011-A: Kategori & Cari Grup Tanımları
 
-- Marka'daki desenin birebir aynısı: `/api/kategori/ekle`, `/api/para-birimi/ekle`
+- Marka'daki desenin birebir aynısı: `/api/kategori/ekle`, `/api/cari_grup/ekle`
   (POST, inline).
 - Ayrıca Ayarlar altında (Marka gibi) bir "Tanımlar" alt-ekranı: liste + **pasifleştir**
-  (silme DEĞİL — K32 deseniyle tutarlı; kullanılan bir kategori/para birimi silinemez,
+  (silme DEĞİL — K32 deseniyle tutarlı; kullanılan bir kategori/cari grup silinemez,
   yalnız pasifleştirilir).
+- ⚠️ **KRAL revizyonu:** Para Birimi bu paketten çıkarıldı → **D012** (sabit liste → tablo
+  geçişi, çoklu dövizle birlikte). Cari Grup eklendi (tablo hazır + `/cari/gruplar` ekranı
+  mevcut; yalnızca inline "＋ Grup" butonu eksik).
 
 ## D011-B: Satır Bazlı KDV Dahil/Hariç
 
@@ -81,8 +84,9 @@ Kullanıcının canlı kullanım şikâyetleri + ekran görüntüsü (v1.41.0 bu
 
 ---
 
-## DANIŞMA NOKTASI (GM1 → köprü)
+## DANIŞMA NOKTASI (CEVAPLANDI — 2026-09-14)
 
-D011-D ve D011-E kapsam olarak büyük — tek pakette mi (D011), yoksa D011 (A+B+C,
-küçük/hızlı) ve D012 (D+E, büyük/döviz+tahsilat) olarak ikiye mi bölünsün?
-→ Köprü 2-3 seçenekle dönecek; karar GM1'in.
+GM1 → köprü sorusu: D011-D/E büyük; tek paket mi, ikiye mi bölünsün?
+→ Köprü 3 seçenek sundu; GM1 **Seçenek 3'ü seçti** (3 paket, tematik). KRAL revizyonu:
+Para Birimi D011-A'dan D012'ye taşındı (sabit liste → tablo geçişi pahalı); Cari Grup
+D011-A'ya eklendi (tablo hazır). Birim de D012'de Para Birimi ile birlikte tabloya taşınır.
