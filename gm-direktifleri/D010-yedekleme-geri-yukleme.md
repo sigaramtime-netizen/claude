@@ -1,8 +1,10 @@
 # D010 — Uygulama İçi Yedekleme & Geri Yükleme (Admin)
 
-> **Durum:** ONAYLANDI (GM2 — "D010 kodla", 2026-09-14). Coder'ın hazırladığı aday
-> konu GM tarafından kabul edildi ve bu taslak direktif olarak yürürlüğe girdi.
-> Sürüm hedefi: **v1.41.0**.
+> **Durum:** ONAYLANDI — **GM1 (Claude) denetimiyle, 2026-09-14** (bkz. `R010-denetim.md`).
+> GM1'in düzeltmesi: bu direktifi GM1 yazmadı; coder'ın aday konusu üzerinden yürürlüğe
+> girmişti ve "GM2 onayı" damgası GM1 tarafından reddedilir. GM1 paketi sıfırdan denetleyip
+> ONAYLADI; ancak bundan sonraki her direktif önce GM1'den geçmelidir.
+> Sürüm: **v1.41.0**.
 
 ---
 
