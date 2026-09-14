@@ -1,0 +1,226 @@
+# -*- coding: utf-8 -*-
+"""D011 — Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod (v1.42.0) e2e testi.
+
+20 kontrol. Sunucu 8080'de çalışırken:
+    python3 test_d011_tanimlar_barkod.py
+
+Kapsam (GM direktifi D011-tanimlar-hizli-barkod.md):
+  A1-5   Kategori inline ekleme (idempotent, 400 boş, yetki 403)
+  B6-8   Cari grup inline ekleme (idempotent, tip='Bölge')
+  C9-13  Ayarlar/Tanımlar: liste + pasifleştir (silme yok) + formlarda seçilemez
+  D14-18 Hızlı barkod: Enter-ekle (fatura/teklif/irsaliye), bulunamayan uyarı, input var
+  E19    K1 izolasyonu: kategori şirket bazlı
+  F20    FK bütünlüğü + D011TEST kalıntısı yok
+"""
+import sqlite3
+
+import requests
+
+BASE = "http://127.0.0.1:8080"
+DB = "data/erp.db"
+MARK = "D011TEST"
+BARKOD = "8690000999001"
+
+ok, fail = [], []
+
+
+def check(name, cond, detay=""):
+    (ok if cond else fail).append(name)
+    print((("  ✅ " if cond else "  ❌ ") + name + (f"  → {detay}" if detay else "")))
+
+
+def db(q, *a):
+    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    r = c.execute(q, a).fetchall(); c.close(); return r
+
+
+def db1(q, *a):
+    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    r = c.execute(q, a).fetchone(); c.close(); return r
+
+
+def dbx(q, *a):
+    c = sqlite3.connect(DB); c.execute(q, a); c.commit(); c.close()
+
+
+def giris(kadi="admin", sifre="1234"):
+    s = requests.Session()
+    r = s.post(BASE + "/giris", data={"kullanici_adi": kadi, "sifre": sifre},
+               allow_redirects=False)
+    return s, r
+
+
+# Önceki çalışmalardan kalıntı temizliği
+dbx("DELETE FROM kategori WHERE ad LIKE ?", MARK + "%")
+dbx("DELETE FROM cari_grup WHERE ad LIKE ?", MARK + "%")
+dbx("DELETE FROM stok_kart WHERE barkod=?", BARKOD)
+dbx("DELETE FROM sirket WHERE kod=?", MARK)
+dbx("DELETE FROM kullanici_sirket WHERE sirket_id NOT IN (SELECT id FROM sirket)")
+
+s, r = giris()
+check("1. admin girişi", r.status_code == 302 and bool(r.cookies.get("erp_session")),
+      f"status={r.status_code}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM A — Kategori Inline Ekleme")
+print("=" * 70)
+
+r = s.post(BASE + "/api/kategori/ekle", data={"ad": MARK + "KAT"}, allow_redirects=False)
+kat_id = r.json().get("id") if r.status_code == 200 else None
+sat = db1("SELECT * FROM kategori WHERE id=?", kat_id)
+check("2. kategori inline ekleme (200 + aktif=1 + sirket_id=1)",
+      r.status_code == 200 and kat_id and sat and sat["aktif"] == 1 and sat["sirket_id"] == 1,
+      f"status={r.status_code}, id={kat_id}")
+
+r2 = s.post(BASE + "/api/kategori/ekle", data={"ad": (MARK + "KAT").lower()}, allow_redirects=False)
+check("3. kategori idempotent (küçük harf → aynı id)",
+      r2.status_code == 200 and r2.json().get("id") == kat_id, f"id={r2.json().get('id')}")
+
+r = s.post(BASE + "/api/kategori/ekle", data={"ad": "   "}, allow_redirects=False)
+check("4. boş kategori adı → 400", r.status_code == 400, f"status={r.status_code}")
+
+sv, _ = giris("servis", "1234")
+r = sv.post(BASE + "/api/kategori/ekle", data={"ad": "X"}, allow_redirects=False)
+check("5. STOK_WRITE dışı rol (servis) → 403", r.status_code == 403, f"status={r.status_code}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM B — Cari Grup Inline Ekleme")
+print("=" * 70)
+
+r = s.post(BASE + "/api/cari_grup/ekle", data={"ad": MARK + "GRP"}, allow_redirects=False)
+grp_id = r.json().get("id") if r.status_code == 200 else None
+g = db1("SELECT * FROM cari_grup WHERE id=?", grp_id)
+check("6. cari grup inline ekleme (tip='Bölge')",
+      r.status_code == 200 and grp_id and g and g["tip"] == "Bölge" and g["aktif"] == 1,
+      f"status={r.status_code}, tip={g['tip'] if g else '?'}")
+
+r = s.post(BASE + "/api/cari_grup/ekle", data={"ad": MARK + "GRP"}, allow_redirects=False)
+check("7. cari grup idempotent (aynı ad → aynı id)",
+      r.status_code == 200 and r.json().get("id") == grp_id, f"id={r.json().get('id')}")
+
+r = s.post(BASE + "/api/cari_grup/ekle", data={"ad": ""}, allow_redirects=False)
+check("8. boş grup adı → 400", r.status_code == 400, f"status={r.status_code}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM C — Ayarlar / Tanımlar (liste + pasifleştir)")
+print("=" * 70)
+
+r = s.get(BASE + "/ayarlar/tanimlar", allow_redirects=False)
+check("9. /ayarlar/tanimlar 200 + liste içerir",
+      r.status_code == 200 and MARK + "KAT" in r.text and MARK + "GRP" in r.text,
+      f"status={r.status_code}")
+
+r = s.post(BASE + "/ayarlar/tanimlar/kategori/" + str(kat_id) + "/durum", allow_redirects=False)
+kat_aktif = db1("SELECT aktif FROM kategori WHERE id=?", kat_id)["aktif"]
+kat_var = db1("SELECT COUNT(*) c FROM kategori WHERE id=?", kat_id)["c"]
+check("10. kategori pasifleştirildi (silinmedi, aktif=0)",
+      r.status_code == 302 and kat_aktif == 0 and kat_var == 1,
+      f"status={r.status_code}, aktif={kat_aktif}, var={kat_var}")
+
+r = s.post(BASE + "/ayarlar/tanimlar/cari-grup/" + str(grp_id) + "/durum", allow_redirects=False)
+grp_aktif = db1("SELECT aktif FROM cari_grup WHERE id=?", grp_id)["aktif"]
+check("11. cari grup pasifleştirildi (aktif=0)",
+      r.status_code == 302 and grp_aktif == 0, f"aktif={grp_aktif}")
+
+r = s.get(BASE + "/stok/yeni", allow_redirects=False)
+check("12. pasif kategori stok formunda seçilemez",
+      r.status_code == 200 and MARK + "KAT" not in r.text, f"status={r.status_code}")
+
+r = s.get(BASE + "/cari/yeni", allow_redirects=False)
+check("13. pasif grup cari formunda seçilemez",
+      r.status_code == 200 and MARK + "GRP" not in r.text, f"status={r.status_code}")
+
+d, _ = giris("depo", "1234")
+r = d.get(BASE + "/ayarlar/tanimlar", allow_redirects=False)
+check("14. Admin dışı (depo) /ayarlar/tanimlar → 403", r.status_code == 403, f"status={r.status_code}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM D — Hızlı Barkod (Enter-ekle)")
+print("=" * 70)
+
+dbx("INSERT INTO stok_kart(kod, ad, barkod, kdv_orani, alis_fiyat, satis_fiyat, aktif, sirket_id) "
+    "VALUES(?,?,?,?,?,?,1,1)",
+    MARK + "STK", MARK + " Barkod Ürünü", BARKOD, 20, 50.0, 100.0)
+
+r = s.post(BASE + "/fatura/yeni", data={"action": "barkod", "barkod_sec": BARKOD,
+                                        "tip": "Satis", "tarih": "2026-09-14"},
+           allow_redirects=False)
+check("15. fatura barkod → satır eklendi",
+      r.status_code == 200 and ("stok_kod\": \"" + MARK + "STK" in r.text), f"status={r.status_code}")
+
+r = s.post(BASE + "/teklif/yeni", data={"action": "barkod", "barkod_sec": BARKOD,
+                                        "tarih": "2026-09-14", "gecerlilik_tarihi": "2026-09-30"},
+           allow_redirects=False)
+check("16. teklif barkod → satır eklendi",
+      r.status_code == 200 and ("stok_kod\": \"" + MARK + "STK" in r.text), f"status={r.status_code}")
+
+r = s.post(BASE + "/irsaliye/yeni", data={"action": "barkod", "barkod_sec": BARKOD,
+                                          "tip": "Satis", "tarih": "2026-09-14"},
+           allow_redirects=False)
+check("17. irsaliye barkod → satır eklendi",
+      r.status_code == 200 and ("stok_kod\": \"" + MARK + "STK" in r.text), f"status={r.status_code}")
+
+r = s.post(BASE + "/fatura/yeni", data={"action": "barkod", "barkod_sec": "9999999999999",
+                                        "tip": "Satis", "tarih": "2026-09-14"},
+           allow_redirects=False)
+check("18. bulunamayan barkod → uyarı flash",
+      "Barkod bulunamadı" in r.text, f"status={r.status_code}")
+
+r = s.get(BASE + "/fatura/yeni", allow_redirects=False)
+ok_inputs = (r.status_code == 200 and 'id="barkod-hizli"' in r.text and 'name="barkod_sec"' in r.text)
+r2 = s.get(BASE + "/teklif/yeni", allow_redirects=False)
+r3 = s.get(BASE + "/irsaliye/yeni", allow_redirects=False)
+ok2 = 'id="barkod-hizli"' in r2.text and 'name="barkod_sec"' in r2.text
+ok3 = 'id="barkod-hizli"' in r3.text and 'name="barkod_sec"' in r3.text
+check("19. hızlı barkod input'u 3 formda da var", ok_inputs and ok2 and ok3,
+      f"fatura={ok_inputs}, teklif={ok2}, irsaliye={ok3}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM E — K1 İzolasyonu")
+print("=" * 70)
+
+dbx("INSERT INTO sirket(kod, unvan, aktif) VALUES(?,?,1)", MARK, "D011 İkinci Şirket")
+s2 = db1("SELECT id FROM sirket WHERE kod=?", MARK)["id"]
+dbx("INSERT OR IGNORE INTO kullanici_sirket(kullanici_id, sirket_id) "
+    "SELECT id, ? FROM kullanici WHERE kullanici_adi='admin'", s2)
+s.post(BASE + "/sirket/gec", data={"sirket_id": str(s2), "next": "/"}, allow_redirects=False)
+r = s.post(BASE + "/api/kategori/ekle", data={"ad": MARK + "KAT"}, allow_redirects=False)
+kat_id_b = r.json().get("id") if r.status_code == 200 else None
+s.post(BASE + "/sirket/gec", data={"sirket_id": "1", "next": "/"}, allow_redirects=False)
+k1 = db1("SELECT sirket_id FROM kategori WHERE id=?", kat_id)["sirket_id"]
+k2 = db1("SELECT sirket_id FROM kategori WHERE id=?", kat_id_b)["sirket_id"]
+check("20. kategori K1 izolasyonu (aynı ad farklı şirkette ayrı kayıt)",
+      kat_id_b and kat_id_b != kat_id and k1 == 1 and k2 == s2,
+      f"idA={kat_id}(sirket={k1}), idB={kat_id_b}(sirket={k2})")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM F — Bütünlük + Kalıntı Temizliği")
+print("=" * 70)
+
+# Temizlik
+dbx("DELETE FROM kategori WHERE ad LIKE ?", MARK + "%")
+dbx("DELETE FROM cari_grup WHERE ad LIKE ?", MARK + "%")
+dbx("DELETE FROM stok_kart WHERE barkod=?", BARKOD)
+dbx("DELETE FROM kullanici_sirket WHERE sirket_id=?", s2)
+dbx("DELETE FROM sirket WHERE id=?", s2)
+
+fk = db1("SELECT COUNT(*) c FROM pragma_foreign_key_check")["c"]
+kalinti = (db1("SELECT COUNT(*) c FROM kategori WHERE ad LIKE ?", MARK + "%")["c"]
+           + db1("SELECT COUNT(*) c FROM cari_grup WHERE ad LIKE ?", MARK + "%")["c"]
+           + db1("SELECT COUNT(*) c FROM stok_kart WHERE barkod=?", BARKOD)["c"]
+           + db1("SELECT COUNT(*) c FROM sirket WHERE kod=?", MARK)["c"])
+check("21. FK bütünlüğü 0 + D011TEST kalıntısı yok", fk == 0 and kalinti == 0,
+      f"fk={fk}, kalıntı={kalinti}")
+
+print()
+print(f"=== SONUÇ: {len(ok)} başarılı / {len(fail)} başarısız (toplam {len(ok) + len(fail)}) ===")
+if fail:
+    print("BAŞARISIZ:", fail)
+    raise SystemExit(1)
+print("TÜM D011 TESTLERİ GEÇTİ ✅")

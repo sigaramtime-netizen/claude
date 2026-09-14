@@ -1,0 +1,10 @@
+D011 (v1.42.0) teslim ZIP — hash (SANSRÜRLÜ)
+===========================================
+dosya : teslim/D011-v1.42.0.zip
+boyut : 816378 bayt
+MD5   : 1624062a26ac9a5ba7791709072f18ab
+SHA256: 463a6327dd731a7c2736e4017da5c076bf9ae9d800f1b28b16fef983aae32afe
+
+Sansür: gerçek kişi adı → MÜŞTERİ-A / D007-MUSTERIA
+        (kod/test_d007_iyilestirmeler.py + docs/D007-kullanici-bildirimleri-ozet.md;
+        KÖPRÜ D009/D010 deseniyle birebir doğrulandı).

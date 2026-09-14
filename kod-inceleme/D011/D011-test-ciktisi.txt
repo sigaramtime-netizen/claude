@@ -1,0 +1,42 @@
+  ✅ 1. admin girişi  → status=302
+======================================================================
+BÖLÜM A — Kategori Inline Ekleme
+======================================================================
+  ✅ 2. kategori inline ekleme (200 + aktif=1 + sirket_id=1)  → status=200, id=24
+  ✅ 3. kategori idempotent (küçük harf → aynı id)  → id=24
+  ✅ 4. boş kategori adı → 400  → status=400
+  ✅ 5. STOK_WRITE dışı rol (servis) → 403  → status=403
+======================================================================
+BÖLÜM B — Cari Grup Inline Ekleme
+======================================================================
+  ✅ 6. cari grup inline ekleme (tip='Bölge')  → status=200, tip=Bölge
+  ✅ 7. cari grup idempotent (aynı ad → aynı id)  → id=17
+  ✅ 8. boş grup adı → 400  → status=400
+======================================================================
+BÖLÜM C — Ayarlar / Tanımlar (liste + pasifleştir)
+======================================================================
+  ✅ 9. /ayarlar/tanimlar 200 + liste içerir  → status=200
+  ✅ 10. kategori pasifleştirildi (silinmedi, aktif=0)  → status=302, aktif=0, var=1
+  ✅ 11. cari grup pasifleştirildi (aktif=0)  → aktif=0
+  ✅ 12. pasif kategori stok formunda seçilemez  → status=200
+  ✅ 13. pasif grup cari formunda seçilemez  → status=200
+  ✅ 14. Admin dışı (depo) /ayarlar/tanimlar → 403  → status=403
+======================================================================
+BÖLÜM D — Hızlı Barkod (Enter-ekle)
+======================================================================
+  ✅ 15. fatura barkod → satır eklendi  → status=200
+  ✅ 16. teklif barkod → satır eklendi  → status=200
+  ✅ 17. irsaliye barkod → satır eklendi  → status=200
+  ✅ 18. bulunamayan barkod → uyarı flash  → status=200
+  ✅ 19. hızlı barkod input'u 3 formda da var  → fatura=True, teklif=True, irsaliye=True
+======================================================================
+BÖLÜM E — K1 İzolasyonu
+======================================================================
+  ✅ 20. kategori K1 izolasyonu (aynı ad farklı şirkette ayrı kayıt)  → idA=24(sirket=1), idB=25(sirket=81)
+======================================================================
+BÖLÜM F — Bütünlük + Kalıntı Temizliği
+======================================================================
+  ✅ 21. FK bütünlüğü 0 + D011TEST kalıntısı yok  → fk=0, kalıntı=0
+
+=== SONUÇ: 21 başarılı / 0 başarısız (toplam 21) ===
+TÜM D011 TESTLERİ GEÇTİ ✅

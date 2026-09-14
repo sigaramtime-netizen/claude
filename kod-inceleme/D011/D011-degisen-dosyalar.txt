@@ -1,0 +1,21 @@
+===== D011 (v1.42.0) — DEĞİŞEN DOSYA LİSTESİ (diff: 1d09dcd..bcd964a) =====
+Commit: bcd964a | Tarih: 2026-09-14 10:48:42
+
+   kod/CHANGELOG.md                    |  31 +++++
+   kod/ayarlar.py                      |  47 ++++++++
+   kod/cari.py                         |  43 +++++--
+   kod/config.py                       |   2 +-
+   kod/regresyon_runner.py             |  68 +++++++++++
+   kod/stok.py                         |  25 ++++
+   kod/teklif.py                       |  20 ++++
+   kod/templates/ayarlar/index.html    |   9 ++
+   kod/templates/ayarlar/tanimlar.html |  75 ++++++++++++
+   kod/templates/cari/form.html        |  45 ++++++-
+   kod/templates/fatura/form.html      |  23 ++++
+   kod/templates/irsaliye/form.html    |  25 ++++
+   kod/templates/stok/form.html        |  40 ++++++-
+   kod/templates/teklif/form.html      |  23 ++++
+   kod/test_d010_yedekleme.py          |   4 +-
+   kod/test_d011_tanimlar_barkod.py    | 226 ++++++++++++++++++++++++++++++++++++
+   kod/test_f6_cila.py                 |   2 +-
+   17 files changed, 685 insertions(+), 23 deletions(-)

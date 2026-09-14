@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Tanımlar — Brn Teknoloji ERP{% endblock %}
+{% block crumb %}Yönetim / Ayarlar / Tanımlar{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div><h1>🗂️ Tanımlar</h1>
+  <div class="desc">Kategori ve cari grubu yönetin. Silme yoktur — kullanılan kayıt yalnızca pasifleştirilir (K32).</div></div>
+  <div class="page-actions"><a class="btn ghost" href="/ayarlar">← Ayarlar</a></div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <div class="card-head"><h2>📦 Kategoriler</h2></div>
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Ad</th><th class="num">Kullanım</th><th>Durum</th><th style="text-align:right">İşlem</th></tr></thead>
+      <tbody>
+        {% for k in kategoriler %}
+        <tr>
+          <td class="strong">{{ k.ad }}</td>
+          <td class="num">{{ k.kullanim }}</td>
+          <td>{% if k.aktif %}<span class="badge b-ok">Aktif</span>{% else %}<span class="badge b-muted">Pasif</span>{% endif %}</td>
+          <td style="text-align:right; white-space:nowrap">
+            <form method="post" action="/ayarlar/tanimlar/kategori/{{ k.id }}/durum" style="display:inline">
+              <input type="hidden" name="csrf" value="{{ csrf_token }}">
+              <button class="btn sm {{ 'danger' if k.aktif else 'ghost' }}" type="submit">
+                {{ 'Pasifleştir' if k.aktif else 'Aktifleştir' }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4"><div class="empty">Kategori yok.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>👥 Cari Grupları</h2></div>
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Ad</th><th>Tip</th><th class="num">Kullanım</th><th>Durum</th><th style="text-align:right">İşlem</th></tr></thead>
+      <tbody>
+        {% for g in gruplar %}
+        <tr>
+          <td class="strong">{{ g.ad }}</td>
+          <td><span class="badge b-muted">{{ g.tip }}</span></td>
+          <td class="num">{{ g.kullanim }}</td>
+          <td>{% if g.aktif %}<span class="badge b-ok">Aktif</span>{% else %}<span class="badge b-muted">Pasif</span>{% endif %}</td>
+          <td style="text-align:right; white-space:nowrap">
+            <form method="post" action="/ayarlar/tanimlar/cari-grup/{{ g.id }}/durum" style="display:inline">
+              <input type="hidden" name="csrf" value="{{ csrf_token }}">
+              <button class="btn sm {{ 'danger' if g.aktif else 'ghost' }}" type="submit">
+                {{ 'Pasifleştir' if g.aktif else 'Aktifleştir' }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5"><div class="empty">Grup yok.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>💡 Hızlı ekleme</h2></div>
+  <p class="hint">Stok formunda <b>＋ Kategori</b>, cari formunda <b>＋ Grup</b> butonuyla belge içinden de ekleyebilirsiniz (Marka deseni).</p>
+</div>
+{% endblock %}

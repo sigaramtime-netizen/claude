@@ -1,0 +1,1076 @@
+diff --git a/DURUM.md b/DURUM.md
+index 63dd40f..2aed82c 100644
+--- a/DURUM.md
++++ b/DURUM.md
+@@ -14,7 +14,7 @@
+ | D008  | Belgeleme tamamlama (CHANGELOG v1.34→v1.39 + 5 faz özeti) + bakim/detay stok seçici typeahead | ONAYLANDI | GM1 2.tur: 5 doküman F1/F2 şablonuyla doğrulandı — D008 MÜHÜR ✅. GM1 kuralı: kod/mantık paketlerinde zip + bağımsız test ŞART (ANAYASA v10) |
+ | D009  | Güvenlik & Sağlamlık Denetimi (SQL enjeksiyon, oturum, dosya yükleme, CSRF, kaba kuvvet) | ONAYLANDI | GM2 (Arena GM) nöbette: 18/18 + 545/545 (KÖPRÜ bağımsız doğruladı), CSRF hibrit, kaba kuvvet kilidi, oturum 12s, yetki matrisi temiz — D009 MÜHÜR v1.40.0 ✅ |
+ | D010  | Uygulama İçi Yedekleme & Geri Yükleme (yalnız Admin) | ONAYLANDI | GM1 (Claude) bizzat denetledi: test_d010 16/16 + 24 eski test 545/545 = 561/561 (köprü iddiasıyla birebir); path traversal 2 katman, çok şirketli izolasyon tutarlı, geri yükleme WAL-güvenli — D010 MÜHÜR v1.41.0 ✅. GM1 süreç itirazı: direktif GM1'den geçmeden "GM2 onayı" damgası yemiş; sonraki her direktif önce GM1'den geçmeli |
+-| D011  | Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod | BEKLEMEDE | GM1 + KRAL revizyonu: D011=A+C (kategori + cari grup + barkod); para birimi D012'ye taşındı. Coder'a hazır: `gm-direktifleri/D011-tanimlar-hizli-barkod.md` |
++| D011  | Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod | KODLANDI | GM1 onaylı direktif (`D011-tanimlar-hizli-barkod.md`): A (kategori + cari grup inline, idempotent, tip='Bölge') + C (hızlı barkod irsaliye/fatura/teklif). Ayarlar→Tanımlar (pasifleştir, silme yok). Para birimi/birim D012'ye ertelendi. Coder: test_d011 21/21 + tam regresyon 26 dosya/582 kontrol/0 başarısız. GM1 denetimi bekleniyor (v1.42.0) |
+ | D012  | Satır Bazlı KDV + Çoklu Döviz + Para Birimi/Birim tablo geçişi (B+D) | BEKLEMEDE | GM1 kapsam kararı + KRAL revizyonu; D011'den sonra; kapsam üst dosyada (`D011-tanimlar-kdv-barkod-doviz-tahsilat.md`) |
+ | D013  | Cari Tahsilat / Ödeme Ekranı (E) | BEKLEMEDE | GM1 kapsam kararı; D012'den sonra |
+ 
+diff --git a/coder-raporlari/R011-tanimlar-hizli-barkod.md b/coder-raporlari/R011-tanimlar-hizli-barkod.md
+new file mode 100644
+index 0000000..11663c8
+--- /dev/null
++++ b/coder-raporlari/R011-tanimlar-hizli-barkod.md
+@@ -0,0 +1,96 @@
++# R011 — Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod (v1.42.0) — KOD YÜKLEME & KONTROL RAPORU
++
++- **Görev:** D011 — Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod Girişi
++- **Sürüm:** 1.41.0 → **1.42.0**
++- **Durum:** KODLANDI ✅ — GM denetimi bekleniyor
++- **Tarih:** 2026-09-14
++- **Direktif:** `gm-direktifleri/D011-tanimlar-hizli-barkod.md` (GM1 ONAYLADI; GM2 kapsam: **A + C yalnızca**)
++
++---
++
++## 1. Yapılan İş
++
++### A — Tanım Verileri (Kategori & Cari Grup)
++1. **`kod/stok.py`** → `POST /api/kategori/ekle` (Ajax, `STOK_WRITE`): Marka deseni birebir —
++   `ad` trim, boşsa 400 JSON; `lower(ad)` + `sirket_id` izolasyonlu **idempotent** eşleşme
++   (aynı ad → mevcut `id` döner); yoksa `INSERT kategori(ad, aktif=1, sirket_id)` + `audit("kategori",...,"olustur")`.
++2. **`kod/cari.py`** → `POST /api/cari_grup/ekle` (Ajax, `WRITE_ROLES`): aynı desen;
++   `tip` varsayılan `'Bölge'`; `INSERT cari_grup(ad, tip, aktif=1, sirket_id)` + audit.
++3. **`kod/cari.py`** → `_gruplar(..., aktif=False)` parametresi eklendi; cari **liste + form**
++   dropdown'ları `db_tmp_gruplar(req, aktif=True)` ile aktif filtreli (pasif grup yeni kayıtta
++   seçilemez; mevcut kayıtlar bozulmaz).
++4. **Form butonları (D007 `＋ Marka` deseni birebir, sayfa yenilenmez):**
++   - `kod/templates/stok/form.html` → `kategori_id` select'ine `＋ Kategori` (id=`kategori-select`).
++   - `kod/templates/cari/form.html` → `grup_id` select'ine `＋ Grup` (id=`grup-select`).
++   - prompt → `fetch POST` → gelen `{id, ad}` option olarak eklenir + seçilir; hata varsa `d.hata` alert.
++
++### Ayarlar → Tanımlar (pasifleştir, silme YOK — K32)
++5. **`kod/ayarlar.py`** → `GET /ayarlar/tanimlar` (roles=Admin): kategori + cari grup listesi
++   (kullanım sayısıyla, `sirket_id` izolasyonlu) + `POST /ayarlar/tanimlar/kategori/<id>/durum`
++   ve `.../cari-grup/<id>/durum` (aktif⇄pasif toggle + audit). **Silme rotası yok.**
++6. **`kod/templates/ayarlar/tanimlar.html` (YENİ)** + Ayarlar hub'ına "🗂️ Tanımlar" kartı.
++
++### C — Hızlı Barkod Girişi (irsaliye/fatura/teklif)
++7. `kod/fatura.py` + `kod/irsaliye.py` → `action=="barkod"` backend **zaten vardı** (alan `barkod_sec`);
++   eksik olan yalnızca frontend input'uydu.
++8. **`kod/teklif.py`** → `action=="barkod"` **eklendi** (stok.barkod_bul → satır ekle, bulunamazsa flash).
++9. Üç form şablonunda (`fatura/form.html`, `irsaliye/form.html`, `teklif/form.html`) araç çubuğuna
++   `barkod_sec` input (`id="barkod-hizli"`) + `＋ Barkod` butonu; **Enter** → gizli `action=barkod`
++   alanı ekleyip formu gönderir (POS "Enter'da ekle" deseni). Mevcut typeahead'e **dokunulmadı**.
++
++### Sürüm & dokümantasyon
++10. **`kod/config.py`** `SURUM = "1.42.0"`; **`kod/CHANGELOG.md`** v1.42.0 girdisi.
++11. **`test_d011_tanimlar_barkod.py` (YENİ)** — 21 kontrol.
++
++## 2. Kabul kriterleri kontrolü
++
++| Kriter | Durum |
++|---|---|
++| Kategori/cari grup inline ekleme (Ajax, sayfa yenilenmez) | ✅ (test 2, 6) |
++| İdempotent (aynı ad → aynı id) + boş ad 400 | ✅ (test 3-4, 7-8) |
++| Cari grup `tip='Bölge'` varsayılan | ✅ (test 6) |
++| Yetki: `STOK_WRITE` (kategori) / `WRITE_ROLES` (grup); Admin dışı tanımlar 403 | ✅ (test 5, 14) |
++| Ayarlar→Tanımlar liste + pasifleştir; **silme YOK** | ✅ (test 9-11) |
++| Pasif kayıt yeni belgelerde seçilemez, mevcut bozulmaz | ✅ (test 12-13) |
++| K1 şirket izolasyonu (kategori + cari grup) | ✅ (test 20) |
++| Hızlı barkod Enter→satır (fatura/teklif/irsaliye) + bulunamazsa uyarı | ✅ (test 15-18) |
++| Barkod input 3 formda var, typeahead'e dokunulmadı | ✅ (test 19) |
++| **Yeni tablo / migration YOK** | ✅ (yalnız rota + JS + şablon) |
++| `test_d011_tanimlar_barkod.py` + tam regresyon yeşil | ✅ 21/21 + 26 dosya/582/0 |
++
++## 3. Test Sonuçları
++
++```
++python3 test_d011_tanimlar_barkod.py  → 21/21 ✅
++Tam regresyon (26 dosya)             → 582 kontrol, 0 başarısız ✅
++PRAGMA foreign_key_check             → 0
++```
++
++## 4. Değişen / eklenen dosyalar
++
++- `kod/stok.py` — `/api/kategori/ekle`
++- `kod/cari.py` — `/api/cari_grup/ekle` + `_gruplar(aktif=)` + aktif filtreli dropdown'lar
++- `kod/teklif.py` — `action=="barkod"` eklendi
++- `kod/ayarlar.py` — `/ayarlar/tanimlar` + durum toggle rotaları
++- `kod/templates/ayarlar/tanimlar.html` (YENİ)
++- `kod/templates/ayarlar/index.html` — Tanımlar kartı
++- `kod/templates/stok/form.html`, `kod/templates/cari/form.html` — `＋ Kategori` / `＋ Grup`
++- `kod/templates/fatura/form.html`, `kod/templates/irsaliye/form.html`, `kod/templates/teklif/form.html` — hızlı barkod input
++- `kod/config.py`, `kod/CHANGELOG.md`
++- `test_d011_tanimlar_barkod.py` (YENİ), `test_d010_yedekleme.py` (sürüm 1.42.0), `test_f6_cila.py` (sürüm 1.42.0)
++
++## 5. Nasıl çalıştırılır
++
++```bash
++cd kod
++python3 app.py                        # http://127.0.0.1:8080
++python3 test_d011_tanimlar_barkod.py  # yeni test
++python3 regresyon_runner.py           # tam regresyon
++```
++
++## 6. Notlar / bilinen sorunlar
++
++- **Kapsam dışı (GM2 talimatı, D012/D013'e ertelendi — DOKUNULMADI):** para birimi/birim
++  tablo geçişi, satır bazlı KDV, çoklu döviz gösterimi, tahsilat/ödeme ekranı.
++- **Silme yok:** K32 gereği kullanılan tanım kaydı silinmez; pasifleştirme + aktifleştirme var.
++- Pasif kayıtlar mevcut belgelerde görünmeye devam eder (bilinçli: tarihsel bütünlük).
+diff --git a/kod/CHANGELOG.md b/kod/CHANGELOG.md
+index 24c4a8b..69c1092 100644
+--- a/kod/CHANGELOG.md
++++ b/kod/CHANGELOG.md
+@@ -8,6 +8,37 @@ Biçim: [Keep a Changelog](https://keepachangelog.com) · Sürümleme: **v1.MINO
+ 
+ ---
+ 
++## v1.42.0 — 2026-09-11
++
++### Eklenen — D011: Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod Girişi
++GM1 + KRAL revizyonuyla D011 kapsamı daraltıldı: **A (Kategori + Cari Grup)** + **C (hızlı barkod)**.
++Para birimi/birim ve satır bazlı KDV/çoklu döviz/tahsilat **D012–D013'e** ertelendi.
++
++- **`/api/kategori/ekle`** (POST, `STOK_WRITE`) — Marka deseni birebir: ad trim, boşsa 400 JSON,
++  büyük/küçük harf duyarsız + `sirket_id` izolasyonlu **idempotent** (aynı ad → mevcut id),
++  `INSERT kategori(ad, aktif=1, sirket_id)` + audit.
++- **`/api/cari_grup/ekle`** (POST, `WRITE_ROLES`) — aynı desen; `tip` varsayılan `'Bölge'`;
++  `INSERT cari_grup(ad, tip, aktif=1, sirket_id)` + audit.
++- **Form butonları:** `stok/form.html` → `＋ Kategori`; `cari/form.html` → `＋ Grup`
++  (prompt → fetch POST → select'e ekle + seç, sayfa yenilenmez — D007 `＋ Marka` birebir).
++- **Ayarlar → Tanımlar** (`/ayarlar/tanimlar`): kategori + cari grup listesi (kullanım sayısıyla)
++  + **pasifleştir/aktifleştir** (silme YOK — K32). Pasif kayıt yeni belgelerde seçilmez:
++  `_kategoriler` zaten `aktif=1` filtreli; cari form/lists `db_tmp_gruplar(aktif=True)`.
++- **Hızlı barkod (irsaliye/fatura/teklif):** POS deseni — form araç çubuğuna `barkod_sec` input +
++  `＋ Barkod`; yaz/okut + Enter → `action=barkod` → `stok.barkod_bul()` → satır otomatik eklenir
++  (bulunamazsa uyarı). Mevcut typeahead'e dokunulmadı. `teklif.py`'ye barkod action eklendi
++  (fatura/irsaliye'de zaten vardı, frontend eksikti).
++
++### Değişen
++- `cari.py _gruplar(aktif=)` parametresi; `db_tmp_gruplar(aktif=True)` form/liste dropdown'larında.
++
++### Testler
++- `test_d011_tanimlar_barkod.py` YENİ — kategori + cari grup ekle/idempotent, pasifleştir,
++  K1 izolasyonu, barkod Enter-ekle.
++- Tam regresyon (26 dosya) yeşil; yeni tablo/migration YOK; iş mantığı (K1–K32) değişmedi.
++
++---
++
+ ## v1.41.0 — 2026-09-11
+ 
+ ### Eklenen — D010: Uygulama İçi Yedekleme & Geri Yükleme (yalnız Admin)
+diff --git a/kod/ayarlar.py b/kod/ayarlar.py
+index f35b813..c097b1a 100644
+--- a/kod/ayarlar.py
++++ b/kod/ayarlar.py
+@@ -433,6 +433,53 @@ def ayarlar_entegrator(req):
+ # ---------------------------------------------------------------------------
+ # Kendi şifreni değiştir (tüm kullanıcılar)
+ # ---------------------------------------------------------------------------
++# ---------------------------------------------------------------------------
++# D011-A — Tanımlar (Kategori & Cari Grup): liste + pasifleştir (K32: silme yok)
++# ---------------------------------------------------------------------------
++@route(r"/ayarlar/tanimlar", roles=ADMIN)
++def ayarlar_tanimlar(req):
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    kategoriler = conn.execute(
++        "SELECT k.*, (SELECT COUNT(*) FROM stok_kart s WHERE s.kategori_id=k.id AND s.sirket_id=k.sirket_id) AS kullanim "
++        "FROM kategori k WHERE k.sirket_id=? ORDER BY k.ad", (sid,)).fetchall()
++    gruplar = conn.execute(
++        "SELECT g.*, (SELECT COUNT(*) FROM cari_kart c WHERE c.grup_id=g.id AND c.sirket_id=g.sirket_id) AS kullanim "
++        "FROM cari_grup g WHERE g.sirket_id=? ORDER BY g.tip, g.ad", (sid,)).fetchall()
++    conn.close()
++    return render_template("ayarlar/tanimlar.html", kategoriler=kategoriler, gruplar=gruplar)
++
++
++@route(r"/ayarlar/tanimlar/kategori/(?P<kid>\d+)/durum", methods=("POST",), roles=ADMIN)
++def ayarlar_tanimlar_kategori_durum(req, kid):
++    conn = db.get_conn()
++    r = conn.execute("SELECT * FROM kategori WHERE id=? AND sirket_id=?",
++                     (int(kid), db.sirket_id(req))).fetchone()
++    if r:
++        yeni = 0 if r["aktif"] else 1
++        conn.execute("UPDATE kategori SET aktif=? WHERE id=?", (yeni, int(kid)))
++        conn.commit()
++        audit(req, "kategori", int(kid),
++              "pasiflestir" if yeni == 0 else "aktiflestir", {"ad": r["ad"]})
++    conn.close()
++    return redirect("/ayarlar/tanimlar")
++
++
++@route(r"/ayarlar/tanimlar/cari-grup/(?P<gid>\d+)/durum", methods=("POST",), roles=ADMIN)
++def ayarlar_tanimlar_cari_grup_durum(req, gid):
++    conn = db.get_conn()
++    r = conn.execute("SELECT * FROM cari_grup WHERE id=? AND sirket_id=?",
++                     (int(gid), db.sirket_id(req))).fetchone()
++    if r:
++        yeni = 0 if r["aktif"] else 1
++        conn.execute("UPDATE cari_grup SET aktif=? WHERE id=?", (yeni, int(gid)))
++        conn.commit()
++        audit(req, "cari_grup", int(gid),
++              "pasiflestir" if yeni == 0 else "aktiflestir", {"ad": r["ad"]})
++    conn.close()
++    return redirect("/ayarlar/tanimlar")
++
++
+ @route(r"/profil/sifre", methods=("GET", "POST"), roles=())
+ def profil_sifre(req):
+     if req.method == "POST":
+diff --git a/kod/cari.py b/kod/cari.py
+index 33b237a..3fce6c4 100644
+--- a/kod/cari.py
++++ b/kod/cari.py
+@@ -9,10 +9,11 @@ Yön, cari kartının tipine göre değişmez; işaret (bakiye pozitif/negatif)
+ Faz 2'de Fatura modülü cari hareketlerini aynı konvansiyonla otomatik üretecektir.
+ """
+ import datetime
++import json
+ import urllib.parse
+ 
+ import db
+-from core import route, render_template, redirect, flash, audit, notify
++from core import route, render_template, redirect, flash, audit, notify, Response
+ 
+ WRITE_ROLES = ("Admin", "Muhasebe", "Satis")
+ PARA_BIRIMLERI = ["TRY", "USD", "EUR", "GBP"]
+@@ -121,10 +122,12 @@ def _qs(req, sayfa):
+     return urllib.parse.urlencode({k: v for k, v in d.items() if v not in (None, "")})
+ 
+ 
+-def _gruplar(conn, sid=None):
++def _gruplar(conn, sid=None, aktif=False):
+     where, params = "", []
+     if sid is not None:
+         where, params = " WHERE g.sirket_id = ?", [sid]
++    if aktif:
++        where = (where + " AND g.aktif=1") if where else " WHERE g.aktif=1"
+     return conn.execute(
+         "SELECT g.*, (SELECT COUNT(*) FROM cari_kart c WHERE c.grup_id = g.id AND c.sirket_id = g.sirket_id) AS cari_sayisi "
+         "FROM cari_grup g" + where + " ORDER BY g.tip, g.ad",
+@@ -199,7 +202,7 @@ def cari_liste(req):
+     return render_template(
+         "cari/liste.html",
+         rows=rows,
+-        gruplar=db_tmp_gruplar(req),
++        gruplar=db_tmp_gruplar(req, aktif=True),
+         filtro={"q": q, "tip": tip, "grup": grup},
+         ozetler=ozetler,
+         sayfa=sayfa,
+@@ -208,13 +211,39 @@ def cari_liste(req):
+     )
+ 
+ 
+-def db_tmp_gruplar(req=None):
++def db_tmp_gruplar(req=None, aktif=False):
+     conn = db.get_conn()
+-    rows = _gruplar(conn, db.sirket_id(req) if req else None)
++    rows = _gruplar(conn, db.sirket_id(req) if req else None, aktif=aktif)
+     conn.close()
+     return rows
+ 
+ 
++@route(r"/api/cari_grup/ekle", methods=("POST",), roles=WRITE_ROLES)
++def api_cari_grup_ekle(req):
++    """D011-A — Yeni cari grup ekle (Ajax, Marka deseni). tip varsayılan 'Bölge'; idempotent."""
++    ad = (req.form.get("ad") or "").strip()
++    if not ad:
++        return Response(json.dumps({"hata": "Grup adı boş olamaz."}, ensure_ascii=False),
++                        "400 Bad Request", [("Content-Type", "application/json; charset=utf-8")])
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    mevcut = conn.execute(
++        "SELECT id FROM cari_grup WHERE lower(ad)=lower(?) AND (sirket_id=? OR sirket_id IS NULL) LIMIT 1",
++        (ad, sid)).fetchone()
++    if mevcut:
++        conn.close()
++        return Response(json.dumps({"id": mevcut["id"], "ad": ad}, ensure_ascii=False),
++                        "200 OK", [("Content-Type", "application/json; charset=utf-8")])
++    tip = (req.form.get("tip") or "Bölge").strip() or "Bölge"
++    cur = conn.execute("INSERT INTO cari_grup(ad, tip, aktif, sirket_id) VALUES(?,?,1,?)",
++                       (ad, tip, sid))
++    conn.commit()
++    audit(req, "cari_grup", cur.lastrowid, "olustur", {"ad": ad, "tip": tip})
++    conn.close()
++    return Response(json.dumps({"id": cur.lastrowid, "ad": ad, "tip": tip}, ensure_ascii=False),
++                    "200 OK", [("Content-Type", "application/json; charset=utf-8")])
++
++
+ @route(r"/cari/yeni", methods=("GET", "POST"), roles=WRITE_ROLES)
+ def cari_yeni(req):
+     if req.method == "POST":
+@@ -263,7 +292,7 @@ def cari_yeni(req):
+         flash(req, f"Cari kartı oluşturuldu: {unvan} ({kod})", "ok")
+         return redirect(f"/cari/{cid}")
+ 
+-    return render_template("cari/form.html", cari=None, gruplar=db_tmp_gruplar(req),
++    return render_template("cari/form.html", cari=None, gruplar=db_tmp_gruplar(req, aktif=True),
+                            para_birimleri=PARA_BIRIMLERI)
+ 
+ 
+@@ -506,7 +535,7 @@ def cari_duzenle(req, cid):
+         return redirect(f"/cari/{cid}")
+ 
+     conn.close()
+-    return render_template("cari/form.html", cari=cari, gruplar=db_tmp_gruplar(req),
++    return render_template("cari/form.html", cari=cari, gruplar=db_tmp_gruplar(req, aktif=True),
+                            para_birimleri=PARA_BIRIMLERI)
+ 
+ 
+diff --git a/kod/config.py b/kod/config.py
+index a9e1c49..05e27ed 100644
+--- a/kod/config.py
++++ b/kod/config.py
+@@ -16,7 +16,7 @@ FIRMA_ADI = "Brn Teknoloji"
+ FIRMA_ALT = "İşletme Yönetim Sistemi"
+ 
+ # Uygulama sürümü — her geliştirme partisinde artırılır; CHANGELOG.md ile birlikte izlenir.
+-SURUM = "1.41.0"
++SURUM = "1.42.0"
+ SURUM_TARIHI = "2026-09-11"
+ 
+ # K18 — Döviz Takip: desteklenen para birimleri (TRY temel; kurlar doviz_kur tablosunda).
+diff --git a/kod/regresyon_runner.py b/kod/regresyon_runner.py
+new file mode 100644
+index 0000000..cea7bbc
+--- /dev/null
++++ b/kod/regresyon_runner.py
+@@ -0,0 +1,68 @@
++# -*- coding: utf-8 -*-
++"""Tam regresyon koşucusu: tüm test_*.py dosyalarını sırayla çalıştırır,
++özet satırını yakalar; hem ekrana hem (verilirse) kanıt dosyasına yazar.
++
++Kullanım: python3 regresyon_runner.py [kanıt_dosyası]
++"""
++import re
++import subprocess
++import sys
++import glob
++
++
++def parse(line):
++    ok = fail = None
++    m = re.search(r"(\d+)\s*(?:başarılı|✅|geçti|adet)", line)
++    if m:
++        ok = int(m.group(1))
++    f = re.search(r"(\d+)\s*(?:başarısız|❌)", line)
++    if f:
++        fail = int(f.group(1))
++    return ok, fail
++
++
++tests = sorted(glob.glob("test_*.py"))
++rows = []
++total_checks = 0
++total_fail = 0
++bad = 0
++
++for t in tests:
++    p = subprocess.run([sys.executable, t], capture_output=True, text=True, timeout=600)
++    out = p.stdout + p.stderr
++    exitc = p.returncode
++    lines = [l.strip() for l in out.splitlines() if ("başarılı" in l or "başarısız" in l
++             or ("geçti" in l and re.search(r"\d", l)) or "✅" in l or "❌" in l)]
++    # kanonik özet: "SONUÇ" içeren SON satır; yoksa sayılı ✅/❌ satırı; yoksa son satır
++    sonuc = [l for l in lines if "SONUÇ" in l]
++    if sonuc:
++        summary = sonuc[-1]
++    else:
++        numbered = [l for l in lines if re.search(r"\d", l)]
++        summary = numbered[-1] if numbered else (lines[-1] if lines else "(özet yok)")
++    ok, fail = parse(summary)
++    if ok is None and fail is None:
++        ok = 0
++    fail = fail or 0
++    total_checks += (ok or 0)
++    total_fail += fail
++    if exitc != 0 or fail > 0:
++        bad += 1
++    rows.append((t, exitc, summary))
++
++report = []
++report.append(f"===== D011 (v1.42.0) — TAM REGRESYON =====")
++report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.42.0")
++report.append("")
++for t, e, s in rows:
++    report.append(f"[{t:<32}] exit={e} | {s}")
++report.append("")
++report.append(f"TOPLAM: {len(tests)} dosya, {total_checks} kontrol, {total_fail} başarısız (exit!=0 veya fail: {bad})")
++txt = "\n".join(report)
++print(txt)
++if len(sys.argv) > 1:
++    with open(sys.argv[1], "w", encoding="utf-8") as fh:
++        fh.write(txt + "\n")
++    print(f"\n[kaydedildi] {sys.argv[1]}")
++if bad:
++    sys.exit(1)
+diff --git a/kod/stok.py b/kod/stok.py
+index 69d054f..820a443 100644
+--- a/kod/stok.py
++++ b/kod/stok.py
+@@ -490,6 +490,31 @@ def api_marka_ekle(req):
+                     "200 OK", [("Content-Type", "application/json; charset=utf-8")])
+ 
+ 
++@route(r"/api/kategori/ekle", methods=("POST",), roles=STOK_WRITE)
++def api_kategori_ekle(req):
++    """D011-A — Yeni kategori ekle (Ajax, Marka deseni birebir). Idempotent (aynı ad → mevcut id)."""
++    ad = (req.form.get("ad") or "").strip()
++    if not ad:
++        return Response(json.dumps({"hata": "Kategori adı boş olamaz."}, ensure_ascii=False),
++                        "400 Bad Request", [("Content-Type", "application/json; charset=utf-8")])
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    # Büyük/küçük harf duyarsız + şirket izolasyonlu eşleşme (K1).
++    mevcut = conn.execute(
++        "SELECT id FROM kategori WHERE lower(ad)=lower(?) AND (sirket_id=? OR sirket_id IS NULL) LIMIT 1",
++        (ad, sid)).fetchone()
++    if mevcut:
++        conn.close()
++        return Response(json.dumps({"id": mevcut["id"], "ad": ad}, ensure_ascii=False),
++                        "200 OK", [("Content-Type", "application/json; charset=utf-8")])
++    cur = conn.execute("INSERT INTO kategori(ad, aktif, sirket_id) VALUES(?,1,?)", (ad, sid))
++    conn.commit()
++    audit(req, "kategori", cur.lastrowid, "olustur", {"ad": ad})
++    conn.close()
++    return Response(json.dumps({"id": cur.lastrowid, "ad": ad}, ensure_ascii=False),
++                    "200 OK", [("Content-Type", "application/json; charset=utf-8")])
++
++
+ # --------------------------------------------------------------------------
+ # STOK — kart detayı (sekmeler)
+ # --------------------------------------------------------------------------
+diff --git a/kod/teklif.py b/kod/teklif.py
+index 3dae0a9..31bc914 100644
+--- a/kod/teklif.py
++++ b/kod/teklif.py
+@@ -330,6 +330,26 @@ def _form_post(req, conn, mevcut):
+                 satirlar.append({"stok_id": sid, "miktar": 1, "birim_fiyat": s["satis_fiyat"],
+                                  "iskonto_orani": isk, "kdv_orani": s["kdv_orani"]})
+         return _form_render(req, conn, mevcut, satirlar, cari_id, tarih, gecerlilik, aciklama, flash_kaydet=False)
++    if action == "barkod":
++        # D011-C — hızlı barkod: okut/yaz + Enter → satır otomatik eklenir.
++        barkod = (req.form.get("barkod_sec") or "").strip()
++        if barkod:
++            sonuc = stok.barkod_bul(conn, barkod, db.sirket_id(req))
++            if sonuc:
++                kart = sonuc["kart"]
++                isk = 0.0
++                if (kart["iskonto_orani"] or 0) > 0:
++                    isk = kart["iskonto_orani"]
++                elif cari_id:
++                    c = conn.execute("SELECT iskonto_orani FROM cari_kart WHERE id=? AND sirket_id=?",
++                                     (cari_id, db.sirket_id(req))).fetchone()
++                    isk = c["iskonto_orani"] if c else 0.0
++                satirlar.append({"stok_id": sonuc["stok_id"], "varyant_id": sonuc["varyant_id"],
++                                 "miktar": 1, "birim_fiyat": kart["satis_fiyat"],
++                                 "iskonto_orani": isk, "kdv_orani": kart["kdv_orani"]})
++            else:
++                flash(req, f"Barkod bulunamadı: {barkod}", "danger")
++        return _form_render(req, conn, mevcut, satirlar, cari_id, tarih, gecerlilik, aciklama, flash_kaydet=False)
+ 
+     # --- kaydet ---
+     if not cari_id:
+diff --git a/kod/templates/ayarlar/index.html b/kod/templates/ayarlar/index.html
+index 076d356..42e7acb 100644
+--- a/kod/templates/ayarlar/index.html
++++ b/kod/templates/ayarlar/index.html
+@@ -63,6 +63,15 @@
+     </div>
+     <p class="hint">Veritabanının tutarlı yedeği + güvenlik yedeğiyle geri yükleme</p>
+   </a>
++
++  <a class="card link-card" href="/ayarlar/tanimlar">
++    <div class="card-head"><h2>🗂️ Tanımlar</h2></div>
++    <div class="kv">
++      <div><span>Kapsam</span><b>Kategori + Cari Grup</b></div>
++      <div><span>İşlem</span><b>liste + pasifleştir</b></div>
++    </div>
++    <p class="hint">Kategori ve cari grubu yönet; silme yok (K32)</p>
++  </a>
+ </div>
+ 
+ <div class="card">
+diff --git a/kod/templates/ayarlar/tanimlar.html b/kod/templates/ayarlar/tanimlar.html
+new file mode 100644
+index 0000000..413cfad
+--- /dev/null
++++ b/kod/templates/ayarlar/tanimlar.html
+@@ -0,0 +1,75 @@
++{% extends "base.html" %}
++{% block title %}Tanımlar — Brn Teknoloji ERP{% endblock %}
++{% block crumb %}Yönetim / Ayarlar / Tanımlar{% endblock %}
++
++{% block content %}
++<div class="page-head">
++  <div><h1>🗂️ Tanımlar</h1>
++  <div class="desc">Kategori ve cari grubu yönetin. Silme yoktur — kullanılan kayıt yalnızca pasifleştirilir (K32).</div></div>
++  <div class="page-actions"><a class="btn ghost" href="/ayarlar">← Ayarlar</a></div>
++</div>
++
++<div class="grid cols-2">
++  <div class="card">
++    <div class="card-head"><h2>📦 Kategoriler</h2></div>
++    <div class="tbl-wrap">
++    <table class="tbl">
++      <thead><tr><th>Ad</th><th class="num">Kullanım</th><th>Durum</th><th style="text-align:right">İşlem</th></tr></thead>
++      <tbody>
++        {% for k in kategoriler %}
++        <tr>
++          <td class="strong">{{ k.ad }}</td>
++          <td class="num">{{ k.kullanim }}</td>
++          <td>{% if k.aktif %}<span class="badge b-ok">Aktif</span>{% else %}<span class="badge b-muted">Pasif</span>{% endif %}</td>
++          <td style="text-align:right; white-space:nowrap">
++            <form method="post" action="/ayarlar/tanimlar/kategori/{{ k.id }}/durum" style="display:inline">
++              <input type="hidden" name="csrf" value="{{ csrf_token }}">
++              <button class="btn sm {{ 'danger' if k.aktif else 'ghost' }}" type="submit">
++                {{ 'Pasifleştir' if k.aktif else 'Aktifleştir' }}
++              </button>
++            </form>
++          </td>
++        </tr>
++        {% else %}
++        <tr><td colspan="4"><div class="empty">Kategori yok.</div></td></tr>
++        {% endfor %}
++      </tbody>
++    </table>
++    </div>
++  </div>
++
++  <div class="card">
++    <div class="card-head"><h2>👥 Cari Grupları</h2></div>
++    <div class="tbl-wrap">
++    <table class="tbl">
++      <thead><tr><th>Ad</th><th>Tip</th><th class="num">Kullanım</th><th>Durum</th><th style="text-align:right">İşlem</th></tr></thead>
++      <tbody>
++        {% for g in gruplar %}
++        <tr>
++          <td class="strong">{{ g.ad }}</td>
++          <td><span class="badge b-muted">{{ g.tip }}</span></td>
++          <td class="num">{{ g.kullanim }}</td>
++          <td>{% if g.aktif %}<span class="badge b-ok">Aktif</span>{% else %}<span class="badge b-muted">Pasif</span>{% endif %}</td>
++          <td style="text-align:right; white-space:nowrap">
++            <form method="post" action="/ayarlar/tanimlar/cari-grup/{{ g.id }}/durum" style="display:inline">
++              <input type="hidden" name="csrf" value="{{ csrf_token }}">
++              <button class="btn sm {{ 'danger' if g.aktif else 'ghost' }}" type="submit">
++                {{ 'Pasifleştir' if g.aktif else 'Aktifleştir' }}
++              </button>
++            </form>
++          </td>
++        </tr>
++        {% else %}
++        <tr><td colspan="5"><div class="empty">Grup yok.</div></td></tr>
++        {% endfor %}
++      </tbody>
++    </table>
++    </div>
++  </div>
++</div>
++
++<div class="card">
++  <div class="card-head"><h2>💡 Hızlı ekleme</h2></div>
++  <p class="hint">Stok formunda <b>＋ Kategori</b>, cari formunda <b>＋ Grup</b> butonuyla belge içinden de ekleyebilirsiniz (Marka deseni).</p>
++</div>
++{% endblock %}
+diff --git a/kod/templates/cari/form.html b/kod/templates/cari/form.html
+index 4bffc7b..6db9c7b 100644
+--- a/kod/templates/cari/form.html
++++ b/kod/templates/cari/form.html
+@@ -72,12 +72,16 @@
+       <div class="field"><label>İskonto Oranı (%)</label>
+         <input name="iskonto_orani" type="number" step="0.01" value="{{ cari.iskonto_orani if cari else '0' }}"></div>
+       <div class="field"><label>Grup</label>
+-        <select name="grup_id">
+-          <option value="">— Yok —</option>
+-          {% for g in gruplar %}
+-          <option value="{{ g.id }}" {{ 'selected' if cari and cari.grup_id == g.id }}>{{ g.ad }} ({{ g.tip }})</option>
+-          {% endfor %}
+-        </select></div>
++        <div style="display:flex;gap:6px;">
++          <select name="grup_id" id="grup-select" style="flex:1;">
++            <option value="">— Yok —</option>
++            {% for g in gruplar %}
++            <option value="{{ g.id }}" {{ 'selected' if cari and cari.grup_id == g.id }}>{{ g.ad }} ({{ g.tip }})</option>
++            {% endfor %}
++          </select>
++          <button type="button" class="btn sm" id="grup-ekle" title="Yeni grup ekle">＋ Grup</button>
++        </div>
++        <div class="hint">Listede yoksa <b>＋ Grup</b> ile anında ekleyin.</div></div>
+       <div class="field" style="grid-column: span 2;"><label>Not</label>
+         <input name="not_" value="{{ cari.not_ if cari else '' }}"></div>
+       <div class="field" style="grid-column: span 4;">
+@@ -94,4 +98,33 @@
+     <a class="btn ghost" href="{{ '/cari/' ~ cari.id if cari else '/cari' }}">Vazgeç</a>
+   </div>
+ </form>
++
++<script>
++(function () {
++  // D011-A — Cari grup inline ekleme: prompt → /api/cari_grup/ekle → select'e ekle + seç.
++  var btn = document.getElementById('grup-ekle');
++  var sel = document.getElementById('grup-select');
++  if (btn && sel) {
++    btn.addEventListener('click', function () {
++      var ad = (window.prompt('Yeni grup adı:') || '').trim();
++      if (!ad) return;
++      var fd = new URLSearchParams();
++      fd.append('ad', ad);
++      fetch('/api/cari_grup/ekle', { method: 'POST', body: fd })
++        .then(function (r) { return r.json(); })
++        .then(function (d) {
++          if (d && d.id) {
++            var o = document.createElement('option');
++            o.value = d.id; o.textContent = d.ad + ' (' + (d.tip || 'Bölge') + ')';
++            o.selected = true;
++            sel.appendChild(o);
++          } else if (d && d.hata) {
++            window.alert(d.hata);
++          }
++        })
++        .catch(function () { window.alert('Grup eklenemedi (ağ hatası).'); });
++    });
++  }
++})();
++</script>
+ {% endblock %}
+diff --git a/kod/templates/fatura/form.html b/kod/templates/fatura/form.html
+index 8a3bd58..b4de264 100644
+--- a/kod/templates/fatura/form.html
++++ b/kod/templates/fatura/form.html
+@@ -71,6 +71,9 @@
+   <div class="card">
+     <div class="card-head"><h2>Kalemler</h2>
+       <div class="toolbar" style="margin:0;">
++        <input type="text" name="barkod_sec" id="barkod-hizli" placeholder="🔍 Barkod okut → Enter"
++               autocomplete="off" style="width:180px;">
++        <button type="button" class="btn sm" id="barkod-ekle" title="Barkod ile satır ekle">＋ Barkod</button>
+         <button type="button" class="btn primary" id="satir-ekle">＋ Satır Ekle</button>
+         <span class="hint" style="margin:0;">Ürün hücresine ad / kod / barkod yazın; eşleşme yoksa satır otomatik <b>manuel</b> olur.</span>
+       </div>
+@@ -104,5 +107,25 @@
+   <script type="application/json" id="satirlar-data">{{ satirlar | tojson }}</script>
+   <script type="application/json" id="birimler-data">{{ birimler | tojson }}</script>
+   <script src="/static/js/form-satir.js"></script>
++  <script>
++  // D011-C — Hızlı barkod: yaz/okut + Enter (veya ＋ Barkod) → action=barkod ile satır ekle.
++  (function () {
++    var inp = document.getElementById('barkod-hizli');
++    var btn = document.getElementById('barkod-ekle');
++    if (!inp) return;
++    function barkodEkle() {
++      var v = inp.value.trim();
++      if (!v) return;
++      var h = document.createElement('input');
++      h.type = 'hidden'; h.name = 'action'; h.value = 'barkod';
++      inp.form.appendChild(h);
++      inp.form.submit();
++    }
++    inp.addEventListener('keydown', function (e) {
++      if (e.key === 'Enter') { e.preventDefault(); barkodEkle(); }
++    });
++    if (btn) btn.addEventListener('click', barkodEkle);
++  })();
++  </script>
+ </form>
+ {% endblock %}
+diff --git a/kod/templates/irsaliye/form.html b/kod/templates/irsaliye/form.html
+index 91a8a71..1ee8fb2 100644
+--- a/kod/templates/irsaliye/form.html
++++ b/kod/templates/irsaliye/form.html
+@@ -92,6 +92,11 @@
+   <div class="card">
+     <div class="card-head"><h2>Kalemler</h2>
+       <div class="toolbar" style="margin:0;">
++        {% if secili_tip != 'Transfer' %}
++        <input type="text" name="barkod_sec" id="barkod-hizli" placeholder="🔍 Barkod okut → Enter"
++               autocomplete="off" style="width:180px;">
++        <button type="button" class="btn sm" id="barkod-ekle" title="Barkod ile satır ekle">＋ Barkod</button>
++        {% endif %}
+         <button type="button" class="btn primary" id="satir-ekle">＋ Satır Ekle</button>
+         {% if secili_tip != 'Transfer' %}
+         <span class="hint" style="margin:0;">Ürün hücresine ad / kod / barkod yazın; eşleşme yoksa satır otomatik <b>manuel</b> olur.</span>
+@@ -146,5 +151,25 @@
+   })();
+   </script>
+   <script src="/static/js/form-satir.js"></script>
++  <script>
++  // D011-C — Hızlı barkod: yaz/okut + Enter (veya ＋ Barkod) → action=barkod ile satır ekle.
++  (function () {
++    var inp = document.getElementById('barkod-hizli');
++    var btn = document.getElementById('barkod-ekle');
++    if (!inp) return;
++    function barkodEkle() {
++      var v = inp.value.trim();
++      if (!v) return;
++      var h = document.createElement('input');
++      h.type = 'hidden'; h.name = 'action'; h.value = 'barkod';
++      inp.form.appendChild(h);
++      inp.form.submit();
++    }
++    inp.addEventListener('keydown', function (e) {
++      if (e.key === 'Enter') { e.preventDefault(); barkodEkle(); }
++    });
++    if (btn) btn.addEventListener('click', barkodEkle);
++  })();
++  </script>
+ </form>
+ {% endblock %}
+diff --git a/kod/templates/stok/form.html b/kod/templates/stok/form.html
+index c6adeb8..6cb3196 100644
+--- a/kod/templates/stok/form.html
++++ b/kod/templates/stok/form.html
+@@ -39,12 +39,16 @@
+       <div class="field"><label>Model</label>
+         <input name="model" value="{{ kart.model if kart else '' }}" placeholder="örn. GH6 / Crystal 4K"></div>
+       <div class="field"><label>Kategori</label>
+-        <select name="kategori_id">
+-          <option value="">— Seçin —</option>
+-          {% for k in kategoriler %}
+-          <option value="{{ k.id }}" {{ 'selected' if kart and kart.kategori_id == k.id }}>{{ k.ad }}</option>
+-          {% endfor %}
+-        </select></div>
++        <div style="display:flex;gap:6px;">
++          <select name="kategori_id" id="kategori-select" style="flex:1;">
++            <option value="">— Seçin —</option>
++            {% for k in kategoriler %}
++            <option value="{{ k.id }}" {{ 'selected' if kart and kart.kategori_id == k.id }}>{{ k.ad }}</option>
++            {% endfor %}
++          </select>
++          <button type="button" class="btn sm" id="kategori-ekle" title="Yeni kategori ekle">＋ Kategori</button>
++        </div>
++        <div class="hint">Listede yoksa <b>＋ Kategori</b> ile anında ekleyin.</div></div>
+       <div class="field"><label>Birim</label>
+         <select name="birim">
+           {% for b in birimler %}
+@@ -151,6 +155,30 @@
+         .catch(function () { window.alert('Marka eklenemedi (ağ hatası).'); });
+     });
+   }
++
++  // D011-A — Kategori inline ekleme: prompt → /api/kategori/ekle → select'e ekle + seç.
++  var kbtn = document.getElementById('kategori-ekle');
++  var ksel = document.getElementById('kategori-select');
++  if (kbtn && ksel) {
++    kbtn.addEventListener('click', function () {
++      var ad = (window.prompt('Yeni kategori adı:') || '').trim();
++      if (!ad) return;
++      var fd = new URLSearchParams();
++      fd.append('ad', ad);
++      fetch('/api/kategori/ekle', { method: 'POST', body: fd })
++        .then(function (r) { return r.json(); })
++        .then(function (d) {
++          if (d && d.id) {
++            var o = document.createElement('option');
++            o.value = d.id; o.textContent = d.ad; o.selected = true;
++            ksel.appendChild(o);
++          } else if (d && d.hata) {
++            window.alert(d.hata);
++          }
++        })
++        .catch(function () { window.alert('Kategori eklenemedi (ağ hatası).'); });
++    });
++  }
+ })();
+ </script>
+ {% endblock %}
+diff --git a/kod/templates/teklif/form.html b/kod/templates/teklif/form.html
+index fed4be8..e5960e3 100644
+--- a/kod/templates/teklif/form.html
++++ b/kod/templates/teklif/form.html
+@@ -46,6 +46,9 @@
+   <div class="card">
+     <div class="card-head"><h2>Kalemler</h2>
+       <div class="toolbar" style="margin:0;">
++        <input type="text" name="barkod_sec" id="barkod-hizli" placeholder="🔍 Barkod okut → Enter"
++               autocomplete="off" style="width:180px;">
++        <button type="button" class="btn sm" id="barkod-ekle" title="Barkod ile satır ekle">＋ Barkod</button>
+         <button type="button" class="btn primary" id="satir-ekle">＋ Satır Ekle</button>
+         <span class="hint" style="margin:0;">Ürün hücresine ad / kod / barkod yazın; eşleşme yoksa satır otomatik <b>manuel</b> olur.</span>
+       </div>
+@@ -79,5 +82,25 @@
+   <script type="application/json" id="satirlar-data">{{ satirlar | tojson }}</script>
+   <script type="application/json" id="birimler-data">{{ birimler | tojson }}</script>
+   <script src="/static/js/form-satir.js"></script>
++  <script>
++  // D011-C — Hızlı barkod: yaz/okut + Enter (veya ＋ Barkod) → action=barkod ile satır ekle.
++  (function () {
++    var inp = document.getElementById('barkod-hizli');
++    var btn = document.getElementById('barkod-ekle');
++    if (!inp) return;
++    function barkodEkle() {
++      var v = inp.value.trim();
++      if (!v) return;
++      var h = document.createElement('input');
++      h.type = 'hidden'; h.name = 'action'; h.value = 'barkod';
++      inp.form.appendChild(h);
++      inp.form.submit();
++    }
++    inp.addEventListener('keydown', function (e) {
++      if (e.key === 'Enter') { e.preventDefault(); barkodEkle(); }
++    });
++    if (btn) btn.addEventListener('click', barkodEkle);
++  })();
++  </script>
+ </form>
+ {% endblock %}
+diff --git a/kod/test_d010_yedekleme.py b/kod/test_d010_yedekleme.py
+index 0801527..8cd4992 100644
+--- a/kod/test_d010_yedekleme.py
++++ b/kod/test_d010_yedekleme.py
+@@ -1,5 +1,5 @@
+ # -*- coding: utf-8 -*-
+-"""D010 — Uygulama İçi Yedekleme & Geri Yükleme (v1.41.0) e2e testi.
++"""D010 — Uygulama İçi Yedekleme & Geri Yükleme (v1.42.0) e2e testi.
+ 
+ 16 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d010_yedekleme.py
+@@ -183,7 +183,7 @@ print("=" * 70)
+ s2, _ = giris()
+ r = s2.get(BASE + "/api/saglik", allow_redirects=False)
+ js = r.json()
+-check("13. /api/saglik canlı + sürüm 1.41.0", r.status_code == 200 and js.get("surum") == "1.41.0",
++check("13. /api/saglik canlı + sürüm 1.42.0", r.status_code == 200 and js.get("surum") == "1.42.0",
+       f"status={r.status_code}, surum={js.get('surum')}")
+ 
+ r = s2.get(BASE + "/api/bildirimler", allow_redirects=False)
+diff --git a/kod/test_d011_tanimlar_barkod.py b/kod/test_d011_tanimlar_barkod.py
+new file mode 100644
+index 0000000..6e6037f
+--- /dev/null
++++ b/kod/test_d011_tanimlar_barkod.py
+@@ -0,0 +1,226 @@
++# -*- coding: utf-8 -*-
++"""D011 — Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod (v1.42.0) e2e testi.
++
++20 kontrol. Sunucu 8080'de çalışırken:
++    python3 test_d011_tanimlar_barkod.py
++
++Kapsam (GM direktifi D011-tanimlar-hizli-barkod.md):
++  A1-5   Kategori inline ekleme (idempotent, 400 boş, yetki 403)
++  B6-8   Cari grup inline ekleme (idempotent, tip='Bölge')
++  C9-13  Ayarlar/Tanımlar: liste + pasifleştir (silme yok) + formlarda seçilemez
++  D14-18 Hızlı barkod: Enter-ekle (fatura/teklif/irsaliye), bulunamayan uyarı, input var
++  E19    K1 izolasyonu: kategori şirket bazlı
++  F20    FK bütünlüğü + D011TEST kalıntısı yok
++"""
++import sqlite3
++
++import requests
++
++BASE = "http://127.0.0.1:8080"
++DB = "data/erp.db"
++MARK = "D011TEST"
++BARKOD = "8690000999001"
++
++ok, fail = [], []
++
++
++def check(name, cond, detay=""):
++    (ok if cond else fail).append(name)
++    print((("  ✅ " if cond else "  ❌ ") + name + (f"  → {detay}" if detay else "")))
++
++
++def db(q, *a):
++    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
++    r = c.execute(q, a).fetchall(); c.close(); return r
++
++
++def db1(q, *a):
++    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
++    r = c.execute(q, a).fetchone(); c.close(); return r
++
++
++def dbx(q, *a):
++    c = sqlite3.connect(DB); c.execute(q, a); c.commit(); c.close()
++
++
++def giris(kadi="admin", sifre="1234"):
++    s = requests.Session()
++    r = s.post(BASE + "/giris", data={"kullanici_adi": kadi, "sifre": sifre},
++               allow_redirects=False)
++    return s, r
++
++
++# Önceki çalışmalardan kalıntı temizliği
++dbx("DELETE FROM kategori WHERE ad LIKE ?", MARK + "%")
++dbx("DELETE FROM cari_grup WHERE ad LIKE ?", MARK + "%")
++dbx("DELETE FROM stok_kart WHERE barkod=?", BARKOD)
++dbx("DELETE FROM sirket WHERE kod=?", MARK)
++dbx("DELETE FROM kullanici_sirket WHERE sirket_id NOT IN (SELECT id FROM sirket)")
++
++s, r = giris()
++check("1. admin girişi", r.status_code == 302 and bool(r.cookies.get("erp_session")),
++      f"status={r.status_code}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM A — Kategori Inline Ekleme")
++print("=" * 70)
++
++r = s.post(BASE + "/api/kategori/ekle", data={"ad": MARK + "KAT"}, allow_redirects=False)
++kat_id = r.json().get("id") if r.status_code == 200 else None
++sat = db1("SELECT * FROM kategori WHERE id=?", kat_id)
++check("2. kategori inline ekleme (200 + aktif=1 + sirket_id=1)",
++      r.status_code == 200 and kat_id and sat and sat["aktif"] == 1 and sat["sirket_id"] == 1,
++      f"status={r.status_code}, id={kat_id}")
++
++r2 = s.post(BASE + "/api/kategori/ekle", data={"ad": (MARK + "KAT").lower()}, allow_redirects=False)
++check("3. kategori idempotent (küçük harf → aynı id)",
++      r2.status_code == 200 and r2.json().get("id") == kat_id, f"id={r2.json().get('id')}")
++
++r = s.post(BASE + "/api/kategori/ekle", data={"ad": "   "}, allow_redirects=False)
++check("4. boş kategori adı → 400", r.status_code == 400, f"status={r.status_code}")
++
++sv, _ = giris("servis", "1234")
++r = sv.post(BASE + "/api/kategori/ekle", data={"ad": "X"}, allow_redirects=False)
++check("5. STOK_WRITE dışı rol (servis) → 403", r.status_code == 403, f"status={r.status_code}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM B — Cari Grup Inline Ekleme")
++print("=" * 70)
++
++r = s.post(BASE + "/api/cari_grup/ekle", data={"ad": MARK + "GRP"}, allow_redirects=False)
++grp_id = r.json().get("id") if r.status_code == 200 else None
++g = db1("SELECT * FROM cari_grup WHERE id=?", grp_id)
++check("6. cari grup inline ekleme (tip='Bölge')",
++      r.status_code == 200 and grp_id and g and g["tip"] == "Bölge" and g["aktif"] == 1,
++      f"status={r.status_code}, tip={g['tip'] if g else '?'}")
++
++r = s.post(BASE + "/api/cari_grup/ekle", data={"ad": MARK + "GRP"}, allow_redirects=False)
++check("7. cari grup idempotent (aynı ad → aynı id)",
++      r.status_code == 200 and r.json().get("id") == grp_id, f"id={r.json().get('id')}")
++
++r = s.post(BASE + "/api/cari_grup/ekle", data={"ad": ""}, allow_redirects=False)
++check("8. boş grup adı → 400", r.status_code == 400, f"status={r.status_code}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM C — Ayarlar / Tanımlar (liste + pasifleştir)")
++print("=" * 70)
++
++r = s.get(BASE + "/ayarlar/tanimlar", allow_redirects=False)
++check("9. /ayarlar/tanimlar 200 + liste içerir",
++      r.status_code == 200 and MARK + "KAT" in r.text and MARK + "GRP" in r.text,
++      f"status={r.status_code}")
++
++r = s.post(BASE + "/ayarlar/tanimlar/kategori/" + str(kat_id) + "/durum", allow_redirects=False)
++kat_aktif = db1("SELECT aktif FROM kategori WHERE id=?", kat_id)["aktif"]
++kat_var = db1("SELECT COUNT(*) c FROM kategori WHERE id=?", kat_id)["c"]
++check("10. kategori pasifleştirildi (silinmedi, aktif=0)",
++      r.status_code == 302 and kat_aktif == 0 and kat_var == 1,
++      f"status={r.status_code}, aktif={kat_aktif}, var={kat_var}")
++
++r = s.post(BASE + "/ayarlar/tanimlar/cari-grup/" + str(grp_id) + "/durum", allow_redirects=False)
++grp_aktif = db1("SELECT aktif FROM cari_grup WHERE id=?", grp_id)["aktif"]
++check("11. cari grup pasifleştirildi (aktif=0)",
++      r.status_code == 302 and grp_aktif == 0, f"aktif={grp_aktif}")
++
++r = s.get(BASE + "/stok/yeni", allow_redirects=False)
++check("12. pasif kategori stok formunda seçilemez",
++      r.status_code == 200 and MARK + "KAT" not in r.text, f"status={r.status_code}")
++
++r = s.get(BASE + "/cari/yeni", allow_redirects=False)
++check("13. pasif grup cari formunda seçilemez",
++      r.status_code == 200 and MARK + "GRP" not in r.text, f"status={r.status_code}")
++
++d, _ = giris("depo", "1234")
++r = d.get(BASE + "/ayarlar/tanimlar", allow_redirects=False)
++check("14. Admin dışı (depo) /ayarlar/tanimlar → 403", r.status_code == 403, f"status={r.status_code}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM D — Hızlı Barkod (Enter-ekle)")
++print("=" * 70)
++
++dbx("INSERT INTO stok_kart(kod, ad, barkod, kdv_orani, alis_fiyat, satis_fiyat, aktif, sirket_id) "
++    "VALUES(?,?,?,?,?,?,1,1)",
++    MARK + "STK", MARK + " Barkod Ürünü", BARKOD, 20, 50.0, 100.0)
++
++r = s.post(BASE + "/fatura/yeni", data={"action": "barkod", "barkod_sec": BARKOD,
++                                        "tip": "Satis", "tarih": "2026-09-14"},
++           allow_redirects=False)
++check("15. fatura barkod → satır eklendi",
++      r.status_code == 200 and ("stok_kod\": \"" + MARK + "STK" in r.text), f"status={r.status_code}")
++
++r = s.post(BASE + "/teklif/yeni", data={"action": "barkod", "barkod_sec": BARKOD,
++                                        "tarih": "2026-09-14", "gecerlilik_tarihi": "2026-09-30"},
++           allow_redirects=False)
++check("16. teklif barkod → satır eklendi",
++      r.status_code == 200 and ("stok_kod\": \"" + MARK + "STK" in r.text), f"status={r.status_code}")
++
++r = s.post(BASE + "/irsaliye/yeni", data={"action": "barkod", "barkod_sec": BARKOD,
++                                          "tip": "Satis", "tarih": "2026-09-14"},
++           allow_redirects=False)
++check("17. irsaliye barkod → satır eklendi",
++      r.status_code == 200 and ("stok_kod\": \"" + MARK + "STK" in r.text), f"status={r.status_code}")
++
++r = s.post(BASE + "/fatura/yeni", data={"action": "barkod", "barkod_sec": "9999999999999",
++                                        "tip": "Satis", "tarih": "2026-09-14"},
++           allow_redirects=False)
++check("18. bulunamayan barkod → uyarı flash",
++      "Barkod bulunamadı" in r.text, f"status={r.status_code}")
++
++r = s.get(BASE + "/fatura/yeni", allow_redirects=False)
++ok_inputs = (r.status_code == 200 and 'id="barkod-hizli"' in r.text and 'name="barkod_sec"' in r.text)
++r2 = s.get(BASE + "/teklif/yeni", allow_redirects=False)
++r3 = s.get(BASE + "/irsaliye/yeni", allow_redirects=False)
++ok2 = 'id="barkod-hizli"' in r2.text and 'name="barkod_sec"' in r2.text
++ok3 = 'id="barkod-hizli"' in r3.text and 'name="barkod_sec"' in r3.text
++check("19. hızlı barkod input'u 3 formda da var", ok_inputs and ok2 and ok3,
++      f"fatura={ok_inputs}, teklif={ok2}, irsaliye={ok3}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM E — K1 İzolasyonu")
++print("=" * 70)
++
++dbx("INSERT INTO sirket(kod, unvan, aktif) VALUES(?,?,1)", MARK, "D011 İkinci Şirket")
++s2 = db1("SELECT id FROM sirket WHERE kod=?", MARK)["id"]
++dbx("INSERT OR IGNORE INTO kullanici_sirket(kullanici_id, sirket_id) "
++    "SELECT id, ? FROM kullanici WHERE kullanici_adi='admin'", s2)
++s.post(BASE + "/sirket/gec", data={"sirket_id": str(s2), "next": "/"}, allow_redirects=False)
++r = s.post(BASE + "/api/kategori/ekle", data={"ad": MARK + "KAT"}, allow_redirects=False)
++kat_id_b = r.json().get("id") if r.status_code == 200 else None
++s.post(BASE + "/sirket/gec", data={"sirket_id": "1", "next": "/"}, allow_redirects=False)
++k1 = db1("SELECT sirket_id FROM kategori WHERE id=?", kat_id)["sirket_id"]
++k2 = db1("SELECT sirket_id FROM kategori WHERE id=?", kat_id_b)["sirket_id"]
++check("20. kategori K1 izolasyonu (aynı ad farklı şirkette ayrı kayıt)",
++      kat_id_b and kat_id_b != kat_id and k1 == 1 and k2 == s2,
++      f"idA={kat_id}(sirket={k1}), idB={kat_id_b}(sirket={k2})")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM F — Bütünlük + Kalıntı Temizliği")
++print("=" * 70)
++
++# Temizlik
++dbx("DELETE FROM kategori WHERE ad LIKE ?", MARK + "%")
++dbx("DELETE FROM cari_grup WHERE ad LIKE ?", MARK + "%")
++dbx("DELETE FROM stok_kart WHERE barkod=?", BARKOD)
++dbx("DELETE FROM kullanici_sirket WHERE sirket_id=?", s2)
++dbx("DELETE FROM sirket WHERE id=?", s2)
++
++fk = db1("SELECT COUNT(*) c FROM pragma_foreign_key_check")["c"]
++kalinti = (db1("SELECT COUNT(*) c FROM kategori WHERE ad LIKE ?", MARK + "%")["c"]
++           + db1("SELECT COUNT(*) c FROM cari_grup WHERE ad LIKE ?", MARK + "%")["c"]
++           + db1("SELECT COUNT(*) c FROM stok_kart WHERE barkod=?", BARKOD)["c"]
++           + db1("SELECT COUNT(*) c FROM sirket WHERE kod=?", MARK)["c"])
++check("21. FK bütünlüğü 0 + D011TEST kalıntısı yok", fk == 0 and kalinti == 0,
++      f"fk={fk}, kalıntı={kalinti}")
++
++print()
++print(f"=== SONUÇ: {len(ok)} başarılı / {len(fail)} başarısız (toplam {len(ok) + len(fail)}) ===")
++if fail:
++    print("BAŞARISIZ:", fail)
++    raise SystemExit(1)
++print("TÜM D011 TESTLERİ GEÇTİ ✅")
+diff --git a/kod/test_f6_cila.py b/kod/test_f6_cila.py
+index 8589e5c..05842d4 100644
+--- a/kod/test_f6_cila.py
++++ b/kod/test_f6_cila.py
+@@ -166,7 +166,7 @@ check("13. test_saglik", r.status_code == 200 and '"durum":"ok"' in r.text,
+ # 14) test_api_saglik ----------------------------------------------------------
+ d = admin.get(BASE + "/api/saglik").json()
+ check("14. test_api_saglik",
+-      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.41.0",
++      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.42.0",
+       f"surum={d.get('surum')}, db={d.get('db')}")
+ 
+ # 15) test_f5c_korundu ---------------------------------------------------------

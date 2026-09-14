@@ -1,0 +1,1291 @@
+# -*- coding: utf-8 -*-
+"""Stok / Stok2 modülleri (Faz 1).
+
+- Stok:  ürün kartı, seri/lot, kritik seviye + uyarı, stok hareketi, sayım, kartoteks
+- Stok2: çoklu depo dağılımı, depolar arası transfer, min/max, tedarikçi eşleştirme,
+         toplu fiyat/iskonto güncelleme
+"""
+import datetime
+import json
+import urllib.parse
+
+import db
+from core import route, render_template, redirect, flash, audit, notify, izole_sube, Response
+
+# --------------------------------------------------------------------------
+# Yetkiler ve sabitler
+# --------------------------------------------------------------------------
+STOK_WRITE = ("Admin", "Muhasebe", "Depo")
+FIYAT_WRITE = ("Admin", "Muhasebe")
+BIRIMLER = ["Adet", "Kutu", "Paket", "Çift", "Takım", "Metre", "m²", "Kg", "Lt", "Top", "Rulo"]
+GIRIS_TIPLERI = ["Stok Girişi (Alış)", "Sayım Farkı (+)", "Depolar Arası Transfer", "İade Girişi"]
+CIKIS_TIPLERI = ["Satış Çıkışı", "Servis Tüketimi", "Sayım Farkı (−)", "Depolar Arası Transfer", "Fire / Zayiat"]
+DURUM_SERI = ["Stokta", "Satıldı", "Rezerve", "Serviste", "İade"]
+
+
+# --------------------------------------------------------------------------
+# Yardımcılar
+# --------------------------------------------------------------------------
+def _f(v, default=0.0):
+    try:
+        return float(v if v not in (None, "") else default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _i(v):
+    try:
+        return int(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _depolar(conn, sid=None):
+    where, params = "aktif=1", []
+    if sid is not None:
+        where, params = "aktif=1 AND sirket_id=?", [sid]
+    return conn.execute(f"SELECT * FROM depo WHERE {where} ORDER BY ad", params).fetchall()
+
+
+def _kategoriler(conn, sid=None):
+    where, params = "aktif=1", []
+    if sid is not None:
+        where, params = "aktif=1 AND sirket_id=?", [sid]
+    return conn.execute(f"SELECT * FROM kategori WHERE {where} ORDER BY ad", params).fetchall()
+
+
+def _markalar(conn, sid=None):
+    where, params = "aktif=1", []
+    if sid is not None:
+        where, params = "aktif=1 AND sirket_id=?", [sid]
+    return conn.execute(f"SELECT * FROM marka WHERE {where} ORDER BY ad", params).fetchall()
+
+
+def barkod_bul(conn, barkod, sid=None):
+    """Barkod ile ürün/varyant bul. Faz 2'de Fatura/İrsaliye/Sipariş satır girişinde
+    barkod okutulduğunda satırı otomatik getirmek için bu yardımcı KULLANILACAK.
+
+    İstek 3: sid verilirse arama aktif şirketle sınırlanır."""
+    barkod = (barkod or "").strip()
+    if not barkod:
+        return None
+    s_where, s_args = "s.barkod=? AND s.aktif=1", [barkod]
+    if sid is not None:
+        s_where += " AND s.sirket_id=?"
+        s_args.append(sid)
+    kart = conn.execute(
+        "SELECT s.*, m.ad AS marka_ad, k.ad AS kategori_ad FROM stok_kart s "
+        "LEFT JOIN marka m ON m.id=s.marka_id LEFT JOIN kategori k ON k.id=s.kategori_id "
+        f"WHERE {s_where} LIMIT 1", s_args
+    ).fetchone()
+    if kart:
+        return {"stok_id": kart["id"], "varyant_id": 0, "kart": dict(kart), "varyant": None}
+    v_where, v_args = "v.barkod=? AND v.aktif=1", [barkod]
+    if sid is not None:
+        v_where += " AND s.sirket_id=?"
+        v_args.append(sid)
+    varyant = conn.execute(
+        "SELECT v.*, s.ad AS stok_ad, s.kod AS stok_kod FROM stok_varyant v "
+        "JOIN stok_kart s ON s.id=v.stok_id " + ("WHERE " + v_where) + " LIMIT 1", v_args
+    ).fetchone()
+    if varyant:
+        kart = conn.execute("SELECT * FROM stok_kart WHERE id=?", (varyant["stok_id"],)).fetchone()
+        return {"stok_id": varyant["stok_id"], "varyant_id": varyant["id"],
+                "kart": dict(kart), "varyant": dict(varyant)}
+    return None
+
+
+def hareket_cari(conn, ilgili_modul, ilgili_kayit_id, sid=None):
+    """Bir stok hareketinin 'kiminle' (cari/tedarikçi) yapıldığını çözer.
+
+    Kaynak belge Fatura veya İrsaliye ise o belgenin carisine iner; manuel giriş,
+    transfer, servis vb. kaynaklarda None döner (bilinçli: tek doğruluk kaynağı belge).
+    """
+    modul = (ilgili_modul or "").strip().lower()
+    if not ilgili_kayit_id or modul not in ("fatura", "irsaliye"):
+        return None
+    tablo = "fatura" if modul == "fatura" else "irsaliye"
+    where, params = "b.id=?", [ilgili_kayit_id]
+    if sid is not None:
+        where += " AND b.sirket_id=?"
+        params.append(sid)
+    row = conn.execute(
+        f"SELECT c.id AS cari_id, c.unvan AS cari_unvan, c.kod AS cari_kod "
+        f"FROM {tablo} b JOIN cari_kart c ON c.id=b.cari_id WHERE {where}",
+        params,
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def hareket_kdv_orani(conn, ilgili_modul, ilgili_kayit_id, stok_id, varyant_id, sid=None):
+    """Harekete ait KDV oranı: önce belge kaleminden, yoksa stok kartından; ikisi de yoksa 0."""
+    modul = (ilgili_modul or "").strip().lower()
+    if ilgili_kayit_id and modul in ("fatura", "irsaliye"):
+        tablo = "fatura" if modul == "fatura" else "irsaliye"
+        where = f"{tablo}_id=? AND stok_id=? AND COALESCE(varyant_id,0)=COALESCE(?,0)"
+        params = [ilgili_kayit_id, stok_id, varyant_id or 0]
+        if sid is not None:
+            where += f" AND {tablo}_kalem.sirket_id=?"
+            params.append(sid)
+        row = conn.execute(
+            f"SELECT kdv_orani FROM {tablo}_kalem WHERE {where} ORDER BY id LIMIT 1",
+            params,
+        ).fetchone()
+        if row and row["kdv_orani"] is not None:
+            return row["kdv_orani"]
+    where, params = "id=?", [stok_id]
+    if sid is not None:
+        where += " AND sirket_id=?"
+        params.append(sid)
+    row = conn.execute(f"SELECT kdv_orani FROM stok_kart WHERE {where}", params).fetchone()
+    return row["kdv_orani"] if row and row["kdv_orani"] is not None else 0.0
+
+
+def _depo_dict(conn, sid=None):
+    return {d["id"]: d for d in _depolar(conn, sid)}
+
+
+def _seviye_toplam(conn, stok_id, varyant_id=None, depo_id=None):
+    """Bir kartın (varsa varyant) toplam/ depo bazlı stok miktarı."""
+    where, params = ["stok_id=?"], [stok_id]
+    if varyant_id is not None:
+        where.append("varyant_id=?")
+        params.append(varyant_id)
+    if depo_id is not None:
+        where.append("depo_id=?")
+        params.append(depo_id)
+    row = conn.execute(
+        "SELECT COALESCE(SUM(miktar),0) s, COALESCE(SUM(rezerve),0) r FROM stok_seviye WHERE " + " AND ".join(where),
+        params,
+    ).fetchone()
+    return row["s"], row["r"]
+
+
+def _kart_toplam(conn, stok_id):
+    """Varyantlar dahil kartın toplam stoku (tüm depolar)."""
+    return conn.execute(
+        "SELECT COALESCE(SUM(miktar),0) s FROM stok_seviye WHERE stok_id=?", (stok_id,)
+    ).fetchone()["s"]
+
+
+def _depo_dagilim(conn, stok_id):
+    rows = conn.execute(
+        "SELECT sv.depo_id, d.ad AS depo_ad, d.kod AS depo_kod, "
+        "COALESCE(SUM(sv.miktar),0) miktar, COALESCE(SUM(sv.rezerve),0) rezerve "
+        "FROM stok_seviye sv JOIN depo d ON d.id=sv.depo_id "
+        "WHERE sv.stok_id=? GROUP BY sv.depo_id, d.ad, d.kod ORDER BY d.ad",
+        (stok_id,),
+    ).fetchall()
+    return rows
+
+
+def _seviye_get(conn, stok_id, varyant_id, depo_id):
+    return conn.execute(
+        "SELECT * FROM stok_seviye WHERE stok_id=? AND varyant_id=? AND depo_id=?",
+        (stok_id, varyant_id, depo_id),
+    ).fetchone()
+
+
+def _kritik_uyari(req, conn, kart):
+    """Kritik stok seviyesi altına düşünce bildirim üret (tekrarsız)."""
+    toplam = _kart_toplam(conn, kart["id"])
+    kritik = (kart["kritik_stok"] or 0)
+    if kritik > 0 and toplam < kritik:
+        # aynı uyarı daha önce okunmadan üretilmediyse ekle
+        var = conn.execute(
+            "SELECT COUNT(*) c FROM bildirimler WHERE ilgili_tablo='stok_kart' AND ilgili_id=? AND okundu=0",
+            (kart["id"],),
+        ).fetchone()["c"]
+        if var == 0:
+            notify("uyari", "Kritik stok seviyesi",
+                   f"{kart['kod']} {kart['ad']} stoku kritik seviyenin altına düştü ({toplam:g} < {kritik:g}).",
+                   ilgili_tablo="stok_kart", ilgili_id=kart["id"], sirket_id=db.sirket_id(req))
+
+
+def _hareket_olustur(conn, req, stok_id, varyant_id, depo_id, islem_tipi, miktar,
+                     birim_maliyet=None, aciklama=None, belge_no=None,
+                     ilgili_modul=None, ilgili_kayit_id=None, seri_nolar=None, tarih=None):
+    """Tek noktadan stok hareketi yaz: hareket + seviye + seri + kritik kontrol."""
+    tarih = tarih or datetime.date.today().isoformat()
+    conn.execute(
+        "INSERT INTO stok_hareket(stok_id, varyant_id, depo_id, tarih, islem_tipi, miktar, "
+        "birim_maliyet, aciklama, belge_no, seri_nolar, ilgili_modul, ilgili_kayit_id, created_by, sirket_id) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, (SELECT sirket_id FROM stok_kart WHERE id=?))",
+        (stok_id, varyant_id, depo_id, tarih, islem_tipi, miktar, birim_maliyet,
+         aciklama, belge_no, seri_nolar, ilgili_modul, ilgili_kayit_id,
+         req.user["id"] if req.user else None, stok_id),
+    )
+
+    sev = _seviye_get(conn, stok_id, varyant_id, depo_id)
+    if sev:
+        conn.execute(
+            "UPDATE stok_seviye SET miktar = miktar + ? WHERE id=?",
+            (miktar, sev["id"]),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO stok_seviye(stok_id, varyant_id, depo_id, miktar, sirket_id) "
+            "VALUES(?,?,?,?, (SELECT sirket_id FROM stok_kart WHERE id=?))",
+            (stok_id, varyant_id, depo_id, miktar, stok_id),
+        )
+
+    # Seri numara durum güncelle
+    if seri_nolar:
+        for sn in [s.strip() for s in seri_nolar.split(",") if s.strip()]:
+            mevcut = conn.execute(
+                "SELECT * FROM stok_seri WHERE stok_id=? AND seri_no=?", (stok_id, sn)
+            ).fetchone()
+            if miktar > 0:  # giriş: yeni seri ekle
+                if not mevcut:
+                    conn.execute(
+                        "INSERT INTO stok_seri(stok_id, varyant_id, seri_no, durum, depo_id, giris_tarihi, sirket_id) "
+                        "VALUES(?,?,?,?,?,?, (SELECT sirket_id FROM stok_kart WHERE id=?))",
+                        (stok_id, varyant_id, sn, "Stokta", depo_id, tarih, stok_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE stok_seri SET durum='Stokta', depo_id=?, cikis_tarihi=NULL WHERE id=?",
+                        (depo_id, mevcut["id"]),
+                    )
+            else:  # çıkış: seriyi işaretle
+                if mevcut:
+                    conn.execute(
+                        "UPDATE stok_seri SET durum='Satıldı', cikis_tarihi=?, depo_id=? WHERE id=?",
+                        (tarih, depo_id, mevcut["id"]),
+                    )
+    return
+
+
+# --------------------------------------------------------------------------
+# STOK — kart listesi
+# --------------------------------------------------------------------------
+@route(r"/stok", roles=())
+def stok_liste(req):
+    conn = db.get_conn()
+    q = req.q("q").strip()
+    kategori = req.q("kategori")
+    depo = req.q("depo")
+    sadece_kritik = req.q("kritik") == "1"
+
+    # --- Şube bazlı görünürlük: kullanıcı bir şubeyle sınırlıysa ---
+    kullanici_sube = req.user.get("sube_id") if req.user else None
+    sube_depo_ids = []
+    if kullanici_sube:
+        sube_depo_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM depo WHERE sube_id=?", (kullanici_sube,)).fetchall()]
+
+    where, params = ["s.sirket_id = ?"], [db.sirket_id(req)]
+    if q:
+        where.append("(s.ad LIKE ? OR s.kod LIKE ? OR s.barkod LIKE ?)")
+        like = f"%{q}%"
+        params += [like, like, like]
+    if kategori:
+        where.append("s.kategori_id=?")
+        params.append(int(kategori))
+    if sadece_kritik:
+        where.append("s.kritik_stok > 0")
+    if sube_depo_ids:
+        ph = ",".join("?" * len(sube_depo_ids))
+        where.append(f"s.id IN (SELECT stok_id FROM stok_seviye WHERE depo_id IN ({ph}))")
+        params += sube_depo_ids
+    w = " AND ".join(where)
+
+    rows = conn.execute(
+        f"SELECT s.*, m.ad AS marka_ad, k.ad AS kategori_ad, "
+        f"(SELECT COALESCE(SUM(miktar),0) FROM stok_seviye sv WHERE sv.stok_id=s.id) AS toplam "
+        f"FROM stok_kart s LEFT JOIN marka m ON m.id=s.marka_id LEFT JOIN kategori k ON k.id=s.kategori_id "
+        f"WHERE {w} ORDER BY s.id",
+        params,
+    ).fetchall()
+
+    depo_filter = _i(depo)
+    if depo_filter and sube_depo_ids and depo_filter not in sube_depo_ids:
+        depo_filter = None  # şube dışı depo filtresi yok sayılır
+
+    sonuc = []
+    for r in rows:
+        r = dict(r)
+        if depo_filter:
+            toplam, _ = _seviye_toplam(conn, r["id"], depo_id=depo_filter)
+            r["toplam"] = toplam
+        elif sube_depo_ids:
+            ph = ",".join("?" * len(sube_depo_ids))
+            r["toplam"] = conn.execute(
+                f"SELECT COALESCE(SUM(miktar),0) s FROM stok_seviye WHERE stok_id=? AND depo_id IN ({ph})",
+                [r["id"]] + sube_depo_ids,
+            ).fetchone()["s"]
+        r["kritik_alti"] = (r["kritik_stok"] or 0) > 0 and r["toplam"] < r["kritik_stok"]
+        r["seri_takip"] = bool(r["seri_lot_takibi"])
+        r["varyant_takip"] = bool(r["varyant_takibi"])
+        if not (sadece_kritik) or r["kritik_alti"]:
+            sonuc.append(r)
+
+    # filtredeki depo listesi (şube kısıtı uygulanır)
+    depolar = db_tmp("depolar", req)
+    if sube_depo_ids:
+        depolar = [d for d in depolar if d["id"] in sube_depo_ids]
+
+    ozet = {
+        "toplam": len(sonuc),
+        "kritik_sayisi": sum(1 for r in sonuc if r["kritik_alti"]),
+    }
+    conn.close()
+    return render_template(
+        "stok/liste.html", rows=sonuc, kategoriler=db_tmp("kategoriler", req), depolar=depolar,
+        filtro={"q": q, "kategori": kategori, "depo": depo, "kritik": req.q("kritik")}, ozet=ozet,
+    )
+
+
+def db_tmp(kind, req=None):
+    conn = db.get_conn()
+    sid = db.sirket_id(req) if req else None
+    if kind == "depolar":
+        rows = _depolar(conn, sid)
+    elif kind == "kategoriler":
+        rows = _kategoriler(conn, sid)
+    else:
+        rows = []
+    conn.close()
+    return rows
+
+
+# --------------------------------------------------------------------------
+# STOK — kart oluştur / düzenle
+# --------------------------------------------------------------------------
+def _kart_form_verisi(req, conn, kart=None):
+    ad = (req.form.get("ad") or "").strip()
+    kod = (req.form.get("kod") or "").strip()
+    if not kod:
+        nxt = conn.execute("SELECT COALESCE(MAX(id),0)+1 AS n FROM stok_kart").fetchone()["n"]
+        kod = f"STK-{nxt:04d}"
+    return {
+        "kod": kod, "ad": ad,
+        "barkod": (req.form.get("barkod") or "").strip(),
+        "marka_id": _i(req.form.get("marka_id")),
+        "kategori_id": _i(req.form.get("kategori_id")),
+        "birim": req.form.get("birim") or "Adet",
+        "kdv_orani": _f(req.form.get("kdv_orani"), 20),
+        "otv_orani": _f(req.form.get("otv_orani"), 0),
+        "alis_fiyat": _f(req.form.get("alis_fiyat")),
+        "satis_fiyat": _f(req.form.get("satis_fiyat")),
+        "para_birimi": req.form.get("para_birimi") or "TRY",
+        "iskonto_orani": _f(req.form.get("iskonto_orani")),
+        "kritik_stok": _f(req.form.get("kritik_stok")),
+        "seri_lot_takibi": 1 if req.form.get("seri_lot_takibi") else 0,
+        "varyant_takibi": 1 if req.form.get("varyant_takibi") else 0,
+        "teknik_ozellikler": (req.form.get("teknik_ozellikler") or "").strip(),
+        # D007 — stok kart ek alanlar (Wolvox/Akınsoft referanslı)
+        "model": (req.form.get("model") or "").strip(),
+        "tevkifat_orani": _f(req.form.get("tevkifat_orani"), 0),
+        "istisna_kodu": (req.form.get("istisna_kodu") or "").strip(),
+        "grubu": (req.form.get("grubu") or "").strip(),
+        "ana_grup": (req.form.get("ana_grup") or "").strip(),
+        "alt_grup": (req.form.get("alt_grup") or "").strip(),
+        "ozel_kod1": (req.form.get("ozel_kod1") or "").strip(),
+        "ozel_kod2": (req.form.get("ozel_kod2") or "").strip(),
+        "ozel_kod3": (req.form.get("ozel_kod3") or "").strip(),
+    }
+
+
+@route(r"/stok/yeni", methods=("GET", "POST"), roles=STOK_WRITE)
+def stok_yeni(req):
+    conn = db.get_conn()
+    if req.method == "POST":
+        v = _kart_form_verisi(req, conn)
+        if not v["ad"]:
+            flash(req, "Ürün adı zorunludur.", "danger")
+            conn.close()
+            return redirect("/stok/yeni")
+        cur = conn.execute(
+            "INSERT INTO stok_kart(kod, ad, barkod, marka_id, kategori_id, birim, kdv_orani, otv_orani, "
+            "alis_fiyat, satis_fiyat, para_birimi, iskonto_orani, kritik_stok, seri_lot_takibi, "
+            "varyant_takibi, teknik_ozellikler, model, tevkifat_orani, istisna_kodu, grubu, ana_grup, "
+            "alt_grup, ozel_kod1, ozel_kod2, ozel_kod3, created_by, sirket_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (v["kod"], v["ad"], v["barkod"], v["marka_id"], v["kategori_id"], v["birim"],
+             v["kdv_orani"], v["otv_orani"], v["alis_fiyat"], v["satis_fiyat"], v["para_birimi"],
+             v["iskonto_orani"], v["kritik_stok"], v["seri_lot_takibi"], v["varyant_takibi"],
+             v["teknik_ozellikler"], v["model"], v["tevkifat_orani"], v["istisna_kodu"], v["grubu"],
+             v["ana_grup"], v["alt_grup"], v["ozel_kod1"], v["ozel_kod2"], v["ozel_kod3"],
+             req.user["id"], db.sirket_id(req)),
+        )
+        sid = cur.lastrowid
+        conn.commit()
+        audit(req, "stok_kart", sid, "olustur", {"kod": v["kod"], "ad": v["ad"]})
+        conn.close()
+        flash(req, f"Stok kartı oluşturuldu: {v['kod']} — {v['ad']}", "ok")
+        return redirect(f"/stok/{sid}")
+    markalar = _markalar(conn, db.sirket_id(req))
+    kategoriler = _kategoriler(conn, db.sirket_id(req))
+    conn.close()
+    return render_template("stok/form.html", kart=None, markalar=markalar, kategoriler=kategoriler,
+                           birimler=BIRIMLER)
+
+
+@route(r"/stok/(?P<sid>\d+)/duzenle", methods=("GET", "POST"), roles=STOK_WRITE)
+def stok_duzenle(req, sid):
+    conn = db.get_conn()
+    kart = conn.execute("SELECT * FROM stok_kart WHERE id=? AND sirket_id=?",
+                        (int(sid), db.sirket_id(req))).fetchone()
+    if not kart:
+        conn.close()
+        flash(req, "Stok kartı bulunamadı.", "danger")
+        return redirect("/stok")
+    if req.method == "POST":
+        v = _kart_form_verisi(req, conn)
+        if not v["ad"]:
+            flash(req, "Ürün adı zorunludur.", "danger")
+            conn.close()
+            return redirect(f"/stok/{sid}/duzenle")
+        conn.execute(
+            "UPDATE stok_kart SET ad=?, barkod=?, marka_id=?, kategori_id=?, birim=?, kdv_orani=?, "
+            "otv_orani=?, alis_fiyat=?, satis_fiyat=?, para_birimi=?, iskonto_orani=?, kritik_stok=?, "
+            "seri_lot_takibi=?, varyant_takibi=?, teknik_ozellikler=?, model=?, tevkifat_orani=?, "
+            "istisna_kodu=?, grubu=?, ana_grup=?, alt_grup=?, ozel_kod1=?, ozel_kod2=?, ozel_kod3=?, "
+            "updated_by=?, updated_at=datetime('now','localtime') WHERE id=?",
+            (v["ad"], v["barkod"], v["marka_id"], v["kategori_id"], v["birim"], v["kdv_orani"],
+             v["otv_orani"], v["alis_fiyat"], v["satis_fiyat"], v["para_birimi"], v["iskonto_orani"],
+             v["kritik_stok"], v["seri_lot_takibi"], v["varyant_takibi"], v["teknik_ozellikler"],
+             v["model"], v["tevkifat_orani"], v["istisna_kodu"], v["grubu"], v["ana_grup"],
+             v["alt_grup"], v["ozel_kod1"], v["ozel_kod2"], v["ozel_kod3"],
+             req.user["id"], int(sid)),
+        )
+        conn.commit()
+        audit(req, "stok_kart", int(sid), "guncelle", {"ad": v["ad"]})
+        conn.close()
+        flash(req, "Stok kartı güncellendi.", "ok")
+        return redirect(f"/stok/{sid}")
+    markalar = _markalar(conn, db.sirket_id(req))
+    kategoriler = _kategoriler(conn, db.sirket_id(req))
+    conn.close()
+    return render_template("stok/form.html", kart=kart, markalar=markalar, kategoriler=kategoriler,
+                           birimler=BIRIMLER)
+
+
+# --------------------------------------------------------------------------
+# D007 — Marka inline ekleme (stok formunda "+ Marka Ekle" Ajax ucu)
+# --------------------------------------------------------------------------
+@route(r"/api/marka/ekle", methods=("POST",), roles=STOK_WRITE)
+def api_marka_ekle(req):
+    """Yeni marka ekle (Ajax). Ad trim edilir; varsa mevcut kaydın id'si döner (idempotent)."""
+    ad = (req.form.get("ad") or "").strip()
+    if not ad:
+        return Response(json.dumps({"hata": "Marka adı boş olamaz."}, ensure_ascii=False),
+                        "400 Bad Request", [("Content-Type", "application/json; charset=utf-8")])
+    conn = db.get_conn()
+    sid = db.sirket_id(req)
+    # Büyük/küçük harf duyarsız eşleşme: aynı adı ikinci kez eklemeye çalışırsa id döner.
+    mevcut = conn.execute(
+        "SELECT id FROM marka WHERE lower(ad)=lower(?) AND (sirket_id=? OR sirket_id IS NULL) LIMIT 1",
+        (ad, sid)).fetchone()
+    if mevcut:
+        conn.close()
+        return Response(json.dumps({"id": mevcut["id"], "ad": ad}, ensure_ascii=False),
+                        "200 OK", [("Content-Type", "application/json; charset=utf-8")])
+    cur = conn.execute("INSERT INTO marka(ad, aktif, sirket_id) VALUES(?,1,?)", (ad, sid))
+    conn.commit()
+    audit(req, "marka", cur.lastrowid, "olustur", {"ad": ad})
+    conn.close()
+    return Response(json.dumps({"id": cur.lastrowid, "ad": ad}, ensure_ascii=False),
+                    "200 OK", [("Content-Type", "application/json; charset=utf-8")])
+
+
+@route(r"/api/kategori/ekle", methods=("POST",), roles=STOK_WRITE)
+def api_kategori_ekle(req):
+    """D011-A — Yeni kategori ekle (Ajax, Marka deseni birebir). Idempotent (aynı ad → mevcut id)."""
+    ad = (req.form.get("ad") or "").strip()
+    if not ad:
+        return Response(json.dumps({"hata": "Kategori adı boş olamaz."}, ensure_ascii=False),
+                        "400 Bad Request", [("Content-Type", "application/json; charset=utf-8")])
+    conn = db.get_conn()
+    sid = db.sirket_id(req)
+    # Büyük/küçük harf duyarsız + şirket izolasyonlu eşleşme (K1).
+    mevcut = conn.execute(
+        "SELECT id FROM kategori WHERE lower(ad)=lower(?) AND (sirket_id=? OR sirket_id IS NULL) LIMIT 1",
+        (ad, sid)).fetchone()
+    if mevcut:
+        conn.close()
+        return Response(json.dumps({"id": mevcut["id"], "ad": ad}, ensure_ascii=False),
+                        "200 OK", [("Content-Type", "application/json; charset=utf-8")])
+    cur = conn.execute("INSERT INTO kategori(ad, aktif, sirket_id) VALUES(?,1,?)", (ad, sid))
+    conn.commit()
+    audit(req, "kategori", cur.lastrowid, "olustur", {"ad": ad})
+    conn.close()
+    return Response(json.dumps({"id": cur.lastrowid, "ad": ad}, ensure_ascii=False),
+                    "200 OK", [("Content-Type", "application/json; charset=utf-8")])
+
+
+# --------------------------------------------------------------------------
+# STOK — kart detayı (sekmeler)
+# --------------------------------------------------------------------------
+@route(r"/stok/(?P<sid>\d+)", roles=())
+def stok_detay(req, sid):
+    conn = db.get_conn()
+    kart = conn.execute(
+        "SELECT s.*, m.ad AS marka_ad, k.ad AS kategori_ad FROM stok_kart s "
+        "LEFT JOIN marka m ON m.id=s.marka_id LEFT JOIN kategori k ON k.id=s.kategori_id "
+        "WHERE s.id=? AND s.sirket_id=?",
+        (int(sid), db.sirket_id(req)),
+    ).fetchone()
+    if not kart:
+        conn.close()
+        flash(req, "Stok kartı bulunamadı.", "danger")
+        return redirect("/stok")
+    kart = dict(kart)
+    sekme = req.q("sekme") or ""
+
+    toplam = _kart_toplam(conn, kart["id"])
+    dagilim = _depo_dagilim(conn, kart["id"])
+    varyantlar = conn.execute(
+        "SELECT v.*, (SELECT COALESCE(SUM(miktar),0) FROM stok_seviye sv WHERE sv.stok_id=v.stok_id AND sv.varyant_id=v.id) AS toplam "
+        "FROM stok_varyant v WHERE v.stok_id=? ORDER BY v.id",
+        (kart["id"],),
+    ).fetchall()
+    hareketler = conn.execute(
+        "SELECT h.*, d.ad AS depo_ad, d.kod AS depo_kod FROM stok_hareket h "
+        "JOIN depo d ON d.id=h.depo_id WHERE h.stok_id=? ORDER BY h.tarih DESC, h.id DESC LIMIT 50",
+        (kart["id"],),
+    ).fetchall()
+    # Son 3 alış / son 3 satış — fiyat kıyaslaması için (cari ile birlikte).
+    _cari_join = (
+        "LEFT JOIN fatura f ON f.id=h.ilgili_kayit_id AND lower(h.ilgili_modul)='fatura' "
+        "LEFT JOIN irsaliye i ON i.id=h.ilgili_kayit_id AND lower(h.ilgili_modul)='irsaliye' "
+        "LEFT JOIN cari_kart c ON c.id=COALESCE(f.cari_id, i.cari_id) "
+    )
+    son_alis = conn.execute(
+        "SELECT h.tarih, h.miktar, h.birim_maliyet, h.ilgili_modul, h.ilgili_kayit_id, "
+        "c.unvan AS cari_unvan, c.kod AS cari_kod, c.id AS cari_id "
+        "FROM stok_hareket h " + _cari_join +
+        "WHERE h.stok_id=? AND h.islem_tipi IN ('Stok Girişi (Alış)','İrsaliye Girişi') "
+        "ORDER BY h.tarih DESC, h.id DESC LIMIT 3", (kart["id"],),
+    ).fetchall()
+    son_satis = conn.execute(
+        "SELECT h.tarih, h.miktar, h.birim_maliyet, h.ilgili_modul, h.ilgili_kayit_id, "
+        "c.unvan AS cari_unvan, c.kod AS cari_kod, c.id AS cari_id "
+        "FROM stok_hareket h " + _cari_join +
+        "WHERE h.stok_id=? AND h.islem_tipi IN ('Satış Çıkışı','İrsaliye Çıkışı') "
+        "ORDER BY h.tarih DESC, h.id DESC LIMIT 3", (kart["id"],),
+    ).fetchall()
+    seriler = conn.execute(
+        "SELECT * FROM stok_seri WHERE stok_id=? ORDER BY id DESC", (kart["id"],)
+    ).fetchall()
+    tedarikciler = conn.execute(
+        "SELECT t.*, c.unvan AS cari_unvan, c.kod AS cari_kod FROM stok_tedarikci t "
+        "JOIN cari_kart c ON c.id=t.cari_id WHERE t.stok_id=? ORDER BY t.oncelik DESC",
+        (kart["id"],),
+    ).fetchall()
+    notlar = conn.execute(
+        "SELECT n.*, u.kullanici_adi AS kullanici FROM notlar n LEFT JOIN kullanici u ON u.id=n.kullanici_id "
+        "WHERE n.ilgili_tablo='stok_kart' AND n.ilgili_id=? ORDER BY n.id DESC",
+        (kart["id"],),
+    ).fetchall()
+    loglar = conn.execute(
+        "SELECT * FROM audit_log WHERE tablo='stok_kart' AND kayit_id=? ORDER BY id DESC",
+        (kart["id"],),
+    ).fetchall()
+
+    kart["toplam"] = toplam
+    kart["kritik_alti"] = (kart["kritik_stok"] or 0) > 0 and toplam < kart["kritik_stok"]
+    silinebilir = db.referans_var(conn, "stok_kart", kart["id"]) is None
+    conn.close()
+    return render_template(
+        "stok/detay.html", kart=kart, sekme=sekme, dagilim=dagilim, varyantlar=varyantlar,
+        hareketler=hareketler, seriler=seriler, tedarikciler=tedarikciler, notlar=notlar,
+        loglar=loglar, depolar=db_tmp("depolar", req), durum_seri=DURUM_SERI,
+        son_alis=son_alis, son_satis=son_satis, silinebilir=silinebilir,
+    )
+
+
+@route(r"/stok/(?P<sid>\d+)/sil", methods=("POST",), roles=STOK_WRITE)
+def stok_sil(req, sid):
+    conn = db.get_conn()
+    kart = conn.execute("SELECT * FROM stok_kart WHERE id=? AND sirket_id=?",
+                        (int(sid), db.sirket_id(req))).fetchone()
+    if not kart:
+        conn.close()
+        return redirect("/stok")
+    ref = db.referans_var(conn, "stok_kart", int(sid))
+    if ref:
+        conn.close()
+        flash(req, f"Bu stok kartı silinemez — '{ref}' üzerinde kaydı var. Pasifleştirebilirsiniz.", "danger")
+        return redirect(f"/stok/{sid}")
+    audit(req, "stok_kart", int(sid), "sil", {"kod": kart["kod"], "ad": kart["ad"]})
+    conn.execute("DELETE FROM stok_kart WHERE id=?", (int(sid),))
+    conn.commit()
+    conn.close()
+    flash(req, "Stok kartı silindi.", "ok")
+    return redirect("/stok")
+
+
+@route(r"/stok/(?P<sid>\d+)/not", methods=("POST",), roles=())
+def stok_not(req, sid):
+    metin = (req.form.get("metin") or "").strip()
+    if not metin:
+        flash(req, "Not boş olamaz.", "danger")
+        return redirect(f"/stok/{sid}?sekme=not")
+    etiketler = ",".join(sorted({t for t in metin.split() if t.startswith("#")}))
+    conn = db.get_conn()
+    conn.execute(
+        "INSERT INTO notlar(ilgili_tablo, ilgili_id, metin, etiketler, hatirlatma, kullanici_id, sirket_id) "
+        "VALUES(?,?,?,?,?,?,?)",
+        ("stok_kart", int(sid), metin, etiketler or None, req.form.get("hatirlatma") or None,
+         req.user["id"], db.sirket_id(req)),
+    )
+    conn.commit()
+    conn.close()
+    flash(req, "Not eklendi.", "ok")
+    return redirect(f"/stok/{sid}?sekme=not")
+
+
+@route(r"/stok/(?P<sid>\d+)/minmax", methods=("POST",), roles=STOK_WRITE)
+def stok_minmax(req, sid):
+    conn = db.get_conn()
+    depo_id = _i(req.form.get("depo_id"))
+    min_stok = _f(req.form.get("min_stok"))
+    max_stok = _f(req.form.get("max_stok"))
+    if depo_id:
+        sev = _seviye_get(conn, int(sid), 0, depo_id)
+        if sev:
+            conn.execute("UPDATE stok_seviye SET min_stok=?, max_stok=? WHERE id=?",
+                         (min_stok, max_stok, sev["id"]))
+        else:
+            conn.execute(
+                "INSERT INTO stok_seviye(stok_id, varyant_id, depo_id, miktar, min_stok, max_stok, sirket_id) "
+                "VALUES(?,0,?,0,?,?, (SELECT sirket_id FROM stok_kart WHERE id=?))",
+                (int(sid), depo_id, min_stok, max_stok, int(sid)),
+            )
+        conn.commit()
+        audit(req, "stok_seviye", int(sid), "minmax", {"depo_id": depo_id, "min": min_stok, "max": max_stok})
+        flash(req, "Min/max stok güncellendi.", "ok")
+    conn.close()
+    return redirect(f"/stok/{sid}")
+
+
+# --------------------------------------------------------------------------
+# STOK — hareket (manuel giriş/çıkış) + global kartoteks
+# --------------------------------------------------------------------------
+def _hareket_sorgu(req, conn, limit=200):
+    """Hareket listesi/export/rapor için ortak filtre + sorgu."""
+    q = req.q("q").strip()
+    tip = req.q("tip")
+    depo = req.q("depo")
+    stok_id = _i(req.q("stok_id"))
+    where, params = ["h.sirket_id = ?"], [db.sirket_id(req)]
+    if q:
+        where.append("(s.ad LIKE ? OR s.kod LIKE ? OR s.barkod LIKE ? OR h.belge_no LIKE ? OR h.seri_nolar LIKE ?)")
+        like = f"%{q}%"
+        params += [like, like, like, like, like]
+    if tip:
+        where.append("h.islem_tipi=?")
+        params.append(tip)
+    if depo:
+        where.append("h.depo_id=?")
+        params.append(int(depo))
+    if stok_id:
+        where.append("h.stok_id=?")
+        params.append(stok_id)
+    w = " AND ".join(where)
+    rows = conn.execute(
+        f"SELECT h.*, s.kod AS stok_kod, s.ad AS stok_ad, s.barkod AS stok_barkod, "
+        f"d.ad AS depo_ad, d.kod AS depo_kod "
+        f"FROM stok_hareket h JOIN stok_kart s ON s.id=h.stok_id JOIN depo d ON d.id=h.depo_id "
+        f"WHERE {w} ORDER BY h.tarih DESC, h.id DESC LIMIT ?",
+        params + [limit],
+    ).fetchall()
+    return rows, {"q": q, "tip": tip, "depo": depo, "stok_id": stok_id}
+
+
+def _filtre_qs(filtro):
+    return urllib.parse.urlencode({k: v for k, v in filtro.items() if v not in (None, "")})
+
+
+@route(r"/stok/hareketler", roles=())
+def stok_hareketler(req):
+    conn = db.get_conn()
+    rows, filtro = _hareket_sorgu(req, conn)
+    rows = [dict(h) for h in rows]
+    # "Kiminle" — hareketin bağlı olduğu belgenin carisi (tek doğruluk kaynağı: belge).
+    for h in rows:
+        c = hareket_cari(conn, h["ilgili_modul"], h["ilgili_kayit_id"], db.sirket_id(req))
+        h["cari_unvan"] = c["cari_unvan"] if c else None
+        h["cari_kod"] = c["cari_kod"] if c else None
+        h["cari_id"] = c["cari_id"] if c else None
+    tipler = sorted({r["islem_tipi"] for r in conn.execute(
+        "SELECT DISTINCT islem_tipi FROM stok_hareket WHERE sirket_id=?", (db.sirket_id(req),)).fetchall()})
+    conn.close()
+    return render_template("stok/hareketler.html", rows=rows, filtro=filtro, filtre_qs=_filtre_qs(filtro),
+                           depolar=db_tmp("depolar", req), tipler=tipler)
+
+
+@route(r"/stok/alis-gecmisi", roles=())
+def stok_alis_gecmisi(req):
+    """Alış geçmişi: stok alışlarında hangi firmadan, kaç adet, ne fiyata alındığı.
+    KDV dahil/hariç toggle'ı ile ayrı görünüm — tek kaynak stok_hareket + belge (K4)."""
+    conn = db.get_conn()
+    q = req.q("q").strip()
+    depo = req.q("depo")
+    bas = req.q("bas")
+    bit = req.q("bit")
+    kdv_dahil = req.q("kdv") == "dahil"
+
+    where, params = ["h.islem_tipi IN ('Stok Girişi (Alış)','İrsaliye Girişi')", "h.sirket_id = ?"], [db.sirket_id(req)]
+    if q:
+        where.append("(s.ad LIKE ? OR s.kod LIKE ? OR s.barkod LIKE ? OR c.unvan LIKE ? OR c.kod LIKE ? OR h.belge_no LIKE ?)")
+        like = f"%{q}%"
+        params += [like, like, like, like, like, like]
+    if depo:
+        where.append("h.depo_id=?")
+        params.append(int(depo))
+    if bas:
+        where.append("h.tarih>=?")
+        params.append(bas)
+    if bit:
+        where.append("h.tarih<=?")
+        params.append(bit)
+    w = " AND ".join(where)
+    rows = conn.execute(
+        "SELECT h.*, s.kod AS stok_kod, s.ad AS stok_ad, s.birim AS stok_birim, "
+        "d.ad AS depo_ad, d.kod AS depo_kod, c.unvan AS cari_unvan, c.kod AS cari_kod, c.id AS cari_id "
+        "FROM stok_hareket h "
+        "JOIN stok_kart s ON s.id=h.stok_id JOIN depo d ON d.id=h.depo_id "
+        "LEFT JOIN fatura f ON f.id=h.ilgili_kayit_id AND lower(h.ilgili_modul)='fatura' "
+        "LEFT JOIN irsaliye i ON i.id=h.ilgili_kayit_id AND lower(h.ilgili_modul)='irsaliye' "
+        "LEFT JOIN cari_kart c ON c.id=COALESCE(f.cari_id, i.cari_id) "
+        f"WHERE {w} ORDER BY h.tarih DESC, h.id DESC LIMIT 300",
+        params,
+    ).fetchall()
+    rows = [dict(h) for h in rows]
+    toplam_adet = 0.0
+    toplam_tutar = 0.0
+    for h in rows:
+        m = h["miktar"] or 0
+        bf = h["birim_maliyet"] or 0
+        kdv = hareket_kdv_orani(conn, h["ilgili_modul"], h["ilgili_kayit_id"], h["stok_id"], h["varyant_id"],
+                                db.sirket_id(req))
+        h["kdv_orani"] = kdv
+        h["birim_haric"] = bf
+        h["birim_dahil"] = round(bf * (1 + kdv / 100), 4)
+        h["tutar_haric"] = round(m * bf, 2)
+        h["tutar_dahil"] = round(m * bf * (1 + kdv / 100), 2)
+        toplam_adet += m
+        toplam_tutar += h["tutar_dahil"] if kdv_dahil else h["tutar_haric"]
+    depolar = db_tmp("depolar", req)
+    conn.close()
+    filtro = {"q": q, "depo": depo, "bas": bas, "bit": bit, "kdv": "dahil" if kdv_dahil else "haric"}
+    return render_template("stok/alis_gecmisi.html", rows=rows, filtro=filtro,
+                           filtre_qs=_filtre_qs(filtro), depolar=depolar,
+                           kdv_dahil=kdv_dahil, toplam_adet=toplam_adet,
+                           toplam_tutar=round(toplam_tutar, 2))
+
+
+@route(r"/stok/hareketler/export", roles=())
+def stok_hareket_export(req):
+    """Kartoteks dışa aktarma: Excel (.xlsx) veya CSV (Excel uyumlu)."""
+    conn = db.get_conn()
+    rows, filtro = _hareket_sorgu(req, conn, limit=5000)
+    conn.close()
+    fmt = req.q("format") or "xlsx"
+    basliklar = ["Tarih", "İşlem Tipi", "Ürün Kodu", "Ürün", "Barkod", "Depo", "Belge No",
+                 "Miktar", "Birim Maliyet", "Kaynak Modül", "Kayıt ID", "Açıklama"]
+    veri = []
+    for r in rows:
+        veri.append([
+            r["tarih"], r["islem_tipi"], r["stok_kod"], r["stok_ad"], r["stok_barkod"] or "",
+            r["depo_ad"], r["belge_no"] or "", r["miktar"], r["birim_maliyet"] or 0,
+            r["ilgili_modul"] or "", r["ilgili_kayit_id"] or "", r["aciklama"] or "",
+        ])
+    if fmt == "csv":
+        import io
+        buf = io.StringIO()
+        buf.write("\ufeff")  # UTF-8 BOM — Excel Türkçe karakterleri doğru açsın
+        buf.write(";".join(basliklar) + "\r\n")
+        for satir in veri:
+            buf.write(";".join(str(x) for x in satir) + "\r\n")
+        from core import Response
+        return Response(buf.getvalue(), "200 OK", [
+            ("Content-Type", "text/csv; charset=utf-8"),
+            ("Content-Disposition", 'attachment; filename="stok_hareketleri.csv"'),
+        ])
+    # xlsx
+    try:
+        import io as _io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Stok Hareketleri"
+        ws.append(basliklar)
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1F3864")
+        for satir in veri:
+            ws.append(satir)
+        for col in ("A", "B", "C", "D", "E", "F", "G", "J", "K", "L"):
+            ws.column_dimensions[col].width = 22 if col in ("D", "L") else 16
+        buf = _io.BytesIO()
+        wb.save(buf)
+        from core import Response
+        return Response(buf.getvalue(), "200 OK", [
+            ("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            ("Content-Disposition", 'attachment; filename="stok_hareketleri.xlsx"'),
+        ])
+    except Exception:  # noqa: BLE001 — openpyxl yoksa CSV'ye düş
+        return redirect("/stok/hareketler/export?format=csv&" + urllib.parse.urlencode(
+            {k: v for k, v in filtro.items() if v}))
+
+
+@route(r"/stok/hareketler/rapor", roles=())
+def stok_hareket_rapor(req):
+    """Yazdırılabilir (PDF'e kaydedilebilir) kartoteks raporu."""
+    conn = db.get_conn()
+    rows, filtro = _hareket_sorgu(req, conn, limit=5000)
+    conn.close()
+    return render_template("stok/hareket_rapor.html", rows=rows, filtro=filtro,
+                           bugun=datetime.date.today().isoformat())
+
+
+@route(r"/stok/ara", roles=())
+def stok_ara(req):
+    """Barkod bazlı hızlı sorgulama — doğrudan ürün kartına/varyantına atlar."""
+    barkod = req.q("barkod") or req.q("q")
+    conn = db.get_conn()
+    sonuc = barkod_bul(conn, barkod, db.sirket_id(req))
+    conn.close()
+    if not sonuc:
+        flash(req, f"Barkod bulunamadı: {barkod}", "danger")
+        return redirect("/stok")
+    sid = sonuc["stok_id"]
+    if sonuc["varyant_id"]:
+        flash(req, f"Barkod {sonuc['varyant']['barkod']} → {sonuc['kart']['ad']} / {sonuc['varyant']['ad']}", "info")
+        return redirect(f"/stok/{sid}?sekme=varyant")
+    flash(req, f"Barkod {sonuc['kart']['barkod']} → {sonuc['kart']['ad']}", "info")
+    return redirect(f"/stok/{sid}")
+
+
+@route(r"/stok/hareket/yeni", methods=("GET", "POST"), roles=STOK_WRITE)
+def stok_hareket_yeni(req):
+    conn = db.get_conn()
+    stok_id = _i(req.q("stok_id"))
+    if req.method == "POST":
+        stok_id = _i(req.form.get("stok_id"))
+        depo_id = _i(req.form.get("depo_id"))
+        yon = req.form.get("yon")  # giris / cikis
+        islem_tipi = req.form.get("islem_tipi")
+        miktar = _f(req.form.get("miktar"))
+        if not stok_id or not depo_id or miktar <= 0:
+            flash(req, "Ürün, depo ve miktar (0'dan büyük) zorunludur.", "danger")
+            conn.close()
+            return redirect("/stok/hareket/yeni")
+        kart = conn.execute("SELECT * FROM stok_kart WHERE id=? AND sirket_id=?",
+                            (stok_id, db.sirket_id(req))).fetchone()
+        isaretli = miktar if yon == "giris" else -miktar
+        seri_nolar = (req.form.get("seri_nolar") or "").strip() if kart and kart["seri_lot_takibi"] else None
+        _hareket_olustur(
+            conn, req, stok_id, 0, depo_id, islem_tipi, isaretli,
+            birim_maliyet=_f(req.form.get("birim_maliyet")) or (kart["alis_fiyat"] if kart else None),
+            aciklama=(req.form.get("aciklama") or "").strip(),
+            belge_no=(req.form.get("belge_no") or "").strip() or None,
+            ilgili_modul="Stok",
+            seri_nolar=seri_nolar or None,
+            tarih=req.form.get("tarih") or None,
+        )
+        conn.commit()
+        audit(req, "stok_hareket", stok_id, islem_tipi, {"miktar": isaretli, "depo": depo_id})
+        if kart:
+            _kritik_uyari(req, conn, kart)
+        conn.close()
+        flash(req, "Stok hareketi kaydedildi.", "ok")
+        return redirect("/stok/hareketler")
+    stoklar = conn.execute(
+        "SELECT id, kod, ad, seri_lot_takibi, alis_fiyat FROM stok_kart WHERE aktif=1 AND sirket_id=? ORDER BY kod",
+        (db.sirket_id(req),)).fetchall()
+    secili = next((s for s in stoklar if s["id"] == stok_id), None)
+    conn.close()
+    return render_template("stok/hareket_form.html", stoklar=stoklar, depolar=db_tmp("depolar", req),
+                           giris_tipleri=GIRIS_TIPLERI, cikis_tipleri=CIKIS_TIPLERI,
+                           bugun=datetime.date.today().isoformat(), stok_id=stok_id,
+                           secili_stok_etiket=(f"{secili['kod']} — {secili['ad']}" if secili else ""),
+                           stok_seri=(secili["seri_lot_takibi"] if secili else 0))
+
+
+# --------------------------------------------------------------------------
+# STOK — sayım
+# --------------------------------------------------------------------------
+@route(r"/stok/sayim", methods=("GET", "POST"), roles=STOK_WRITE)
+def stok_sayim(req):
+    conn = db.get_conn()
+    if req.method == "POST":
+        depo_id = _i(req.form.get("depo_id"))
+        if not depo_id:
+            flash(req, "Depo seçin.", "danger")
+            conn.close()
+            return redirect("/stok/sayim")
+        cur = conn.execute(
+            "INSERT INTO stok_sayim(depo_id, aciklama, created_by, sirket_id) VALUES(?,?,?,?)",
+            (depo_id, (req.form.get("aciklama") or "").strip(), req.user["id"], db.sirket_id(req)),
+        )
+        sid = cur.lastrowid
+        conn.commit()
+        conn.close()
+        flash(req, "Sayım başlatıldı (taslak). Kalemleri girin.", "ok")
+        return redirect(f"/stok/sayim/{sid}")
+    sayimlar = conn.execute(
+        "SELECT ss.*, d.ad AS depo_ad, d.kod AS depo_kod, "
+        "(SELECT COUNT(*) FROM stok_sayim_kalem k WHERE k.sayim_id=ss.id) AS kalem_sayisi "
+        "FROM stok_sayim ss JOIN depo d ON d.id=ss.depo_id WHERE ss.sirket_id=? ORDER BY ss.id DESC",
+        (db.sirket_id(req),),
+    ).fetchall()
+    conn.close()
+    return render_template("stok/sayimlar.html", sayimlar=sayimlar, depolar=db_tmp("depolar", req))
+
+
+@route(r"/stok/sayim/(?P<sid>\d+)", methods=("GET", "POST"), roles=STOK_WRITE)
+def stok_sayim_detay(req, sid):
+    conn = db.get_conn()
+    sayim = conn.execute(
+        "SELECT ss.*, d.ad AS depo_ad, d.kod AS depo_kod FROM stok_sayim ss JOIN depo d ON d.id=ss.depo_id "
+        "WHERE ss.id=? AND ss.sirket_id=?",
+        (int(sid), db.sirket_id(req)),
+    ).fetchone()
+    if not sayim:
+        conn.close()
+        return redirect("/stok/sayim")
+
+    if req.method == "POST":  # kalem ekle
+        if sayim["durum"] != "Taslak":
+            flash(req, "Tamamlanmış sayıma kalem eklenemez.", "warn")
+            conn.close()
+            return redirect(f"/stok/sayim/{sid}")
+        stok_id = _i(req.form.get("stok_id"))
+        sayilan = _f(req.form.get("sayilan_miktar"))
+        if stok_id:
+            sistem = _seviye_toplam(conn, stok_id, depo_id=sayim["depo_id"])[0]
+            conn.execute(
+                "INSERT INTO stok_sayim_kalem(sayim_id, stok_id, varyant_id, sistem_miktar, sayilan_miktar, sirket_id) "
+                "VALUES(?,?,0,?,?,?)",
+                (int(sid), stok_id, sistem, sayilan, db.sirket_id(req)),
+            )
+            conn.commit()
+            flash(req, "Kalem eklendi.", "ok")
+        conn.close()
+        return redirect(f"/stok/sayim/{sid}")
+
+    kalemler = conn.execute(
+        "SELECT k.*, s.kod AS stok_kod, s.ad AS stok_ad FROM stok_sayim_kalem k "
+        "JOIN stok_kart s ON s.id=k.stok_id WHERE k.sayim_id=? ORDER BY k.id",
+        (int(sid),),
+    ).fetchall()
+    stoklar = conn.execute(
+        "SELECT id, kod, ad FROM stok_kart WHERE aktif=1 AND sirket_id=? ORDER BY kod",
+        (db.sirket_id(req),)).fetchall()
+    conn.close()
+    return render_template("stok/sayim_detay.html", sayim=sayim, kalemler=kalemler, stoklar=stoklar)
+
+
+@route(r"/stok/sayim/(?P<sid>\d+)/sil", methods=("POST",), roles=STOK_WRITE)
+def stok_sayim_sil(req, sid):
+    conn = db.get_conn()
+    s = conn.execute("SELECT * FROM stok_sayim WHERE id=? AND sirket_id=?",
+                     (int(sid), db.sirket_id(req))).fetchone()
+    if not s:
+        conn.close()
+        return redirect("/stok/sayim")
+    if s["durum"] != "Taslak":
+        conn.close()
+        flash(req, "Tamamlanmış sayım silinemez.", "danger")
+        return redirect(f"/stok/sayim/{sid}")
+    audit(req, "stok_sayim", int(sid), "sil", {"tarih": s["tarih"]})
+    conn.execute("DELETE FROM stok_sayim_kalem WHERE sayim_id=?", (int(sid),))
+    conn.execute("DELETE FROM stok_sayim WHERE id=?", (int(sid),))
+    conn.commit()
+    conn.close()
+    flash(req, "Sayım silindi.", "ok")
+    return redirect("/stok/sayim")
+
+
+@route(r"/stok/sayim/(?P<sid>\d+)/tamamla", methods=("POST",), roles=STOK_WRITE)
+def stok_sayim_tamamla(req, sid):
+    conn = db.get_conn()
+    sayim = conn.execute("SELECT * FROM stok_sayim WHERE id=? AND sirket_id=?",
+                         (int(sid), db.sirket_id(req))).fetchone()
+    if not sayim or sayim["durum"] != "Taslak":
+        conn.close()
+        return redirect("/stok/sayim")
+    kalemler = conn.execute("SELECT * FROM stok_sayim_kalem WHERE sayim_id=?", (int(sid),)).fetchall()
+    for k in kalemler:
+        fark = k["sayilan_miktar"] - k["sistem_miktar"]
+        if abs(fark) < 1e-9:
+            continue
+        kart = conn.execute("SELECT * FROM stok_kart WHERE id=?", (k["stok_id"],)).fetchone()
+        tip = "Sayım Farkı (+)" if fark > 0 else "Sayım Farkı (−)"
+        _hareket_olustur(
+            conn, req, k["stok_id"], k["varyant_id"], sayim["depo_id"], tip, fark,
+            birim_maliyet=kart["alis_fiyat"] if kart else None,
+            aciklama=f"Sayım düzeltmesi (sayım #{sid})",
+            ilgili_modul="Sayim", ilgili_kayit_id=int(sid),
+            tarih=sayim["tarih"],
+        )
+    conn.execute("UPDATE stok_sayim SET durum='Tamamlandi' WHERE id=?", (int(sid),))
+    conn.commit()
+    audit(req, "stok_sayim", int(sid), "tamamla")
+    conn.close()
+    flash(req, f"Sayım #{sid} tamamlandı; farklar stok hareketlerine işlendi.", "ok")
+    return redirect("/stok/sayim")
+
+
+# --------------------------------------------------------------------------
+# STOK2 — depolar arası transfer
+# --------------------------------------------------------------------------
+@route(r"/stok/transferler", methods=("GET", "POST"), roles=STOK_WRITE)
+def stok_transferler(req):
+    conn = db.get_conn()
+    if req.method == "POST":
+        kaynak = _i(req.form.get("kaynak_depo_id"))
+        hedef = _i(req.form.get("hedef_depo_id"))
+        if not kaynak or not hedef or kaynak == hedef:
+            flash(req, "Farklı bir kaynak ve hedef depo seçin.", "danger")
+            conn.close()
+            return redirect("/stok/transferler")
+        cur = conn.execute(
+            "INSERT INTO depo_transfer(kaynak_depo_id, hedef_depo_id, tarih, aciklama, created_by, sirket_id) VALUES(?,?,?,?,?,?)",
+            (kaynak, hedef, datetime.date.today().isoformat(), (req.form.get("aciklama") or "").strip(),
+             req.user["id"], db.sirket_id(req)),
+        )
+        tid = cur.lastrowid
+        conn.commit()
+        conn.close()
+        flash(req, "Transfer oluşturuldu (taslak).", "ok")
+        return redirect(f"/stok/transferler/{tid}")
+    transferler = conn.execute(
+        "SELECT t.*, d1.ad AS kaynak_ad, d1.kod AS kaynak_kod, d2.ad AS hedef_ad, d2.kod AS hedef_kod, "
+        "(SELECT COUNT(*) FROM depo_transfer_kalem k WHERE k.transfer_id=t.id) AS kalem_sayisi "
+        "FROM depo_transfer t JOIN depo d1 ON d1.id=t.kaynak_depo_id JOIN depo d2 ON d2.id=t.hedef_depo_id "
+        "WHERE t.sirket_id=? ORDER BY t.id DESC",
+        (db.sirket_id(req),),
+    ).fetchall()
+    conn.close()
+    return render_template("stok/transferler.html", transferler=transferler, depolar=db_tmp("depolar", req))
+
+
+@route(r"/stok/transferler/(?P<tid>\d+)", methods=("GET", "POST"), roles=STOK_WRITE)
+def stok_transfer_detay(req, tid):
+    conn = db.get_conn()
+    transfer = conn.execute(
+        "SELECT t.*, d1.ad AS kaynak_ad, d2.ad AS hedef_ad FROM depo_transfer t "
+        "JOIN depo d1 ON d1.id=t.kaynak_depo_id JOIN depo d2 ON d2.id=t.hedef_depo_id "
+        "WHERE t.id=? AND t.sirket_id=?",
+        (int(tid), db.sirket_id(req)),
+    ).fetchone()
+    if not transfer:
+        conn.close()
+        return redirect("/stok/transferler")
+
+    if req.method == "POST":
+        if transfer["durum"] != "Taslak":
+            flash(req, "Tamamlanmış transfere kalem eklenemez.", "warn")
+            conn.close()
+            return redirect(f"/stok/transferler/{tid}")
+        stok_id = _i(req.form.get("stok_id"))
+        miktar = _f(req.form.get("miktar"))
+        if stok_id and miktar > 0:
+            conn.execute(
+                "INSERT INTO depo_transfer_kalem(transfer_id, stok_id, varyant_id, miktar, sirket_id) VALUES(?,?,0,?,?)",
+                (int(tid), stok_id, miktar, db.sirket_id(req)),
+            )
+            conn.commit()
+            flash(req, "Kalem eklendi.", "ok")
+        conn.close()
+        return redirect(f"/stok/transferler/{tid}")
+
+    kalemler = conn.execute(
+        "SELECT k.*, s.kod AS stok_kod, s.ad AS stok_ad, "
+        "(SELECT COALESCE(SUM(miktar),0) FROM stok_seviye sv WHERE sv.stok_id=k.stok_id AND sv.depo_id=?) AS kaynak_stok "
+        "FROM depo_transfer_kalem k JOIN stok_kart s ON s.id=k.stok_id WHERE k.transfer_id=? ORDER BY k.id",
+        (transfer["kaynak_depo_id"], int(tid)),
+    ).fetchall()
+    stoklar = conn.execute(
+        "SELECT id, kod, ad FROM stok_kart WHERE aktif=1 AND sirket_id=? ORDER BY kod",
+        (db.sirket_id(req),)).fetchall()
+    conn.close()
+    return render_template("stok/transfer_detay.html", transfer=transfer, kalemler=kalemler, stoklar=stoklar)
+
+
+@route(r"/stok/transferler/(?P<tid>\d+)/sil", methods=("POST",), roles=STOK_WRITE)
+def stok_transfer_sil(req, tid):
+    conn = db.get_conn()
+    t = conn.execute("SELECT * FROM depo_transfer WHERE id=? AND sirket_id=?",
+                     (int(tid), db.sirket_id(req))).fetchone()
+    if not t:
+        conn.close()
+        return redirect("/stok/transferler")
+    if t["durum"] != "Taslak":
+        conn.close()
+        flash(req, "Tamamlanmış transfer silinemez.", "danger")
+        return redirect(f"/stok/transferler/{tid}")
+    audit(req, "depo_transfer", int(tid), "sil", {"tarih": t["tarih"]})
+    conn.execute("DELETE FROM depo_transfer_kalem WHERE transfer_id=?", (int(tid),))
+    conn.execute("DELETE FROM depo_transfer WHERE id=?", (int(tid),))
+    conn.commit()
+    conn.close()
+    flash(req, "Transfer silindi.", "ok")
+    return redirect("/stok/transferler")
+
+
+@route(r"/stok/transferler/(?P<tid>\d+)/tamamla", methods=("POST",), roles=STOK_WRITE)
+def stok_transfer_tamamla(req, tid):
+    conn = db.get_conn()
+    transfer = conn.execute("SELECT * FROM depo_transfer WHERE id=? AND sirket_id=?",
+                            (int(tid), db.sirket_id(req))).fetchone()
+    if not transfer or transfer["durum"] != "Taslak":
+        conn.close()
+        return redirect("/stok/transferler")
+    kalemler = conn.execute("SELECT * FROM depo_transfer_kalem WHERE transfer_id=?", (int(tid),)).fetchall()
+    hata = []
+    for k in kalemler:
+        mevcut = _seviye_toplam(conn, k["stok_id"], depo_id=transfer["kaynak_depo_id"])[0]
+        if mevcut < k["miktar"]:
+            kart = conn.execute("SELECT ad FROM stok_kart WHERE id=?", (k["stok_id"],)).fetchone()
+            hata.append(f"{kart['ad'] if kart else k['stok_id']} (kaynak stok {mevcut:g})")
+    if hata:
+        conn.close()
+        flash(req, "Yetersiz kaynak stoğu: " + "; ".join(hata), "danger")
+        return redirect(f"/stok/transferler/{tid}")
+
+    for k in kalemler:
+        kart = conn.execute("SELECT * FROM stok_kart WHERE id=?", (k["stok_id"],)).fetchone()
+        maliyet = kart["alis_fiyat"] if kart else None
+        _hareket_olustur(conn, req, k["stok_id"], k["varyant_id"], transfer["kaynak_depo_id"],
+                         "Depolar Arası Transfer", -k["miktar"], maliyet,
+                         f"{transfer['kaynak_depo_id']} → {transfer['hedef_depo_id']}",
+                         ilgili_modul="Transfer", ilgili_kayit_id=int(tid), tarih=transfer["tarih"])
+        _hareket_olustur(conn, req, k["stok_id"], k["varyant_id"], transfer["hedef_depo_id"],
+                         "Depolar Arası Transfer", k["miktar"], maliyet,
+                         f"{transfer['kaynak_depo_id']} → {transfer['hedef_depo_id']}",
+                         ilgili_modul="Transfer", ilgili_kayit_id=int(tid), tarih=transfer["tarih"])
+    conn.execute("UPDATE depo_transfer SET durum='Tamamlandi' WHERE id=?", (int(tid),))
+    conn.commit()
+    audit(req, "depo_transfer", int(tid), "tamamla")
+    conn.close()
+    flash(req, f"Transfer #{tid} tamamlandı.", "ok")
+    return redirect("/stok/transferler")
+
+
+# --------------------------------------------------------------------------
+# STOK2 — toplu fiyat/iskonto güncelleme
+# --------------------------------------------------------------------------
+@route(r"/stok/toplu", methods=("GET", "POST"), roles=FIYAT_WRITE)
+def stok_toplu(req):
+    conn = db.get_conn()
+    if req.method == "POST":
+        kapsam = req.form.get("kapsam") or "kategori"
+        alan = req.form.get("alan") or "satis_fiyat"
+        islem = req.form.get("islem") or "ayarla"
+        deger = _f(req.form.get("deger"))
+        etkilenen = 0
+        sid = db.sirket_id(req)
+
+        if kapsam == "secili":
+            ids = [int(x) for x in req.form_list.get("secili", []) if x.isdigit()]
+            if ids:
+                ph = ",".join("?" * len(ids))
+                if islem == "ayarla":
+                    etkilenen = _toplu_ayarla(conn, alan, deger, f"id IN ({ph}) AND sirket_id=?", ids + [sid])
+                else:
+                    etkilenen = _toplu_oransal(conn, alan, islem, deger, f"id IN ({ph}) AND sirket_id=?", ids + [sid])
+        else:
+            if kapsam == "kategori":
+                kid = _i(req.form.get("kategori_id"))
+                if kid:
+                    if islem == "ayarla":
+                        etkilenen = _toplu_ayarla(conn, alan, deger, "kategori_id=? AND sirket_id=?", [kid, sid])
+                    else:
+                        etkilenen = _toplu_oransal(conn, alan, islem, deger, "kategori_id=? AND sirket_id=?", [kid, sid])
+            elif kapsam == "marka":
+                mid = _i(req.form.get("marka_id"))
+                if mid:
+                    if islem == "ayarla":
+                        etkilenen = _toplu_ayarla(conn, alan, deger, "marka_id=? AND sirket_id=?", [mid, sid])
+                    else:
+                        etkilenen = _toplu_oransal(conn, alan, islem, deger, "marka_id=? AND sirket_id=?", [mid, sid])
+            elif kapsam == "tumu":
+                if islem == "ayarla":
+                    etkilenen = _toplu_ayarla(conn, alan, deger, "sirket_id=?", [sid])
+                else:
+                    etkilenen = _toplu_oransal(conn, alan, islem, deger, "sirket_id=?", [sid])
+        conn.commit()
+        audit(req, "stok_kart", 0, "toplu_guncelle", {"kapsam": kapsam, "alan": alan, "islem": islem, "deger": deger, "n": etkilenen})
+        conn.close()
+        flash(req, f"Toplu güncelleme tamamlandı: {etkilenen} ürün etkilendi.", "ok")
+        return redirect("/stok/toplu")
+
+    stoklar = conn.execute(
+        "SELECT id, kod, ad, satis_fiyat, alis_fiyat, iskonto_orani FROM stok_kart "
+        "WHERE aktif=1 AND sirket_id=? ORDER BY kod", (db.sirket_id(req),)).fetchall()
+    kategoriler = _kategoriler(conn, db.sirket_id(req))
+    markalar = _markalar(conn, db.sirket_id(req))
+    conn.close()
+    return render_template("stok/toplu.html", stoklar=stoklar, kategoriler=kategoriler, markalar=markalar)
+
+
+def _toplu_ayarla(conn, alan, deger, where, params):
+    if alan not in ("satis_fiyat", "alis_fiyat", "iskonto_orani", "kdv_orani"):
+        return 0
+    cur = conn.execute(f"UPDATE stok_kart SET {alan}=? WHERE {where}", [deger] + params)
+    return cur.rowcount
+
+
+def _toplu_oransal(conn, alan, islem, deger, where, params):
+    """artir/azalt: yüzdesel değişim."""
+    if alan not in ("satis_fiyat", "alis_fiyat"):
+        return 0
+    sign = 1 if islem == "artir" else -1
+    cur = conn.execute(
+        f"UPDATE stok_kart SET {alan} = MAX(0, {alan} * (1 + ?/100.0)) WHERE {where}",
+        [sign * deger] + params,
+    )
+    return cur.rowcount
+
+
+# --------------------------------------------------------------------------
+# STOK2 — depolar
+# --------------------------------------------------------------------------
+@route(r"/stok/depolar", methods=("GET", "POST"), roles=STOK_WRITE)
+def stok_depolar(req):
+    conn = db.get_conn()
+    if req.method == "POST":
+        ad = (req.form.get("ad") or "").strip()
+        kod = (req.form.get("kod") or "").strip()
+        tip = req.form.get("tip") or "Ana"
+        sube_id = izole_sube(req) or _i(req.form.get("sube_id"))
+        if ad:
+            if not kod:
+                nxt = conn.execute("SELECT COALESCE(MAX(id),0)+1 AS n FROM depo").fetchone()["n"]
+                kod = f"DP-{nxt:02d}"
+            conn.execute("INSERT INTO depo(kod, ad, tip, sube_id, sirket_id) VALUES(?,?,?,?,?)",
+                         (kod, ad, tip, sube_id, db.sirket_id(req)))
+            conn.commit()
+            flash(req, f"Depo eklendi: {ad}", "ok")
+        conn.close()
+        return redirect("/stok/depolar")
+    iz = izole_sube(req)
+    sid = db.sirket_id(req)
+    depo_where = ["d.sirket_id=?"]
+    depo_params = [sid]
+    if iz:
+        depo_where.append("d.sube_id=?")
+        depo_params.append(iz)
+    depolar = conn.execute(
+        "SELECT d.*, sb.ad AS sube_ad, "
+        "(SELECT COALESCE(SUM(miktar),0) FROM stok_seviye sv WHERE sv.depo_id=d.id) AS toplam_miktar, "
+        "(SELECT COUNT(*) FROM stok_seviye sv WHERE sv.depo_id=d.id) AS kalem_sayisi "
+        "FROM depo d LEFT JOIN sube sb ON sb.id=d.sube_id "
+        "WHERE " + " AND ".join(depo_where) + " ORDER BY d.id",
+        depo_params).fetchall()
+    subeler = conn.execute("SELECT id, ad, kod FROM sube WHERE aktif=1 AND sirket_id=? ORDER BY ad",
+                           (sid,)).fetchall()
+    conn.close()
+    return render_template("stok/depolar.html", depolar=depolar, subeler=subeler)
+
+
+def register():
+    return "stok"

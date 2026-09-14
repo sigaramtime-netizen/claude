@@ -1,0 +1,735 @@
+# CHANGELOG — Brn Teknoloji ERP
+
+Tüm kullanıcıya görünür değişiklikler burada sürüm + tarih ile izlenir.
+Uygulama içi sürüm etiketi her sayfanın alt bilgisinde görünür
+(`config.SURUM` + `config.SURUM_TARIHI`; her geliştirme partisinde artırılır).
+
+Biçim: [Keep a Changelog](https://keepachangelog.com) · Sürümleme: **v1.MINOR.PATCH**
+
+---
+
+## v1.42.0 — 2026-09-11
+
+### Eklenen — D011: Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod Girişi
+GM1 + KRAL revizyonuyla D011 kapsamı daraltıldı: **A (Kategori + Cari Grup)** + **C (hızlı barkod)**.
+Para birimi/birim ve satır bazlı KDV/çoklu döviz/tahsilat **D012–D013'e** ertelendi.
+
+- **`/api/kategori/ekle`** (POST, `STOK_WRITE`) — Marka deseni birebir: ad trim, boşsa 400 JSON,
+  büyük/küçük harf duyarsız + `sirket_id` izolasyonlu **idempotent** (aynı ad → mevcut id),
+  `INSERT kategori(ad, aktif=1, sirket_id)` + audit.
+- **`/api/cari_grup/ekle`** (POST, `WRITE_ROLES`) — aynı desen; `tip` varsayılan `'Bölge'`;
+  `INSERT cari_grup(ad, tip, aktif=1, sirket_id)` + audit.
+- **Form butonları:** `stok/form.html` → `＋ Kategori`; `cari/form.html` → `＋ Grup`
+  (prompt → fetch POST → select'e ekle + seç, sayfa yenilenmez — D007 `＋ Marka` birebir).
+- **Ayarlar → Tanımlar** (`/ayarlar/tanimlar`): kategori + cari grup listesi (kullanım sayısıyla)
+  + **pasifleştir/aktifleştir** (silme YOK — K32). Pasif kayıt yeni belgelerde seçilmez:
+  `_kategoriler` zaten `aktif=1` filtreli; cari form/lists `db_tmp_gruplar(aktif=True)`.
+- **Hızlı barkod (irsaliye/fatura/teklif):** POS deseni — form araç çubuğuna `barkod_sec` input +
+  `＋ Barkod`; yaz/okut + Enter → `action=barkod` → `stok.barkod_bul()` → satır otomatik eklenir
+  (bulunamazsa uyarı). Mevcut typeahead'e dokunulmadı. `teklif.py`'ye barkod action eklendi
+  (fatura/irsaliye'de zaten vardı, frontend eksikti).
+
+### Değişen
+- `cari.py _gruplar(aktif=)` parametresi; `db_tmp_gruplar(aktif=True)` form/liste dropdown'larında.
+
+### Testler
+- `test_d011_tanimlar_barkod.py` YENİ — kategori + cari grup ekle/idempotent, pasifleştir,
+  K1 izolasyonu, barkod Enter-ekle.
+- Tam regresyon (26 dosya) yeşil; yeni tablo/migration YOK; iş mantığı (K1–K32) değişmedi.
+
+---
+
+## v1.41.0 — 2026-09-11
+
+### Eklenen — D010: Uygulama İçi Yedekleme & Geri Yükleme (yalnız Admin)
+`kod/yedek_al.py` komut satırı aracını web'e taşıyan yedek yönetimi (YENİ TABLO YOK):
+
+- **`GET /ayarlar/yedekler`** — `data/yedek/` içindeki `erp-*.db` yedeklerini listeler
+  (ad, boyut, bütünlük durumu, tablo sayısı); Ayarlar hub'ına yeni kart eklendi.
+- **`POST /ayarlar/yedek/al`** — SQLite `.backup()` API'si ile tutarlı anlık görüntü +
+  `PRAGMA integrity_check` doğrulaması; başarısız yedek diske bırakılmaz.
+- **`GET /ayarlar/yedek/indir/<dosya>`** — indirme (octet-stream).
+- **`POST /ayarlar/yedek/<dosya>/sil`** ve **`.../geri-yukle`** — silme + geri yükleme.
+- **Geri yükleme güvenliği:** önce bütünlük doğrulanır (bozuk dosya REDDEDİLİR); sonra
+  otomatik **güvenlik yedeği** alınır; kopyalama sonrası WAL kalıntıları temizlenip şema/
+  migrasyon yeniden uygulanır ve bütünlük tekrar doğrulanır.
+- **Path traversal koruması:** dosya adı yalnızca `erp-YYYYMMDD-HHMMSS(-ffffff).db`
+  deseninde kabul edilir (`_gecerli`); `../` ve kodlanmış varyantları 403/404.
+- Tüm rotalar `roles=("Admin",)` — yedek tüm şirketlerin verisini içerdiği için K1 dışı.
+
+### Düzeltilen
+- `yedek_al.py`: aynı saniyede alınan iki yedek (örn. geri yükleme sırasındaki güvenlik
+  yedeği) aynı dosya adını alıp birbirini EZİYORDU → dosya adına mikrosaniye eklendi.
+- CLI `main()`: `yedek_al()` refactor'u sonrası hedef dizin `stat` sıralaması düzeltildi.
+
+### Testler
+- `test_d010_yedekleme.py` YENİ — **16/16** (al+doğrula, yetki 403, traversal reddi,
+  indir/sil, geri yükleme roundtrip + güvenlik yedeği, bozuk yedek reddi, FK/kalıntı).
+- Tam regresyon (25 dosya) **561/561**; iş mantığı/K1/rol davranışı değişmedi.
+
+---
+
+## v1.40.0 — 2026-09-11
+
+### Eklenen — D009: Güvenlik & Sağlamlık Sertleştirme
+İşlevsel kapsamın aksine giriş/oturum/dosya/SQL katmanına yönelik denetim + düzeltme turu
+(veri modeli/iş mantığı K1-K32 değişmedi):
+
+- **Kaba kuvvet koruması (`/giris`):** kullanıcı bazında 5 art arda hatalı denemeden sonra
+  15 dakika kilit; `kullanici` tablosuna `basarisiz_giris_sayisi` + `kilit_bitis`
+  (idempotent migrasyon; yeni FK yok). Başarılı girişte sayaç/kilit sıfırlanır.
+- **Oturum süresi:** 12 saat hareketsizlik sonrası oturum sunucu tarafında silinir
+  (`son_erisim` güncellenir — 5 dk throttle); token üretimi zaten
+  `secrets.token_urlsafe(32)` (kriptografik); `/cikis` sunucu tarafı silmeyi sürdürür.
+- **CSRF (hibrit, GM onaylı):** durum değiştiren POST'larda (1) `csrf` gizli alanı varsa
+  oturum token'ıyla eşleşmeli; (2) Origin/Referer başlığı varsa host eşleşmeli
+  (cross-site → 403); (3) ikisi de yoksa (eski test istekleri) geriye dönük uyumluluk için
+  dokunulmaz. Formlarda `csrf` gizli alanı zaten mevcuttu — sunucu tarafı doğrulama eklendi.
+- **SQL enjeksiyon taraması:** tüm sorgular parametrik (`?` placeholder); ham string
+  birleştirme YOK (f-string'ler yalnız sabit/whitelist kolon-adı + sabit WHERE parçaları).
+  Kod değişikliği gerekmedi — grep + test kanıtı.
+- **Dosya yükleme:** mevcut korumalar doğrulandı (uzantı beyaz listesi jpg/png/pdf,
+  sunucu tarafı 15 MB limit, sunucu üretimli güvenli dosya adı → path traversal yok);
+  testle kanıtlandı.
+
+### Testler
+- `test_d009_guvenlik.py` YENİ — **18/18** (SQL enjeksiyon, oturum, kaba kuvvet,
+  CSRF, dosya yükleme, yetki matrisi, FK).
+- Tam regresyon (24 dosya) **545/545**; K1/şirket izolasyonu + rol davranışı değişmedi.
+
+---
+
+## v1.39.0 — 2026-09-11
+
+### Eklenen — D007: Kullanıcı Bildirimleri & İyileştirmeler (10 madde)
+Kralın canlı testindeki 10 maddelik geri bildirim listesi tek pakette kapatıldı:
+
+- **KDV dahil/hariç açılır liste:** fatura/irsaliye/sipariş/teklif/POS formlarında
+  `checkbox` → `<select name="kdv_dahil">` (0=Hariç, 1=Dahil); PY parse
+  `in ("1","dahil","on")` geriye dönük uyumlu (F2 net-kuralı değişmedi).
+- **Stok marka inline ekleme (KRİTİK):** `POST /api/marka/ekle` (Ajax, JSON,
+  `sirket_id=db.sirket_id`, büyük/küçük harf duyarsız idempotent) + stok formunda
+  `＋ Marka` butonu (prompt → fetch → select'e ekle + seç, sayfa reload YOK) + Model alanı.
+- **Stok kart 8 ek alan + model:** `tevkifat_orani`, `istisna_kodu`, `grubu`, `ana_grup`,
+  `alt_grup`, `ozel_kod1/2/3`, `model` (idempotent `PRAGMA table_info` migrasyon);
+  form "Ek Bilgiler" kartı + detay tablosu + INSERT/UPDATE.
+- **Typeahead TTEC filtre bugu:** `api.py _stok_ara` ORDER BY sadeleştirildi
+  (`TTEC`→1 kayıt, `T`→geniş liste); seed'e `TV-40-TTEC-010` + `marka TTEC` eklendi.
+- **İrsaliye döviz (USD/EUR/GBP):** başlıkta para birimi + kur; cari hareket ve yevmiye
+  **TL karşılığı** işlenir (K18); detay/yazdırda `USD ≈ TL` notu.
+- **Eksi stok izni:** irsaliye stok kontrolü artık onayı bloke etmez, `[UYARI]` log basar;
+  bakiye eksiye iner, iptalde geri döner.
+- **Cari kartoteks typeahead** (`/kartoteks/cari` auto-submit) + **tüm cari/stok
+  select'leri typeahead** (kasa/banka/çek-senet/garanti/stok hareket/sayım/transfer).
+
+### Değişen
+- `stok_kart` +8 alan + `model`; `irsaliye.doviz_kur REAL DEFAULT 1` (idempotent migrasyon,
+  geriye dönük uyumlu; yeni FK/UNIQUE yok).
+- `test_f2_kdv.py` (10.1/10.3 checkbox→select) ve `test_f6_cila.py` (14 surum=1.39.0)
+  beklenen davranış değişikliğine uyarlandı.
+
+### Testler
+- `test_d007_iyilestirmeler.py` **30/30**; tam regresyon (23 dosya) **526/526**;
+  `PRAGMA foreign_key_check` boş; D007TEST kalıntısı yok.
+
+---
+
+## v1.38.0 — 2026-09-11
+
+### Eklenen — F6: Son Cila (bildirim API + yetki CSV + yazdırma + şube özeti + sağlık)
+Faz 1–5 sonrası kalan son eksikler kapatıldı (YENİ TABLO YOK, harici PDF kütüphanesi YOK):
+
+- **Bildirim API** `GET /api/bildirimler?tip=&okundu=` (roles=(), K1, limit 50;
+  `id,tip,baslik,mesaj,okundu,tarih`).
+- **Yetki Matrisi CSV** `GET /yetkiler/csv` (yalnız Admin) — `core.ROUTES` üzerinden
+  `Rota Pattern;Method;Modul;Yetki`.
+- **Ortak yazdırma:** fatura/irsaliye/sipariş `yazdir` rotaları tek `yazdir/belge.html`
+  şablonuna bağlandı (`@media print` + `window.print()`); `sube_koruma` ile başka şubeye
+  ait belge 403.
+- **Şube Özet API** `GET /api/sube/ozet` (K1 + `izole_sube`) + `/sube` listesinde belge rozetleri.
+- **Sağlık API** `GET /api/saglik` — `{durum, surum, tarih, db, sirket_id}`.
+
+### Testler
+- `test_f6_cila.py` **18/18**; tam regresyon (22 dosya) **496/496**.
+
+---
+
+## v1.37.0 — 2026-09-11
+
+### Eklenen — F5-C: Beyanname Hazırlık Raporları (KDV devreden + geçici vergi + nakit esaslı)
+Beyanname modülüne raporlama cilası (YENİ TABLO YOK; GİB'e gönderim YOK):
+
+- **Özet kartlar:** Hesaplanan / İndirilecek / Ödenecek / Devreden KDV + Geçici Vergi rozeti.
+- **KDV Oran Dağılımı** satış + alış ikili bar grafiği (inline SVG, matrah+KDV).
+- **API Özet Ucu** `GET /api/beyanname/ozet?ay=YYYY-MM` (roles=(), K1).
+- **KDV Devreden CSV** `GET /beyanname/kdv/csv?yil=YYYY` (12 aylık cetvel, `;` ayraçlı).
+- Eşleşmemiş gelen belge vurgusu (kırmızı badge) + denetim CSV yetkisi Admin/Muhasebe.
+
+### Testler
+- `test_f5c_beyanname.py` **18/18**; tam regresyon (21 dosya) **478/478**.
+
+---
+
+## v1.36.0 — 2026-09-11
+
+### Eklenen — F5-B: Demirbaş & Amortisman Raporlama
+Demirbaş modülüne raporlama cilası (YENİ TABLO YOK — mevcut 4 tablo üzerine):
+
+- **Amortisman Plan Önizleme** (gelecek 12 ay: üretilmiş gerçek / üretilmemiş tahmini).
+- **Kategori Bazlı Özet Kartları** (4 KPI + kategori→maliyet/birikmiş/net tablosu).
+- **Durum rozetleri** (Aktif/Tamamlandı/Satıldı·Hurda) + birikmiş çizgi grafik (inline SVG).
+- **API Özet Ucu** `GET /api/demirbas/ozet` (roles=(), K1).
+- **CSV Cetvel** `GET /demirbas/amortisman/csv?yil=YYYY` (`;` ayraçlı).
+
+### Testler
+- `test_f5b_demirbas.py` **18/18**; tam regresyon (20 dosya) **460/460**.
+
+---
+
+## v1.35.0 — 2026-09-11
+
+### Eklenen — F5-A: Finansal Analiz & Dashboard (bütçe + SVG kartları)
+Yönetici/Muhasebe'ye tek bakışta satış/kar/nakit/bütçe ekranı:
+
+- **`butce_hedef` tablosu** (YENİ TEK TABLO; `UNIQUE(sirket_id, yil, ay)` — K1).
+- **Satış Özeti Kartları** (dashboard üstü 6 kart) + dönemsel karşılaştırma (inline SVG bar)
+  + nakit akışı (son 30 gün kasa+banka net) + bütçe CRUD (`/finansal/butce`) + en çok analizleri.
+- **API** `GET /api/finansal/ozet?donem=aylik|haftalik` (roles=Admin/Muhasebe).
+- Kâr hesabı: fatura kalem tutar (TL) − (stok alış fiyatı × miktar) — satış fiyatı DEĞİL.
+
+### Testler
+- `test_f5a_finansal.py` **18/18**; tam regresyon (19 dosya) **442/442**.
+
+---
+
+## v1.34.0 — 2026-09-11
+
+### Eklenen — F4: e-Dönüşüm (Mock/Sandbox)
+Gerçek GİB/İzibiz bağlantısı YOK; mimari gerçek entegratöre hazır soyutlandı:
+
+- **Giden e-Belge:** satış faturası onayında otomatik `e_belge` Taslağı
+  (mükellef→e-Fatura EF / değil→e-Arşiv EA; tip elle seçilemez); satış/alış irsaliyesi
+  onayında otomatik e-İrsaliye (EI); durum makinesi
+  `Taslak → Gönderildi → Onaylandı / Reddedildi / İptal`; çifte üretim engelli.
+- **Mock entegratör:** `entegrator.py` (`MockEntegrator`, test modu 1 deterministik / 0
+  hash bazlı ~%10 red); ham belge UBL-TR benzeri XML `ek_dosya`'da (yeni tablo yok).
+- **Gelen kutuları:** `/e-fatura/gelen`, `/e-irsaliye/gelen`; tek tıkla Alış Faturası /
+  Alış İrsaliyesi Taslağı dönüştürme (kod→ad eşleşir, eşleşmeyen manuel satır).
+- **Ayarlar:** `/ayarlar/edonusum` + `entegrator_ayar` tablosu (K1: `sirket_id` PK).
+- **Altın kural:** e-Dönüşüm yalnız belgeleştirme — mali etki ÜRETMEZ (F1 korunur).
+
+### Testler
+- `test_f4_edonusum.py` **22/22**; tam regresyon (18 dosya) **424/424**.
+
+---
+
+## v1.33.0 — 2026-09-11
+
+### Eklenen — F3: Ortak Arama / Type-ahead Seçici
+Uzun `<select>` listeleri yerine **tek `/api/ara` endpoint'i + tek `static/js/typeahead.js`**
+bileşeni: yazarak anında filtreleme (kod/ad/barkod), klavye ile seçim (↑/↓/Enter/Esc),
+boş aramada ilk 20 kayıt, seçim hidden input'a KOD olarak yazılır.
+
+- **Backend (tek kaynak):** `api.py` → `GET /api/ara?tip=stok|cari&q=...&cari_tip=Alis|Satis`
+  (K1: her sorgu `sirket_id` ile süzülür; limit 20). Eski `/api/stok/ara` ve `/api/cari/ara`
+  aynı iç fonksiyonları çağıran ince sarmalayıcılar olarak korundu (eski testler/arayüzler).
+- **Frontend (tek dosya):** `static/js/typeahead.js` — `.typeahead` div'ini input+dropdown+hidden
+  input'a çevirir; seçimde `ta:select` olayı fırlatır; JS'siz fallback: hidden input form ile
+  POST edilir, edit modunda sunucudan gelen değer korunur.
+- **Kapsam (14 nokta):** Teklif/Sipariş/İrsaliye/Fatura cari başlığı + stok satırları (form-satir.js
+  `/api/ara` kullanır), POS ürün arama + müşteri, Satın Alma Talebi/Teklifi tedarikçi + stok,
+  Servis müşteri + parça, Bakım müşteri, CRM müşteri.
+- **DB şeması değişmedi**; F1/F2 (mali etki + KDV) mantığına dokunulmadı.
+
+---
+
+## v1.32.0 — 2026-09-11
+
+### Eklenen — F2: KDV Dahil / Hariç Fiyat Girişi
+Belge başlığına tek toggle: **"Fiyat Girişi: KDV Hariç / KDV Dahil"**. KDV dahil girilen tutar
+geriye ayrıştırılır; **DB'de her zaman NET (KDV hariç) tutulur** — mizan/kar-zarar bozulmaz.
+
+- Ortak yardımcılar `core.py`: `kdv_ayikla(brut, oran)` (net = brüt/(1+oran/100), 2 ondalık),
+  `kdv_hesapla(net, oran)` (kdv = net×oran/100 — brüt−net farkı değil), `kdv_dahil_fiyat(net, oran)`.
+- Kapsam: **teklif, sipariş, irsaliye, fatura, POS** — hepsi aynı ortak yardımcıyı kullanır.
+- Veri modeli: `teklif/siparis/irsaliye/fatura.kdv_dahil INTEGER DEFAULT 0` (+ idempotent migration).
+- Frontend: toggle işaretlenince satır fiyatları anında net↔brüt çevrilir (`form-satir.js` +
+  POS `satis.html`); düzenlemede belge kendi modunda açılır (brüt gösterim).
+- Fatura/İrsaliye form açıklamaları F1'e göre dinamikleştirildi (kaynaklı faturada
+  "mali etki irsaliyede oluştu" bilgisi).
+
+### Doğrulama
+- Yeni e2e: `test_f2_kdv.py` **34/34** (saf fonksiyonlar, dahil/hariç aynı net, mizan etkisi
+  eşitliği, irsaliye/sipariş/teklif/POS dahil giriş, toggle korunumu, KDV %0, yuvarlama,
+  FK/yetim bütünlüğü).
+- Tam regresyon: 16 paket / **372** kontrol yeşil, 0 başarısız (önceki 338 + F2 34).
+
+---
+
+## v1.31.0 — 2026-09-11
+
+### Eklenen — F1: Mali Etki "Zincirdeki İlk Belgede Bir Kere"
+İrsaliyeli akışta mali etki artık **irsaliye onayında** oluşur; kaynak irsaliyesi olan fatura
+yalnızca belgeleştirir (mükerrer mali etki üretmez).
+
+- **İrsaliye onayı:** cari hareket (`Satış İrsaliyesi` borç / `Alış İrsaliyesi` alacak) +
+  yevmiye fişi (`kaynak_modul='Irsaliye'`). Satış `120/600/391`; Alış stoklu `153+191/320`,
+  manuel `770+191/320`; Transfer mali etki üretmez.
+- **İrsaliye iptali:** kendisinden üretilmiş ve iptal edilmemiş fatura varsa iptal engellenir;
+  yoksa stok + cari + fiş geri alınır (net sıfır).
+- **Fatura onay/iptal:** `kaynak_irsaliye_id` dolu faturalarda `_cari_uygula` + `fis_uret/fis_sil`
+  atlanır; irsaliyesiz fatura ve POS akışı eskisiyle birebir aynı (dokunulmadı).
+- `muhasebe.toplu_uret`: kaynaklı faturaları atlar, onaylı irsaliyelere fiş üretir (idempotent).
+- Dashboard satış özeti hem `Satış Faturası` hem `Satış İrsaliyesi` hareketlerini kapsar.
+- Seed: `seed_irsaliye()` irsaliye cari hareketleri ekler; `seed_fatura()` kaynaklı faturaların
+  cari hareketlerini kaldırır (çifte kayıt yok).
+
+### Doğrulama
+- Yeni e2e: `test_f1_mali.py` **25/25** (irsaliye onay mali etkisi, kaynaklı fatura etkisizliği,
+  irsaliyesiz fatura regresyonu, alış stoklu/manuel fiş desenleri, transfer etkisizliği,
+  iptal engeli + geri alış, FK/yetim bütünlüğü).
+- Tam regresyon: 14 paket / **313** kontrol yeşil, 0 başarısız (POS 41 kontrol dahil).
+- Kullanıcı doğrulaması sonrası düzeltme: `templates/irsaliye/detay.html` "Faturalandı" ve
+  "Faturasız" banner metinleri F1 kuralına uyarlandı (mali etki irsaliyede, fatura belgeleştirir).
+
+---
+
+## v1.30.0 — 2026-09-11
+
+### Eklenen — E: CRM (Aktivite / Görev Takibi)
+Yeni modül `crm.py`: müşteri ilişkileri aktivite/görev takibi (arama · toplantı · görev · takip).
+
+- **Aktivite kartı** (`/crm`, `/crm/yeni`): tip, başlık, açıklama, cari (müşteri), sorumlu
+  kullanıcı, tarih/saat, hatırlatma tarihi, durum (Planlandı/Tamamlandı/İptal), öncelik
+  (Düşük/Normal/Yüksek); başlık+tarih zorunlu, `hatırlatma ≤ tarih` koruması.
+- **Durum akışı:** tek tıkla Planlandı ↔ Tamamlandı; ayrı İptal; düzenleme; silme.
+- **Hatırlatma:** `_crm_aktivite_tarama` günü gelen hatırlatmayı bildirim merkezine düşürür
+  (`hatirlatildi` bayrağıyla mükerrer üretim engellenir); aktivite silinince ilişkili bildirim
+  de temizlenir (`bildirim_sil` + `_BILDIRIM_EBEVEYN`).
+- **Rapor** (`/crm/rapor`): bugün/yaklaşan (≤3 gün)/günü geçen sayıları, tipe göre dağılım,
+  sorumlu bazında açık görevler, yaklaşan aktivite listesi.
+- Dashboard KPI kartı: bugünkü + günü geçen CRM aktiviteleri.
+- Yeni tablo: `crm_aktivite` (+ 5 indeks); seed `seed_crm()` (idempotent; 5 demo aktivite).
+- K1 şube/çoklu şirket izolasyonu (`sirket_id` + `sube_id`); yetki Admin·Satis·Servis
+  (Depo/Muhasebe → 403).
+
+### Doğrulama
+- Yeni e2e: `test_crm.py` **25/25** (liste, oluştur/doğrulama, düzenleme, durum akışı,
+  hatırlatma→bildirim + mükerrer engel, silme+bildirim temizliği, rapor, yetki 403,
+  şirket izolasyonu, FK + yetim bildirim + POSTEST taraması).
+- Tam regresyon: 14 paket / **313** kontrol yeşil, 0 başarısız (önceki 288 + CRM 25).
+
+---
+
+## v1.29.0 — 2026-09-11
+
+### Eklenen — D: Bakım Sözleşmesi
+Yeni modül `bakim.py`: cihaz bazlı periyodik bakım sözleşmeleri (cari + dönem + periyot +
+dönemlik bedel + kapsanan cihaz listesi).
+
+- **Sözleşme kartı** (`/bakim/sozlesmeler`, `/bakim/sozlesme/yeni`): cari, başlangıç/bitiş,
+  periyot (Aylık/3 Aylık/6 Aylık/Yıllık), dönemlik bedel, durum (Aktif/İptal); bitiş ≤ başlangıç
+  ve geçersiz cari korumaları.
+- **Cihaz listesi:** sözleşmeye stok kartı + seri no + açıklama ile cihaz eklenir/çıkarılır
+  (`bakim_sozlesme_cihaz`).
+- **Servis iş emri entegrasyonu:** sözleşme kapsamında tek tıkla servis kaydı açılır
+  (`servis_kayit.bakim_sozlesme_id` — yeni kolon); kapsam dahili kayıt `garanti_kapsami=1`,
+  işçilik ücretsiz, cihaz/seri no sözleşme cihazından taşınır.
+- **Periyodik fatura:** dönem başına tek **Onaylı Satış Faturası** (`_fatura_uret`);
+  cari borç + stok yok + yevmiye fişi (600/391) tek işlemde; aynı dönem için mükerrer üretim
+  `bakim_sozlesme_fatura(donem)` UNIQUE ile engellenir; üretilen dönemler rozet ile izlenir.
+- **Yenileme:** bitişe 30 gün kala "Yaklaşıyor" uyarısı; tek tıkla yeni döneme sözleşme
+  yenilenir (başlangıç = bitiş + 1 gün; cihazlar kopyalanır).
+- **Rapor** (`/bakim/rapor`): aktif/yaklaşan/dolan sözleşme sayıları + toplam dönemlik bedel;
+  durum türetimi `_durum_turet` (Aktif / Yaklaşıyor / Süresi Doldu).
+- Dashboard KPI kartı: aktif + yaklaşan + dolan bakım sözleşmeleri.
+- Yeni tablolar: `bakim_sozlesme`, `bakim_sozlesme_cihaz`, `bakim_sozlesme_fatura`;
+  seed `seed_bakim()` (idempotent; HZM-BKM-SOZL hizmet kartı + 2 demo sözleşme/cihaz).
+- K1 şube/çoklu şirket izolasyonu (`sirket_id` her satırda); depo/standart rol yetkisi
+  (yeni/düzenle/fatura/cihaz/iş emri/yenileme → 403).
+
+### Doğrulama
+- Yeni e2e: `test_bakim.py` **29/29** (sözleşme oluştur/listele, doğrulamalar, cihaz ekle/sil,
+  periyodik fatura + cari + yevmiye + mükerrer engeli, iş emri, yenileme, durum, rapor,
+  yetki 403, şirket izolasyonu, FK + yetim yevmiye + yetim bakim_fatura + yetim servis taraması).
+- Tam regresyon: 13 paket / **288** kontrol yeşil, 0 başarısız (önceki 259 + Bakım 29).
+
+---
+
+## v1.28.0 — 2026-09-11
+
+### Eklenen — C: POS (Satış Noktası)
+Yeni modül `pos.py`: terminal kartı + hızlı satış + bölünmüş ödeme + günlük rapor.
+POS satışı doğrudan **Onaylı Satış Faturası** üretir; cari + stok + kasa/banka + yevmiye
+tek istekte yazılır (manuel ikinci kayıt yok).
+
+- **Terminal kartı** (`/pos/terminaller`): ad + bağlı kasa (nakit) + bağlı banka
+  (kart/havale) + stok düşüm deposu + kart komisyonu % + maks. taksit; aktif/pasif.
+- **Hızlı satış** (`/pos`): canlı ürün arama (barkod/kod/ad; `/api/stok/ara`), sepet,
+  iskonto/KDV, taksit, vade; eşleşme yoksa manuel satır.
+- **Ödeme şekilleri:** Nakit · Kart · Havale · Veresiye · Çek/Senet; tek satışta
+  bölünmüş ödeme; ödenmeyen fark otomatik veresiyeye düşer, ödeme fazlası engellenir.
+- **Kart komisyonu otomatik:** bankaya net tutar yatar (`tutar − komisyon`); komisyon
+  `pos_satis_odeme.komisyon` + `pos_satis.komisyon_toplam`'da izlenir.
+- **Çek/Senet:** `cek_senet` (Alinan) + `muhasebe.cek_senkron` (cari ALACAK + yevmiye).
+- **Günlük rapor** (`/pos/rapor`): ödeme şekline göre tahsilat + terminal bazında ciro/komisyon.
+- **Varsayılan müşteri:** cari seçilmezse "Peşin (Perakende) Müşteri" (PER-001).
+- Yeni tablolar: `pos_terminal`, `pos_satis` (fatura 1:1), `pos_satis_odeme`; seed `seed_pos()`.
+- Satış zinciri tek çekirdekte (`pos_satis_olustur`): rota ve seed aynı kodu kullanır;
+  `seed_pos()` tekrarlanabilir 3 demo satış üretir (SF-2026-004/005/006).
+
+### Düzeltilen (kullanıcı geri bildirimi)
+- **Yetim yevmiye fişi koruması:** önceki kanıt paketindeki `data/erp.db` geliştirme artığıydı
+  (SF-2026-004 iki kez işlenmiş, ilk denemenin kasa/banka hareketleri silinirken yevmiye fişleri
+  temizlenmemişti → 100 KASA +10.000,00 / 102 BANKALAR +13.158,96 mizan şişmesi). `yevmiye.kaynak_id`
+  polimorfik referans olduğundan `PRAGMA foreign_key_check` bunu yakalamıyordu.
+  - `test_pos.py`'ye **11.3 yetim yevmiye taraması** eklendi (kaynak tablo geriye dönük kontrol).
+  - `data/erp.db` **sıfırdan temiz seed** ile yeniden üretildi (test artığı/ara kayıt yok).
+  - `test_pos.py` kurulumu idempotent yapıldı (önceki koşu kalıntılarını başta temizler).
+
+### Doğrulama
+- Yeni e2e: `test_pos.py` **41/41** (terminal kartı, bölünmüş ödeme, komisyon, veresiye,
+  çek/senet, korumalar, yetki, şirket izolasyonu, temizlik/FK + yetim yevmiye taraması).
+- Tam regresyon: 12 paket / **259** kontrol yeşil, 0 başarısız.
+
+---
+
+## v1.27.4 — 2026-09-11
+
+### Eklenen — Satın Alma Yönetimi · B3: Eksik Teslimatlar + Satın Alma Raporu
+Satın Alma Yönetimi kapanışı: eksik teslimat takibi, "kalanı kapat" ve dönem bazlı
+Satın Alma Raporu. Yeni tablo yok — tamamı mevcut `siparis_kalem` verisinden türetilir.
+
+- **Eksik Teslimatlar** (`/satin-alma/eksik-teslimatlar`): Alış siparişlerinde
+  `kalan = miktar − teslim_edilen − kalan_iptal > 0` olan satırlar; tedarikçi + "sadece
+  gecikmiş" filtreleri; eksik tutar (TRY = kalan × birim fiyat × kur) ve gecikme günü.
+- **"Kalanı kapat"** (`POST …/kapat`): kısmi teslimatın bilinçli kapatılması →
+  `siparis_kalem.kalan_iptal` (yeni kolon, `_migrate` ile eklendi); sipariş durumu
+  `_siparis_durum_turet` ile `Tamamlandı`'ya geçer; "geri al" ile açılır; audit + bildirim.
+- **Satın Alma Raporu** (`/satin-alma/rapor`): dönem + tedarikçi filtreli özet kartlar
+  (talep/teklif/SAP/irsaliye/fatura sayı + TRY tutar) + Alış siparişi dökümü + eksik
+  teslimat dökümü.
+- **Dashboard:** "Eksik Teslimat" KPI kartı (kalem + TRY tutar).
+- **NAV:** "Eksik Teslimatlar" + "Satın Alma Raporu" aktif (B3 ile "Satın Alma Yönetimi"
+  grubunun tüm öğeleri tamamlandı).
+
+### Düzeltilen
+- `satin_alma.py`'den gelen `|kur` filtresi `core.py`'de kayıtlı değildi → USD/EUR/GBP
+  teklif sayfaları 500 veriyordu (TRY satırlarında koşul içi olduğundan B2 testinde
+  yakalanmamıştı). `_kur` filtresi eklendi (4 ondalık, sembolsüz).
+- `irsaliye` tablosunda `doviz_kur` olmadığından rapor özeti 500 veriyordu → irsaliye
+  özeti kur=1 ile hesaplanır; döküm sorgusunda alias (`s.`) hatası düzeltildi.
+- Eksik kapatma rotasında `kalan <= 0` koruması "geri al" dalını da engelliyordu →
+  koruma yalnız "kapat" dalına taşındı.
+
+### Doğrulama
+- Yeni e2e: `test_eksik_teslimat.py` **21/21** (kısmi teslimat → eksik liste → kapat/geri
+  al/kısmi kapat/aşırı engel → filtre → rapor → izolasyon → USD `|kur` render regresyonu).
+- Regresyon 10 paket + B3 = **218/218** yeşil. FK 0, `integrity_check ok`, yetim
+  `stok_hareket` 0.
+
+---
+
+## v1.27.3 — 2026-09-10
+
+### Eklenen — Satın Alma Yönetimi · B2: Alınan Teklif + Teklif Değerlendirme
+Yeni modül `alinan_teklif.py` — tedarikçiden alınan teklifler, karşılaştırma ve kazanan
+tekliften Satın Alma Siparişi (SAP) üretimi.
+
+- **8 rota:** liste, yeni (`?talep_id=` ile talepten ön-doldurma), detay, düzenle, sil,
+  durum geçişi, siparişe dönüştür, karşılaştırma (+ talep seçici).
+- **Durum makinesi:** `Taslak → Alındı → Kazanan / Elendi → Siparişe Dönüştü`; tek kazanan
+  kuralı (yeni kazanan, aynı talepteki eski kazananı geri alır).
+- **Yetki:** giriş/düzenleme `Admin · Muhasebe · Satış · Depo`; kazanan seçme + SAP üretimi
+  `Admin · Muhasebe` (B1 onayıyla tutarlı).
+- **Talep bağı (kullanıcı kararı):** teklif isteğe bağlı olarak Satın Alma Talebi'ne bağlanır
+  ya da bağımsız alınır; talepten teklif oluştururken kalemler ön-doldurulur. Bir talep yalnız
+  bir kez SAP'ye dönüşür (tekliften dönüştürülünce talep de `Siparişe Dönüştü` olur).
+- **Döviz (orta kapsam, kullanıcı kararı):** `para_birimi` (TRY·USD·EUR·GBP) + `doviz_kur`
+  saklanır; kur boşsa `db.guncel_kur`; TRY karşılığı = genel_toplam × kur (karşılaştırma
+  sıralaması + SAP'ye sabitlenerek taşınır). Otomatik kur farkı fişi yok (Döviz Takip + manuel
+  muhasebe fişi ile izlenir).
+- **Veri modeli:** `alinan_teklif` + `alinan_teklif_kalem`; `teklif_no = ALT-{YYYY}-{NNN}`
+  (`UNIQUE(sirket_id, teklif_no)`, bağımsız sayaç); `donusen_siparis_id → siparis.id`;
+  `sirket_id` + `sube_id` damgası; çapraz-şirket stok/depo/tedarikçi koruması.
+- **Seed:** `ALT-2026-001` (Vestel), `ALT-2026-002` (Arçelik — aynı talebe alternatif),
+  `ALT-2026-003` (taslak) — karşılaştırma ekranı için hazır.
+- NAV: "Alınan Teklif" + "Teklif Değerlendirme" aktif; Dashboard Proje Durumu'na B2 satırı.
+
+### Düzeltilen
+- `ele` geçişinde `hedef.capitalize()` → `"Ele"` üretiyor, CHECK kısıtı `'Elendi'` bekliyordu
+  (500). Açık durum eşlemesi (`{"kazanan": "Kazanan", "ele": "Elendi"}`) kullanıldı.
+- `teklif_karsilastir.html` + `teklif_detay.html` "TRY Karşılığı" hücrelerinde çift `₺`:
+  `para` filtresi zaten `₺` ekliyor, şablonda bir kez daha `₺` yazılıydı. Fazlalık kaldırıldı
+  (kullanıcı bulgusu).
+
+### Doğrulama
+- Yeni e2e: `test_alinan_teklif.py` **23/23** (akış, yetki, tek kazanan, SAP, döviz, sayaç,
+  izolasyon, silme). Regresyon 9 paket + B2 = **197/197** yeşil. FK 0, `integrity_check ok`.
+
+---
+
+## v1.27.2 — 2026-09-10
+
+### Eklenen — Satın Alma Yönetimi · B1: Satın Alma Talebi
+Yeni "Satın Alma Yönetimi" menü grubu ve ilk modülü (Satın Alma Talebi) eklendi.
+Satın alma zincirinin mevcut Alış yönleri (SAP → Alış İrsaliyesi → Alış Faturası) korunur;
+talep bunlardan önce gelen iç onay adımıdır ve **mali etki üretmez**.
+
+- **Yeni modül `satin_alma.py`** — 7 rota: liste, yeni, detay, düzenle, sil, durum geçişi,
+  siparişe dönüştür.
+- **Durum makinesi:** `Taslak → Onay Bekliyor → Onaylandı / Reddedildi → Siparişe Dönüştü`.
+  Yalnız "Onaylandı" talepten, tek seferlik "Bekliyor" durumunda Satın Alma Siparişi (SAP) üretilir.
+- **Yetki:** yazma/oluşturma `Admin · Muhasebe · Satış · Depo`; onay `Admin · Muhasebe` (kullanıcı kararı).
+- **Yurt dışı dahil:** hafif `kaynak` alanı (`Yurt İçi` / `Yurt Dışı`); ağır ithalat/kur farkı B2'de.
+- **Veri modeli:** `satin_alma_talebi` + `satin_alma_talebi_kalem` tabloları;
+  `talep_no = SAT-{YYYY}-{NNN}` (şirket başına `UNIQUE(sirket_id, talep_no)`, bağımsız sayaç);
+  `donusen_siparis_id → siparis.id`; `sirket_id` + `sube_id` damgası (K1/K8/K10/K13).
+- **Seed:** `SAT-2026-001` (Onay Bekliyor) ve `SAT-2026-002` (Taslak) örnek talepleri.
+- Bildirim + audit her geçişte izlenir; stok/depo/tedarikçi çapraz-şirket referans koruması.
+- Dashboard Proje Durumu'na "Satın Alma Yönetimi — B1 Talep" satırı (Tamamlandı) eklendi.
+
+### Düzeltilen
+- Talep durum geçişi ve SAP üretiminde `audit`/`notify` çağrıları commit'ten önce yapılıyordu →
+  WAL üzerinde `database is locked` (500). Proje desenine (`conn.commit()` → audit/notify) çekildi.
+
+### Doğrulama
+- Yeni e2e: `test_satin_alma_talep.py` **23/23** (akış, yetki, dönüşüm, sayaç, izolasyon, red/sil).
+- Regresyon: 8 paket **151/151** yeşil. FK 0, `integrity_check ok`.
+
+---
+
+## v1.27.1 — 2026-09-10
+
+### Değişenler — Yazdırma / rapor şablonları yeni temaya uyarlandı
+v1.27.0'da `base.html` + modül ekranları açık Wolvox temasına çevrilmişti; ancak 8 **standalone**
+(extends'siz) yazdırma/rapor şablonu eski koyu lacivert (`#1f3864`) antet ve `-apple-system`
+fontuyla kalmıştı. Kullanıcı fatura/teklif yazdırıp PDF alırken ekrandan farklı bir belge görüyordu.
+
+- **4 belge yazdırma şablonu:** `fatura/yazdir.html`, `irsaliye/yazdir.html`, `siparis/yazdir.html`,
+  `teklif/yazdir.html` — antet/başlık `#1e4e79`, vurgu çizgisi `#3d85c6`, tablo başlığı yeni mavi,
+  çift satır zebra `#fafcfe`, Segoe UI, yeni gradyan "Yazdır/PDF" butonu.
+- **3 kartoteks/hareket raporu:** `kartoteks/cari_rapor.html`, `kartoteks/stok_rapor.html`,
+  `stok/hareket_rapor.html` — aynı palet; pos/neg renkleri `#1e8e3e` / `#c5221f`'e çekildi.
+- **Kasa fişi:** `kasa/fis.html` — Courier New yerine Segoe UI, `#1e4e79` başlık, `#c9d6e3` ayraç,
+  yeni gradyan buton.
+- Yalnız görsel katman değişti; tüm markup/Jinja/iş mantığı birebir korundu. Tema dışı davranış sıfır.
+
+### Doğrulama
+- 8 şablonun tamamı `200 OK` render (Jinja hatası yok); regresyon 151/151 yeşil.
+- `grep`: `#1f3864` ve `-apple-system` kalıntısı **0**.
+- 8 ekran görüntüsü piksel analizi: eski antet rengi `#1f3864` **0 piksel**, yeni `#1e4e79` mevcut.
+- DB: `sirket=[(1,'BRN')]`, `foreign_key_check → []`, `integrity_check → ok`.
+
+---
+
+### Değişenler — Arayüz Yeniden Tasarımı (Wolvox tarzı açık tema)
+Kullanıcının yüklediği `muhasebe-programi-demo.html` maketi **yalnızca görsel/taksonomi esin
+kaynağı** olarak kullanıldı; maket **doğrudan birleştirilmedi** (kendi localStorage veritabanı
+Python/SQLite ile çakıştığı için). Hiçbir iş mantığı maketten kopyalanmadı; tüm veriler mevcut
+route'lardan gelmeye devam ediyor.
+
+- **`static/style.css`:** koyu temadan Wolvox paletli açık temaya çevrildi — `--mavi #1e4e79`,
+  `--mavi2 #2a6aa5`, `--mavi3 #3d85c6`, `--acik #eaf2fa`, `--cizgi #c9d6e3`, `--koyu #12283f`;
+  Segoe UI 13px; eski şablonların kullandığı tüm `var(--*)` adları korundu (geriye dönük uyumlu).
+- **`templates/base.html` yeniden tasarlandı:** 44px koyu lacivert üst bar (şirket/şube bilgisi,
+  canlı saat, bildirim zili, şirket seçici, kullanıcı kutusu) · 30px mavi gradyan **menü çubuğu**
+  (açılır alt menüler, `admin_only` gruplar role göre gizlenir) · **kısayol şeridi** (15 modül) ·
+  240px beyaz **yan menü ağacı** (grup/alt grup bölümleri, aktif rota vurgusu) · sekmeli içerik ·
+  26px **durum çubuğu** (bağlantı, aktif şirket, kullanıcı, sürüm, saat) · mobil hamburger menü.
+- **`core.py` NAV taksonomisi yeniden düzenlendi:** Faz grupları yerine maketteki iş taksonomisi —
+  **Stok Yönetimi · Satış Yönetimi · Finans Yönetimi (Cari / Kasa-Banka / Çek-Senet / Döviz) ·
+  Servis Yönetimi · Mali & Analitik · Yönetim (Admin)**. 22 modülün tüm rota'ları (44 menü hedefi)
+  yeni ağaca yerleştirildi; veri modeli ve rota imzaları değişmedi.
+- Bileşen kütüphanesi maket diline yaklaştırıldı: açık gradyan butonlar, rozetler (`b-*`),
+  kart/panel, KPI kutuları, form ızgarası (`.frow`), canlı arama, flash, giriş ekranı ve
+  yazdırma sayfaları.
+
+### Doğrulama
+- 8 test paketi regresyon: **151/151 yeşil** (16+23+15+28+22+19+19+9).
+- 44 NAV hedefi tek tek `200 OK`; menü/rota eşleşmesi programatik doğrulandı.
+- `admin_only` gizleme: `satis` kullanıcısında "Yönetim" grubu menüde/sidebar'da görünmüyor.
+- DB son durum: `sirket=[(1,'BRN')]`, `foreign_key_check → []`, `integrity_check → ok`.
+
+### Düzeltme — Bildirim birikintisi (temiz seed disiplini)
+Sağ üstteki bildirim rozetinin **131** göstermesinin nedeni araştırıldı: e2e testleri canlı sunucuda
+belge onaylayıp (bildirim üretip) ardından ham SQL ile belgeyi sildiği için `bildirimler` tablosunda
+ebeveyn kaydı silinmiş **121 yetim bildirim** birikmişti (51 fatura + 49 irsaliye + 18 sipariş + 3
+çek/senet işlem + 1 karşılıksız çek). Yalnızca 10 bildirim gerçekti (seed + TCMB kuru + vade/kredi
+limit taramaları). Kalıcı çözüm:
+
+- **`db.bildirim_yetim_temizle()`** — ebeveyni silinmiş (yetim) bildirimleri beyaz liste üzerinden
+  idempotent temizler; `ilgili_id<=0` placeholder'lar ve bilinmeyen tablolar korunur.
+- **Dashboard açılışında otomatik temizlik** — panel her yüklendiğinde yetim bildirimler ayıklanır
+  (rozet kendi kendini onarır).
+- **`db.bildirim_sil()`** — silme rotalarına (fatura/irsaliye/sipariş/teklif/çek-senet) eklendi;
+  kayıt silinince bildirimleri de gider (mevcut `notlar`/`ekler` temizliği deseni).
+- **Roza şirket kapsamlı** — `render_template`'teki okunmamış sayacı artık aktif şirkete göre
+  filtreleniyor (`bildirimler` listesi ile aynı davranış).
+- Temizlik sonrası rozet **10** (6 uyarı + 4 bilgi) — tamamı seed verisine/TCMB'ye dayalı gerçek kayıt.
+
+### Düzeltme — Ekran incelemesi bulguları
+- **Cari listesi:** tedarikçi (net bakiye ≤ 0) satırlarında "Vade" hücresi artık "—" gösteriyor
+  ("0 gün" ifadesi yanıltıcıydı; vade yaşlandırması yalnız pozitif alacaklar için anlamlı).
+- **Dashboard Proje Durumu:** "Faz 6 — Cila: Devam ediyor" rozeti düzeltildi. Kapanış raporu
+  (`proje-kapanis-raporu.md`, 2026-09-08) Faz 1–6'yı tamamlanmış işaretlediği için Faz 6 →
+  **Tamamlandı**; kapanış sonrası işler ayrı satırlara taşındı: "İstekler (manuel satır ·
+  düzenleme/silme · çoklu şirket) → Tamamlandı" ve "Arayüz yenileme (v1.27.0) → Tamamlandı".
+
+### Kapanış
+- **v1.27.0 kullanıcı onayı aldı** (2026-09-10): 7 ekran görüntüsü tek tek incelendi; veriler
+  DB ile çapraz doğrulandı; cari "Vade" düzeltmesi ve Faz 6 rozeti hem kaynak kodda hem
+  ekranda bağımsız olarak onaylandı. Dashboard "Proje Durumu" panelindeki tüm satırlar yeşil.
+
+---
+
+## v1.26.0 — 2026-09-09
+
+### Eklenenler — Çoklu Şirket (İstek 3)
+Tek veritabanı + `sirket_id` kolonu mimarisi (Seçenek A) uçtan uca tamamlandı; oturum bazlı
+şirket geçişi, kullanıcı–şirket N-N üyelik ve şirket başına veri izolasyonu 22 modülde aktif.
+
+- **Veri modeli:** `sirket` + `kullanici_sirket` (N-N) tabloları; ~47 tabloya `sirket_id`;
+  `firma` tablosu kaldırıldı (veri `sirket.id=1`'de).
+- **17 composite UNIQUE:** belge no + master-data kodları `UNIQUE(sirket_id, kolon)`'a
+  dönüştürüldü — iki şirket aynı `TKF-2026-001`'i kendi sayacıyla üretebilir.
+- **Oturum bazlı geçiş:** üst barda şirket seçici; `POST /sirket/gec` N-N üyelik doğrulamalı;
+  Admin tüm şirketlere, diğer kullanıcılar yalnız üye olduklarına erişir.
+- **Modül izolasyonu (22 modül):** cari, stok, fatura, teklif, sipariş, irsaliye, kasa, banka,
+  çek/senet, servis, garanti, transfer, döviz, finansal, beyanname, demirbaş, kartoteks,
+  muhasebe, e-dönüşüm, notlar, ekler, şube + dashboard/tarama/bildirim/canlı arama.
+- **Çapraz şirket hedef-ID koruması:** kaydetme yollarında başka şirkete ait cari/stok/depo/kasa/
+  banka seçimi engellenir; belge zinciri kaynak kontrolleri (teklif→sipariş→irsaliye→fatura)
+  `sirket_id`'li.
+- **Şirket yönetimi (Ayarlar > Şirketler):** şirket CRUD + pasifleştirme (en az bir aktif şirket
+  korunur); yeni şirkete otomatik seed — **27 hesap Tekdüzen + 5 demirbaş kategorisi + varsayılan depo**.
+- **Kullanıcı N-N üyeliği:** kullanıcı formuna şirket checkbox seti + üyelik güncelleme rotası.
+
+### Değişenler
+- `db.sonraki_belge_no(..., sirket_id)` — belge sayaçları şirket başına bağımsız.
+- `db.guncel_kur(..., sid)`; 30'dan fazla yardımcı `sid=None` parametresi kazandı.
+- `core.notify(..., sirket_id)`; `core.firma()` artık aktif şirketten okur.
+- `ekler.ek_yukle` INSERT `sirket_id` damgalar; `ek_indir`/`ek_sil` şirket filtreli.
+
+### Testler
+- `test_coklu_sirket.py` (16/16) — DDL + core katmanı değişmezleri.
+- `test_izolasyon_e2e.py` (22/22) — "A şirketinde oluşan cari/stok/fatura B şirketinde görünmüyor"
+  (liste + JSON API + doğrudan detay) + ters yön.
+- `test_sirket_yonetimi.py` (19/19) — şirket CRUD + 27/5/1 seed + N-N üyelik + pasifleştirme guard.
+- `test_izolasyon_mali_e2e.py` (19/19) — kasa/banka + muhasebe izolasyonu: B'de A'nın kasa/banka
+  listesi boş, ekstre erişimi ve çapraz hareket yazma engelli (302/403), mizan şirket başına dengeli.
+- `test_belge_sayac_e2e.py` (9/9) — belge no şirket başına bağımsız sayaç (B `TKF-2026-001`'den
+  başlar) + composite UNIQUE bir arada durur + A'nın onaylı teklifinden B'de sipariş üretilemez.
+- Regresyon: silme 23/23, teklif/sipariş 15/15, manuel satır 28/28; DB `integrity_check → ok`,
+  mizan dengeli.
+
+---
+
+## v1.25.0 — 2026-09-08
+
+### Eklenenler — Düzenleme / Silme (İstek 2)
+Onaylanan silinebilirlik tablosu (`docs/silme-pasiflestirme-tablosu.md`) kural seti uçtan uca kodlandı;
+mevcut kilitler (onaylı belgeler, K15/K25 bağlı tahsilat/e-belge, pasifleştirme, audit) bozulmadan korundu.
+
+- **Teklif:** sunucu tarafı düzenleme kilidi (Onaylandı/Reddedildi) + silme — yalnız
+  Taslak/Reddedildi/Süresi Doldu **ve** siparişe dönüşmemişse (`kaynak_teklif_id` bağı yoksa).
+- **Sipariş:** silme — yalnız Bekliyor **ve** irsaliyeye dönüşmemişse.
+- **İrsaliye:** silme — yalnız Taslak (kalem + header + ek dosyalar temizlenir).
+- **Fatura:** silme — yalnız Taslak (kalem + header + notlar + ek dosyalar temizlenir).
+- **Çek/Senet:** silme — yalnız Bekliyor (ek dosyalar temizlenir).
+- **Cari:** silme — yalnız hiçbir referans yoksa (`db.referans_var`: tüm bildirilmiş FK'lar +
+  polimorfik `notlar`/`ek_dosya`); aksi halde "silinemez → pasifleştirin" uyarısı.
+- **Stok:** silme — yalnız hiçbir referans yoksa; jenerik `PRAGMA foreign_key_list` taraması
+  sayesinde ileride eklenen yeni FK tabloları da otomatik kapsanır.
+- **Stok2:** depo transferi ve sayım için Taslak silme (kalem + header); Tamamlandı silinemez.
+- **Servis:** tamamlanmış/teslim edilmiş/iadeli serviste parça silme engeli.
+- **Demirbaş:** zimmet veya amortisman kaydı varsa silme engeli (önceden zorla siliniyordu).
+- Tüm silme rotaları: şube izolasyonu (K1), `audit` izi ve `confirm` onaylı UI düğmeleriyle gelir.
+
+### Değişenler
+- `db.py`: `_POLIMORFIK_REF` + `referans_var()` yardımcısı (jenerik FK + polimorfik referans taraması).
+- `ekler.py`: `ek_temizle(conn, modul, kayit_id)` — belge silinince ek dosya kayıtları + fiziksel dosyalar.
+- `demirbas.py`: silme davranışı değişti — zimmet/amortisman varken silmek yerine engel + uyarı.
+
+### Testler
+- `test_silme_kurallari.py` (21/21): belge silme (Taslak/Bekliyor serbest, onaylı engelli),
+  cari/stok koşullu silme, transfer/sayım Taslak silme, demirbaş + servis engelleri,
+  audit izi doğrulaması.
+- Regresyon: `test_manuel_satir.py` (28/28) + `test_teklif_siparis_manuel.py` (15/15) temiz;
+  DB `integrity_check → ok`, mizan dengeli.
+
+---
+
+## v1.24.0 — 2026-09-08
+
+### Eklenenler
+- **Manuel (serbest metin) satır → Teklif ve Sipariş:** K33 mantığı belge zincirinin ilk iki
+  halkasına taşındı. Teklif ve Sipariş formları artık Fatura/İrsaliye ile aynı "satır içi
+  yazma + canlı arama" akışını kullanır; eşleşmeyen metin otomatik **manuel** satır olur.
+- Teklif/Sipariş manuel satırı stoğa dokunmaz; K9 iskonto önceliği manuel satırda geçerli değil;
+  belge genel toplamına aynen katılır.
+- **Sipariş K11 muafiyeti:** müşteri siparişindeki manuel satırlar stok rezervasyon/teslim
+  kontrolüne girmez (İrsaliye'deki ayrımın birebir uygulaması); onay/iptal/teslim yalnız
+  stoklu satırlar üzerinde işler.
+- Teklif/Sipariş kalemlerinde `birim` + `goruntu_adi` (görünen ad override) desteği; zincir
+  taşımaları (Teklif→Sipariş→İrsaliye) manuel satır açıklamasını ve görünen adı korur.
+- Teklif ve Sipariş formlarında cari alanı da yazarak aranabilir (canlı arama + K9 iskonto).
+
+### Değişenler
+- `teklif_kalem` / `siparis_kalem` tablolarına `stok_id` nullable + `birim` + `goruntu_adi`
+  kolonları eklendi (idempotent migrasyon; sipariş `teslim_edilen` verisi korunur).
+- Teklif/Sipariş detay ve yazdır şablonları görünen ad + manuel rozeti gösterecek şekilde
+  güncellendi.
+
+### Testler
+- `test_teklif_siparis_manuel.py` (15/15): Teklif ve Sipariş'te stok + manuel satır kaydı,
+  birim/görünen ad korunumu, stoğa dokunmama, K11 onay/iptal muafiyeti, zincir taşıması.
+- `test_manuel_satir.py` (28/28) regresyon temiz.
+
+---
+
+## v1.23.0 — 2026-09-08
+
+### Eklenenler
+- **Satır ekleme akışı (K34):** Fatura/İrsaliye formlarında `+` ile sınırsız boş satır;
+  ürün hücresinde stok adı/kodu/barkod üzerinden canlı arama; eşleşmeyen metin otomatik
+  **manuel** satır olur; cari alanı da yazarak aranabilir.
+- **Yarış durumu koruması:** canlı arama isteklerine sıra numarası; yalnız son isteğin
+  yanıtı uygulanır (eski yanıtlar yok sayılır).
+- **Stok kartı birim tipi:** belge kalemlerinde `birim` alanı; manuel satır girişinde birim
+  açılır listesi (Adet, Kutu, Paket, Çift, Takım, Metre, m², Kg, Lt, Top, Rulo).
+- **Belge satırında "görünen ad" override (`goruntu_adi`):** boşsa stok adı gösterilir;
+  doldurulursa yalnız o belgede (detay + yazdır) bu ad görünür. Stok kartındaki gerçek ad,
+  Kartoteks ve Genel Muhasebe'de aynen korunur.
+- **Cari ekstre (Kartoteks → Cari):** Özet/Detaylı görünüm (fatura/irsaliye içeriği açılır),
+  fiyat göster/gizle, KDV dahil/hariç toggle.
+- **Stok hareketlerinde "kiminle":** her hareketin cari/tedarikçi bağlantısı (belge üzerinden).
+- **Alış Geçmişi ekranı (`/stok/alis-gecmisi`):** hangi firmadan, kaç adet, ne fiyata alındığı;
+  KDV dahil/hariç kıyaslama.
+- **Stok kartında son 3 alış / son 3 satış** görünümü (fiyat kıyaslaması için).
+- **Sürüm takibi:** `CHANGELOG.md` + alt bilgide uygulama sürüm etiketi.
+- Alış irsaliyesi detayında "Faturasız" ipucu netleştirildi (irsaliyenin cari borç üretmediği,
+  borcun Alış Faturası onayıyla doğduğu açıklandı). K14 "faturasız" filtresi alış irsaliyelerini
+  de kapsıyor (doğrulandı).
+
+### Değişenler
+- `fatura_kalem` / `irsaliye_kalem` tablolarına `birim` ve `goruntu_adi` kolonları eklendi
+  (nullable; veri kaybı yok).
+- `stok.py` `BIRIMLER` listesi genişletildi.
+
+### Testler
+- `test_form_satir.js` (16), `test_form_satir2.js` (6), `test_form_satir3.js` (uçtan uca kayıt),
+  `test_form_satir4.js` (yarış durumu) — jsdom; `test_manuel_satir.py` regresyonu (28).
+
+---
+
+## Önceki sürümler (özet)
+
+- **v1.22 — Faz 5 kapanışı:** Demirbaş modülü.
+- **v1.21 — Faz 5:** Finansal Analiz (bütçe).
+- **v1.20 — Faz 5:** Beyanname.
+- **v1.19 — Faz 5:** Genel Muhasebe (hesap planı + yevmiye).
+- **v1.18 — Faz 5:** Transfer (depo→depo).
+- **v1.17 — Faz 5:** Kartoteks (cari + stok ledger, export/PDF).
+- **v1.16 ve öncesi — Faz 1–4:** Banka/Kasa/Stok/Şube/Cari, Teklif/Sipariş/İrsaliye/Fatura,
+  Çek-Senet, Döviz, Servis-Garanti, e-Dönüşüm; Faz 6.1 Sistem Yönetimi/Ayarlar.

@@ -1,0 +1,24 @@
+# -*- coding: utf-8 -*-
+"""Proje genel yapılandırma / yollar."""
+import os
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE, "data")
+DB_PATH = os.path.join(DATA_DIR, "erp.db")
+TEMPLATES_DIR = os.path.join(BASE, "templates")
+STATIC_DIR = os.path.join(BASE, "static")
+UPLOAD_DIR = os.path.join(BASE, "uploads")
+
+HOST = "0.0.0.0"
+PORT = int(os.environ.get("PORT", 8080))
+
+FIRMA_ADI = "Brn Teknoloji"
+FIRMA_ALT = "İşletme Yönetim Sistemi"
+
+# Uygulama sürümü — her geliştirme partisinde artırılır; CHANGELOG.md ile birlikte izlenir.
+SURUM = "1.42.0"
+SURUM_TARIHI = "2026-09-11"
+
+# K18 — Döviz Takip: desteklenen para birimleri (TRY temel; kurlar doviz_kur tablosunda).
+PARA_BIRIMLERI = ["TRY", "USD", "EUR", "GBP"]
+
