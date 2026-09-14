@@ -26,7 +26,8 @@ ve bizzat testleri çalıştırdı. Sonuç: tasarım ve uygulama sağlam.
   gerekirse mikro-kararlar GM1'e sorulmalı; "coder'ın hazırladığı aday" doğrudan
   yürürlüğe giremez.
 - Bu paketin içeriği sağlam çıktı; **ancak bu, "GM2 onayı" sürecini meşrulaştırmaz.**
-  Not: GM2 yedek-rolünün akıbeti KRAL kararına bırakılmıştır (bkz. ROL.md).
+  **KRAL kararı (2026-09-14):** GM2 yalnızca acil yedek (GM1 kotası dolunca); normal
+  akışta tek karar mercii GM1'dir (bkz. ROL.md).
 
 ---
 
