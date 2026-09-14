@@ -1,0 +1,746 @@
+# -*- coding: utf-8 -*-
+"""Brn Teknoloji ERP — uygulama giriş noktası (WSGI)."""
+import csv
+import datetime
+import io
+import json
+import secrets
+from wsgiref.simple_server import make_server
+
+import db
+from config import HOST, PORT, SURUM
+from core import (
+    app as wsgi_app,
+    route,
+    render_template,
+    redirect,
+    set_cookie,
+    flash,
+    audit,
+    notify,
+    izole_sube,
+    Response,
+)
+import cari  # noqa: F401  — rota kayıtları import ile yapılır
+import stok  # noqa: F401  — Stok/Stok2 modülü rota kayıtları
+import kasa  # noqa: F401  — Kasa modülü rota kayıtları
+import banka  # noqa: F401  — Banka modülü rota kayıtları
+import sube  # noqa: F401  — Şube/Depo modülü rota kayıtları
+import teklif  # noqa: F401  — Teklif modülü rota kayıtları (Faz 2)
+import siparis  # noqa: F401  — Sipariş modülü rota kayıtları (Faz 2)
+import irsaliye  # noqa: F401  — İrsaliye modülü rota kayıtları (Faz 2)
+import fatura  # noqa: F401  — Fatura modülü rota kayıtları (Faz 2)
+import cek_senet  # noqa: F401  — Çek/Senet modülü rota kayıtları (Faz 2)
+import doviz  # noqa: F401  — Döviz Takip modülü rota kayıtları (Faz 2 kapanışı)
+import ekler  # noqa: F401  — Ek dosya (attachment) rota kayıtları
+import servis  # noqa: F401  — Servis Takip modülü rota kayıtları (Faz 3)
+import garanti  # noqa: F401  — Seri No-Garanti modülü rota kayıtları (Faz 3)
+import notlar  # noqa: F401  — Notlar modülü rota kayıtları (Faz 3)
+import edonusum  # noqa: F401  — e-Dönüşüm modülü rota kayıtları (Faz 4)
+import muhasebe  # noqa: F401  — Genel Muhasebe modülü rota kayıtları (Faz 5)
+import kartoteks  # noqa: F401  — Kartoteks modülü rota kayıtları (Faz 5)
+import transfer  # noqa: F401  — Transfer modülü rota kayıtları (Faz 5)
+import finansal  # noqa: F401  — Finansal Analiz modülü rota kayıtları (Faz 5)
+import beyanname  # noqa: F401  — Beyanname modülü rota kayıtları (Faz 5)
+import demirbas  # noqa: F401  — Demirbaş modülü rota kayıtları (Faz 5)
+import ayarlar  # noqa: F401  — Sistem Yönetimi (Ayarlar) rota kayıtları (Faz 6.1)
+import api  # noqa: F401  — Canlı arama (autocomplete) JSON uçları
+import sirket  # noqa: F401  — Çoklu şirket: oturum bazlı geçiş rotası (İstek 3)
+import satin_alma  # noqa: F401  — Satın Alma Talebi modülü rota kayıtları (B1)
+import alinan_teklif  # noqa: F401  — Alınan Teklif + Teklif Değerlendirme (B2)
+import eksik_teslimat  # noqa: F401  — Eksik Teslimatlar + Satın Alma Raporu (B3)
+import pos  # noqa: F401  — POS (Satış Noktası) modülü rota kayıtları (C)
+import bakim  # noqa: F401  — Bakım Sözleşmesi modülü rota kayıtları (D)
+import crm  # noqa: F401  — CRM (Aktivite/Görev takibi) modülü rota kayıtları (E)
+import yedek  # noqa: F401  — Uygulama içi yedekleme & geri yükleme (D010)
+
+AYLAR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+         "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+GUNLER = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+
+
+def _bugun_tr():
+    b = datetime.date.today()
+    return f"{b.day} {AYLAR[b.month - 1]} {b.year}, {GUNLER[b.weekday()]}"
+
+
+def _hatirlatma_tarama(sid=None):
+    """Vadesi gelen not hatırlatmalarını bildirime çevir."""
+    conn = db.get_conn()
+    extra = " AND sirket_id=?" if sid is not None else ""
+    args = [sid] if sid is not None else []
+    rows = conn.execute(
+        "SELECT id, metin, ilgili_tablo, ilgili_id FROM notlar "
+        "WHERE hatirlatma IS NOT NULL AND hatirlatildi=0 AND hatirlatma <= date('now','localtime')"
+        + extra, args
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) "
+            "VALUES('hatirlatma','🔔 Hatırlatma', ?, ?, ?, ?)",
+            (r["metin"][:200], r["ilgili_tablo"], r["ilgili_id"],
+             sid if sid is not None else 1),
+        )
+        conn.execute("UPDATE notlar SET hatirlatildi=1 WHERE id=?", (r["id"],))
+    conn.commit()
+    conn.close()
+
+
+def _crm_aktivite_tarama(sid=None):
+    """CRM aktivite hatırlatmaları: günü gelen (hatirlatma_tarihi ≤ bugün) aktiviteleri
+    bildirime çevir. `hatirlatildi` bayrağı aynı aktivite için tekrar üretmeyi engeller;
+    düzenlemede bayrak sıfırlanır (yeni hatırlatma yeniden bildirilir)."""
+    conn = db.get_conn()
+    extra = " AND sirket_id=?" if sid is not None else ""
+    args = [sid] if sid is not None else []
+    rows = conn.execute(
+        "SELECT id, aktivite_no, baslik FROM crm_aktivite "
+        "WHERE hatirlatildi=0 AND durum='Planlandı' AND hatirlatma_tarihi IS NOT NULL "
+        "AND hatirlatma_tarihi <= date('now','localtime')" + extra, args
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) "
+            "VALUES('hatirlatma','📞 CRM hatırlatma', ?, 'crm_aktivite', ?, ?)",
+            (f"{r['aktivite_no']} — {r['baslik'][:120]}", r["id"], sid if sid is not None else 1),
+        )
+        conn.execute("UPDATE crm_aktivite SET hatirlatildi=1 WHERE id=?", (r["id"],))
+    conn.commit()
+    conn.close()
+
+
+def _teklif_tarama(sid=None):
+    """Teklif geçerlilik takibi: süresi dolanı 'Süresi Doldu'ya çevir, yaklaşanı bildir."""
+    bugun = datetime.date.today()
+    esik = (bugun + datetime.timedelta(days=3)).isoformat()
+    conn = db.get_conn()
+    extra = " AND sirket_id=?" if sid is not None else ""
+    args = [bugun.isoformat()] + ([sid] if sid is not None else [])
+    dolanlar = conn.execute(
+        "SELECT id, teklif_no FROM teklif WHERE durum IN ('Gönderildi','Taslak') "
+        "AND gecerlilik_tarihi IS NOT NULL AND gecerlilik_tarihi < ?" + extra,
+        args,
+    ).fetchall()
+    for r in dolanlar:
+        conn.execute("UPDATE teklif SET durum='Süresi Doldu' WHERE id=?", (r["id"],))
+        conn.execute(
+            "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) VALUES(?,?,?,?,?,?)",
+            ("uyari", "Teklif süresi doldu",
+             f"{r['teklif_no']} nolu teklifin geçerlilik tarihi doldu; durum 'Süresi Doldu' yapıldı.",
+             "teklif", r["id"], sid if sid is not None else 1),
+        )
+    extra = " AND sirket_id=?" if sid is not None else ""
+    args2 = [bugun.isoformat(), esik] + ([sid] if sid is not None else [])
+    yaklasan = conn.execute(
+        "SELECT id, teklif_no, gecerlilik_tarihi FROM teklif WHERE durum='Gönderildi' "
+        "AND gecerlilik_tarihi IS NOT NULL AND gecerlilik_tarihi >= ? AND gecerlilik_tarihi <= ?"
+        + extra, args2,
+    ).fetchall()
+    for r in yaklasan:
+        var = conn.execute(
+            "SELECT COUNT(*) c FROM bildirimler WHERE ilgili_tablo='teklif' AND ilgili_id=? AND okundu=0",
+            (r["id"],),
+        ).fetchone()["c"]
+        if var == 0:
+            conn.execute(
+                "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) VALUES(?,?,?,?,?,?)",
+                ("bilgi", "Teklif geçerlilik tarihi yaklaşıyor",
+                 f"{r['teklif_no']} nolu teklif {r['gecerlilik_tarihi']} tarihine kadar geçerli.",
+                 "teklif", r["id"], sid if sid is not None else 1),
+            )
+    conn.commit()
+    conn.close()
+
+
+def _cek_vade_tarama(sid=None):
+    """Çek/senet vade takibi: vadesi geçen ve yaklaşan (≤3 gün) için bildirim üret.
+
+    Teklif geçerlilik takibiyle aynı desen (bildirim altyapısı Faz 1'den hazır);
+    okunmamış bildirim varsa aynı çek/senet için tekrar üretmez.
+    """
+    bugun = datetime.date.today()
+    esik = (bugun + datetime.timedelta(days=3)).isoformat()
+    conn = db.get_conn()
+    extra = " AND sirket_id=?" if sid is not None else ""
+    args = [bugun.isoformat()] + ([sid] if sid is not None else [])
+    gecenler = conn.execute(
+        "SELECT id, no, vade, tur FROM cek_senet "
+        "WHERE durum IN ('Bekliyor','Tahsile Verildi') AND vade < ?" + extra,
+        args,
+    ).fetchall()
+    for r in gecenler:
+        var = conn.execute(
+            "SELECT COUNT(*) c FROM bildirimler WHERE ilgili_tablo='cek_senet' AND ilgili_id=? "
+            "AND okundu=0 AND baslik='Çek/senet vadesi geçti'", (r["id"],),
+        ).fetchone()["c"]
+        if var == 0:
+            conn.execute(
+                "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) VALUES(?,?,?,?,?,?)",
+                ("uyari", "Çek/senet vadesi geçti",
+                 f"{r['no']} nolu {r['tur'].lower()} vadesi ({r['vade']}) geçti; tahsil/öde takibi bekliyor.",
+                 "cek_senet", r["id"], sid if sid is not None else 1))
+    extra = " AND sirket_id=?" if sid is not None else ""
+    args2 = [bugun.isoformat(), esik] + ([sid] if sid is not None else [])
+    yaklasan = conn.execute(
+        "SELECT id, no, vade, tur FROM cek_senet "
+        "WHERE durum IN ('Bekliyor','Tahsile Verildi') AND vade >= ? AND vade <= ?" + extra,
+        args2,
+    ).fetchall()
+    for r in yaklasan:
+        var = conn.execute(
+            "SELECT COUNT(*) c FROM bildirimler WHERE ilgili_tablo='cek_senet' AND ilgili_id=? "
+            "AND okundu=0 AND baslik='Çek/senet vadesi yaklaşıyor'", (r["id"],),
+        ).fetchone()["c"]
+        if var == 0:
+            conn.execute(
+                "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) VALUES(?,?,?,?,?,?)",
+                ("bilgi", "Çek/senet vadesi yaklaşıyor",
+                 f"{r['no']} nolu {r['tur'].lower()} {r['vade']} tarihinde vadeli (3 gün içinde).",
+                 "cek_senet", r["id"], sid if sid is not None else 1))
+    conn.commit()
+    conn.close()
+
+
+def _garanti_tarama(sid=None):
+    """Garanti takibi: süresi dolan ve yaklaşan (≤30 gün) seriler için bildirim üret.
+
+    Teklif/Çek-Senet taramalarıyla aynı desen; okunmamış bildirim varsa tekrar üretmez.
+    """
+    bugun = datetime.date.today()
+    esik = (bugun + datetime.timedelta(days=30)).isoformat()
+    conn = db.get_conn()
+    extra = " AND s.sirket_id=?" if sid is not None else ""
+    args = [sid] if sid is not None else []
+    seriler = conn.execute(
+        "SELECT s.id, s.seri_no, s.garanti_bitis, k.ad AS stok_ad FROM stok_seri s "
+        "JOIN stok_kart k ON k.id=s.stok_id "
+        "WHERE s.durum='Satıldı' AND s.garanti_bitis IS NOT NULL" + extra, args
+    ).fetchall()
+    for r in seriler:
+        bit = r["garanti_bitis"]
+        if bit < bugun.isoformat():
+            var = conn.execute(
+                "SELECT COUNT(*) c FROM bildirimler WHERE ilgili_tablo='stok_seri' AND ilgili_id=? "
+                "AND okundu=0 AND baslik='Garanti süresi doldu'", (r["id"],)).fetchone()["c"]
+            if var == 0:
+                conn.execute(
+                    "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) VALUES(?,?,?,?,?,?)",
+                    ("uyari", "Garanti süresi doldu",
+                     f"{r['stok_ad']} ({r['seri_no']}) garantisi {bit} tarihinde sona erdi.",
+                     "stok_seri", r["id"], sid if sid is not None else 1))
+        elif bit <= esik:
+            kalan = (datetime.date.fromisoformat(bit) - bugun).days
+            var = conn.execute(
+                "SELECT COUNT(*) c FROM bildirimler WHERE ilgili_tablo='stok_seri' AND ilgili_id=? "
+                "AND okundu=0 AND baslik='Garanti süresi yaklaşıyor'", (r["id"],)).fetchone()["c"]
+            if var == 0:
+                conn.execute(
+                    "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) VALUES(?,?,?,?,?,?)",
+                    ("bilgi", "Garanti süresi yaklaşıyor",
+                     f"{r['stok_ad']} ({r['seri_no']}) garantisine {kalan} gün kaldı ({bit}).",
+                     "stok_seri", r["id"], sid if sid is not None else 1))
+    conn.commit()
+    conn.close()
+
+
+def _cari_vade_tarama(sid=None):
+    """Faz 6 — ödenmemiş/vadesi geçen cari bakiyesi için otomatik uyarı (şartname satır 23).
+
+    Çek/senet ve garanti taramalarıyla aynı desen: okunmamış bildirim varsa tekrar üretmez.
+    Aktif carilerin vadesi geçen net alacağı (müşteri borcu) için uyarı üretir.
+    """
+    bugun = datetime.date.today()
+    conn = db.get_conn()
+    extra = " AND sirket_id=?" if sid is not None else ""
+    args = [sid] if sid is not None else []
+    cariler = conn.execute(f"SELECT id, unvan FROM cari_kart WHERE aktif=1{extra}", args).fetchall()
+    for r in cariler:
+        a = cari._aging(conn, r["id"], bugun)
+        if (a["vadesi_gecen"] or 0.0) <= 0.005:
+            continue
+        var = conn.execute(
+            "SELECT COUNT(*) c FROM bildirimler WHERE ilgili_tablo='cari_kart' AND ilgili_id=? "
+            "AND okundu=0 AND baslik='Cari vadesi geçen bakiye'", (r["id"],)).fetchone()["c"]
+        if var == 0:
+            tutar = f"{a['vadesi_gecen']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            conn.execute(
+                "INSERT INTO bildirimler(tip, baslik, mesaj, ilgili_tablo, ilgili_id, sirket_id) "
+                "VALUES('uyari','Cari vadesi geçen bakiye',?, 'cari_kart', ?, ?)",
+                (f"{r['unvan']} — vadesi geçen bakiye {tutar} ₺ "
+                 f"(en geç {a['gecikme_gun']} gün).", r["id"], sid if sid is not None else 1))
+    conn.commit()
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# Kimlik doğrulama
+# --------------------------------------------------------------------------
+BRUTE_ESIK = 5            # bu kadar art arda hatalı denemeden sonra kilit
+BRUTE_KILIT_DAKIKA = 15   # kilit süresi (dakika)
+
+
+def _simdi():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@route(r"/giris", methods=("GET", "POST"))
+def giris(req):
+    if req.user:
+        return redirect("/")
+    if req.method == "POST":
+        kadi = (req.form.get("kullanici_adi") or "").strip()
+        sifre = req.form.get("sifre") or ""
+        nxt = req.form.get("next") or "/"
+        conn = db.get_conn()
+        u = conn.execute("SELECT * FROM kullanici WHERE kullanici_adi=?", (kadi,)).fetchone()
+        conn.close()
+        if u and u["aktif"]:
+            # D009 — kaba kuvvet: kilit bitiş süresi dolmadıysa girişe izin verme.
+            if u["kilit_bitis"] and u["kilit_bitis"] > _simdi():
+                flash(req, "Çok fazla hatalı deneme. Hesabınız 15 dakika kilitlendi.", "danger")
+                return redirect("/giris")
+            if db.dogrula_sifre(sifre, u["sifre_hash"]):
+                # Başarılı giriş: sayacı ve kilidi sıfırla.
+                conn = db.get_conn()
+                if u["basarisiz_giris_sayisi"] or u["kilit_bitis"]:
+                    conn.execute("UPDATE kullanici SET basarisiz_giris_sayisi=0, kilit_bitis=NULL WHERE id=?",
+                                 (u["id"],))
+                    conn.commit()
+                conn.close()
+                # Eski SHA-256 formatındaki hash'i girişte sessizce PBKDF2'ye yükselt.
+                if not db.hash_guncel_mi(u["sifre_hash"]):
+                    conn = db.get_conn()
+                    conn.execute("UPDATE kullanici SET sifre_hash=? WHERE id=?",
+                                 (db.hash_sifre(sifre), u["id"]))
+                    conn.commit()
+                    conn.close()
+                token = secrets.token_urlsafe(32)
+                conn = db.get_conn()
+                # İstek 3: girişte aktif şirketi kullanıcının ilk yetkili şirketine ata
+                # (oturum bazlı geçişin başlangıç değeri; sonrasında /sirket/gec ile değişir).
+                if u["rol"] == "Admin":
+                    ilk = conn.execute(
+                        "SELECT id FROM sirket WHERE aktif=1 ORDER BY id LIMIT 1").fetchone()
+                else:
+                    ilk = conn.execute(
+                        "SELECT sirket_id AS id FROM kullanici_sirket WHERE kullanici_id=? "
+                        "ORDER BY sirket_id LIMIT 1", (u["id"],)).fetchone()
+                conn.execute("INSERT INTO sessionler(token, kullanici_id, sirket_id) VALUES(?,?,?)",
+                             (token, u["id"], ilk["id"] if ilk else None))
+                conn.commit()
+                conn.close()
+                loc = nxt if nxt.startswith("/") else "/"
+                if req.is_https():
+                    # Çerez engelliyse URL-token yedeği ile oturumu taşı (önizleme iframe'i).
+                    loc = loc + ("&" if "?" in loc else "?") + "sid=" + token
+                resp = redirect(loc)
+                set_cookie(resp, "erp_session", token, max_age=60 * 60 * 12, https=req.is_https())
+                return resp
+            # Hatalı şifre: sayacı artır, eşiğe ulaşırsa kilitle.
+            conn = db.get_conn()
+            n = (u["basarisiz_giris_sayisi"] or 0) + 1
+            kilit = None
+            if n >= BRUTE_ESIK:
+                kilit = (datetime.datetime.now() + datetime.timedelta(minutes=BRUTE_KILIT_DAKIKA)) \
+                    .strftime("%Y-%m-%d %H:%M:%S")
+                n = 0
+            conn.execute("UPDATE kullanici SET basarisiz_giris_sayisi=?, kilit_bitis=? WHERE id=?",
+                         (n, kilit, u["id"]))
+            conn.commit()
+            conn.close()
+        flash(req, "Kullanıcı adı veya şifre hatalı.", "danger")
+        return redirect("/giris")
+    return render_template("giris.html", hata=None, next=req.q("next") or "/")
+
+
+@route(r"/cikis", roles=())
+def cikis(req):
+    if req.session_token:
+        conn = db.get_conn()
+        conn.execute("DELETE FROM sessionler WHERE token=?", (req.session_token,))
+        conn.commit()
+        conn.close()
+    resp = redirect("/giris")
+    set_cookie(resp, "erp_session", "", max_age=0, https=req.is_https())
+    return resp
+
+
+# --------------------------------------------------------------------------
+# Dashboard
+# --------------------------------------------------------------------------
+@route(r"/", roles=())
+def dashboard(req):
+    _hatirlatma_tarama(db.sirket_id(req))
+    _teklif_tarama(db.sirket_id(req))
+    _cek_vade_tarama(db.sirket_id(req))
+    _garanti_tarama(db.sirket_id(req))
+    _cari_vade_tarama(db.sirket_id(req))
+    _crm_aktivite_tarama(db.sirket_id(req))
+    bugun = datetime.date.today()
+    ay_bas = bugun.replace(day=1)
+    conn = db.get_conn()
+    sid = db.sirket_id(req)
+    db.bildirim_yetim_temizle(conn)  # silinen kayıtlara işaret eden bildirimleri temizle
+    conn.commit()
+
+    # F1 — mali etki artık irsaliye onayında da oluşabildiğinden, satış özeti
+    # hem 'Satış Faturası' hem 'Satış İrsaliyesi' hareketlerini kapsar.
+    bugun_satis = conn.execute(
+        "SELECT COALESCE(SUM(borc),0) s FROM cari_hareket "
+        "WHERE belge_tipi IN ('Satış Faturası','Satış İrsaliyesi') AND tarih=? AND sirket_id=?",
+        (bugun.isoformat(), sid)
+    ).fetchone()["s"]
+    ay_satis = conn.execute(
+        "SELECT COALESCE(SUM(borc),0) s FROM cari_hareket "
+        "WHERE belge_tipi IN ('Satış Faturası','Satış İrsaliyesi') AND tarih>=? AND sirket_id=?",
+        (ay_bas.isoformat(), sid)
+    ).fetchone()["s"]
+    fatura_sayisi = conn.execute(
+        "SELECT COUNT(*) c FROM cari_hareket "
+        "WHERE belge_tipi IN ('Satış Faturası','Satış İrsaliyesi') AND tarih=? AND sirket_id=?",
+        (bugun.isoformat(), sid)
+    ).fetchone()["c"]
+
+    caris = conn.execute("SELECT * FROM cari_kart WHERE aktif=1 AND sirket_id=?", (sid,)).fetchall()
+    toplam_alacak = 0.0
+    vadesi_gecen = 0.0
+    top_list = []
+    for c in caris:
+        a = cari._aging(conn, c["id"], bugun)
+        if a["bakiye"] > 0:
+            toplam_alacak += a["bakiye"]
+        vadesi_gecen += a["vadesi_gecen"]
+        top_list.append({"unvan": c["unvan"], "il": c["il"], "kredi_limiti": c["kredi_limiti"],
+                         "bakiye": a["bakiye"], "vade_gecikme": a["gecikme_gun"]})
+    top_list.sort(key=lambda x: -x["bakiye"])
+    top_list = top_list[:5]
+
+    uyarilar = conn.execute(
+        "SELECT * FROM bildirimler WHERE okundu=0 ORDER BY id DESC LIMIT 6"
+    ).fetchall()
+
+    # Faz 6 — vadesi yaklaşan tahsilat/ödemeler (çek/senet ≤ 7 gün) + gecikmiş cariler.
+    esik7 = (bugun + datetime.timedelta(days=7)).isoformat()
+    vadesi_yaklasan = conn.execute(
+        "SELECT no, tur, tip, vade, tutar FROM cek_senet "
+        "WHERE durum IN ('Bekliyor','Tahsile Verildi') AND vade >= ? AND vade <= ? AND sirket_id=? "
+        "ORDER BY vade LIMIT 8", (bugun.isoformat(), esik7, sid),
+    ).fetchall()
+    geciken_cariler = conn.execute(
+        "SELECT k.unvan, k.id FROM cari_kart k WHERE k.aktif=1 AND k.sirket_id=? "
+        "ORDER BY k.unvan LIMIT 200", (sid,)
+    ).fetchall()
+    _geciken = []
+    for gc in geciken_cariler:
+        ag = cari._aging(conn, gc["id"], bugun)
+        if (ag["vadesi_gecen"] or 0.0) > 0.005:
+            _geciken.append({"unvan": gc["unvan"], "tutar": ag["vadesi_gecen"],
+                             "gun": ag["gecikme_gun"]})
+    _geciken.sort(key=lambda x: -x["tutar"])
+    _geciken = _geciken[:6]
+
+    toplam_kasa = kasa._bakiye(conn, sid=sid)
+    kasa_sayisi = conn.execute("SELECT COUNT(*) c FROM kasa WHERE aktif=1 AND sirket_id=?",
+                               (sid,)).fetchone()["c"]
+    teklif_bekleyen = conn.execute(
+        "SELECT COUNT(*) c FROM teklif WHERE durum='Gönderildi' AND sirket_id=?", (sid,)
+    ).fetchone()["c"]
+    siparis_bekleyen = conn.execute(
+        "SELECT COUNT(*) c FROM siparis WHERE durum='Bekliyor' AND sirket_id=?", (sid,)
+    ).fetchone()["c"]
+    irsaliye_faturasiz = conn.execute(
+        "SELECT COUNT(*) c FROM irsaliye i WHERE i.durum='Onaylandı' AND i.tip != 'Transfer' "
+        "AND i.sirket_id=? AND NOT EXISTS (SELECT 1 FROM fatura f WHERE f.kaynak_irsaliye_id=i.id "
+        "AND f.durum='Onaylandı' AND f.sirket_id=i.sirket_id)", (sid,)
+    ).fetchone()["c"]
+    fatura_taslak = conn.execute(
+        "SELECT COUNT(*) c FROM fatura WHERE durum='Taslak' AND sirket_id=?", (sid,)
+    ).fetchone()["c"]
+    servis_acik = conn.execute(
+        "SELECT COUNT(*) c FROM servis_kayit WHERE durum IN ('Alındı','Teşhis Edildi','Onay Bekliyor',"
+        "'Tamir Ediliyor','Tamamlandı') AND sirket_id=?", (sid,)
+    ).fetchone()["c"]
+    garanti_yaklasan = conn.execute(
+        "SELECT COUNT(*) c FROM stok_seri WHERE durum='Satıldı' AND garanti_bitis IS NOT NULL "
+        "AND garanti_bitis >= ? AND garanti_bitis <= ? AND sirket_id=?",
+        (bugun.isoformat(), (bugun + datetime.timedelta(days=30)).isoformat(), sid),
+    ).fetchone()["c"]
+    garanti_dolan = conn.execute(
+        "SELECT COUNT(*) c FROM stok_seri WHERE durum='Satıldı' AND garanti_bitis IS NOT NULL "
+        "AND garanti_bitis < ? AND sirket_id=?", (bugun.isoformat(), sid)
+    ).fetchone()["c"]
+    # B3 — Eksik teslimat (Alış siparişlerinde açık kalan)
+    eksik = conn.execute(
+        "SELECT COUNT(*) c, "
+        "COALESCE(SUM((k.miktar - k.teslim_edilen - k.kalan_iptal) * k.birim_fiyat "
+        "* COALESCE(sp.doviz_kur,1)),0) t "
+        "FROM siparis_kalem k JOIN siparis sp ON sp.id=k.siparis_id "
+        "WHERE sp.tip='Alis' AND sp.sirket_id=? "
+        "AND (k.miktar - k.teslim_edilen - k.kalan_iptal) > 1e-9",
+        (sid,),
+    ).fetchone()
+    # D — Bakım sözleşmesi (aktif / yaklaşan / süresi dolan)
+    esik = (bugun + datetime.timedelta(days=30)).isoformat()
+    bakim_aktif = conn.execute(
+        "SELECT COUNT(*) c FROM bakim_sozlesme WHERE durum='Aktif' AND sirket_id=? AND bitis >= ?",
+        (sid, bugun.isoformat())).fetchone()["c"]
+    bakim_yaklasan = conn.execute(
+        "SELECT COUNT(*) c FROM bakim_sozlesme WHERE durum='Aktif' AND sirket_id=? "
+        "AND bitis >= ? AND bitis <= ?",
+        (sid, bugun.isoformat(), esik)).fetchone()["c"]
+    bakim_dolan = conn.execute(
+        "SELECT COUNT(*) c FROM bakim_sozlesme WHERE durum='Aktif' AND sirket_id=? AND bitis < ?",
+        (sid, bugun.isoformat())).fetchone()["c"]
+    # E — CRM aktivite/görev (bugün / günü geçen / açık planlanan)
+    crm_bugun = conn.execute(
+        "SELECT COUNT(*) c FROM crm_aktivite WHERE sirket_id=? AND durum='Planlandı' AND tarih=?",
+        (sid, bugun.isoformat())).fetchone()["c"]
+    crm_gecen = conn.execute(
+        "SELECT COUNT(*) c FROM crm_aktivite WHERE sirket_id=? AND durum='Planlandı' AND tarih < ?",
+        (sid, bugun.isoformat())).fetchone()["c"]
+    crm_planlanan = conn.execute(
+        "SELECT COUNT(*) c FROM crm_aktivite WHERE sirket_id=? AND durum='Planlandı'",
+        (sid,)).fetchone()["c"]
+
+    # F5-A (v1.35.0) — Finansal Analiz kart verileri (tek kaynak: finansal.py).
+    bu_ay_kar = finansal._bu_ay_kar(conn, sid, bugun)
+    banka_toplam = finansal._banka_bakiye(conn, sid)
+    butce_row = conn.execute(
+        "SELECT * FROM butce_hedef WHERE sirket_id=? AND yil=? AND ay=?",
+        (sid, bugun.year, bugun.month)).fetchone()
+
+    conn.close()
+
+    kpi = {
+        "bugun_satis": bugun_satis,
+        "ay_satis": ay_satis,
+        "fatura_sayisi": fatura_sayisi,
+        "toplam_alacak": toplam_alacak,
+        "vadesi_gecen": vadesi_gecen,
+        "toplam_kasa": toplam_kasa,
+        "kasa_sayisi": kasa_sayisi,
+        "teklif_bekleyen": teklif_bekleyen,
+        "siparis_bekleyen": siparis_bekleyen,
+        "irsaliye_faturasiz": irsaliye_faturasiz,
+        "fatura_taslak": fatura_taslak,
+        "servis_acik": servis_acik,
+        "garanti_yaklasan": garanti_yaklasan,
+        "garanti_dolan": garanti_dolan,
+        "eksik_kalem": eksik["c"],
+        "eksik_tutar": eksik["t"],
+        "bakim_aktif": bakim_aktif,
+        "bakim_yaklasan": bakim_yaklasan,
+        "bakim_dolan": bakim_dolan,
+        "crm_bugun": crm_bugun,
+        "crm_gecen": crm_gecen,
+        "crm_planlanan": crm_planlanan,
+        "bu_ay_kar": bu_ay_kar,
+        "banka_toplam": banka_toplam,
+        "butce": {
+            "hedef_satis": (butce_row["hedef_satis"] if butce_row else 0.0),
+            "sapma_pct": (round((ay_satis - butce_row["hedef_satis"]) / butce_row["hedef_satis"] * 100, 1)
+                          if butce_row and (butce_row["hedef_satis"] or 0) else None),
+        },
+        "fin_ay": f"{bugun.year:04d}-{bugun.month:02d}",
+        "fin_onceki_ay": f"{(bugun.replace(day=1) - datetime.timedelta(days=1)).year:04d}-{(bugun.replace(day=1) - datetime.timedelta(days=1)).month:02d}",
+        "fin_onceki_yil": f"{bugun.year - 1:04d}-{bugun.month:02d}",
+        "uyarilar": uyarilar,
+        "top_cari": top_list,
+        "vadesi_yaklasan": vadesi_yaklasan,
+        "geciken_cariler": _geciken,
+    }
+    return render_template("dashboard.html", bugun_tr=_bugun_tr(), kpi=kpi)
+
+
+# --------------------------------------------------------------------------
+# Bildirimler
+# --------------------------------------------------------------------------
+@route(r"/bildirimler", roles=())
+def bildirimler(req):
+    _cari_vade_tarama(db.sirket_id(req))
+    conn = db.get_conn()
+    tip = req.q("tip") if req.q("tip") in ("uyari", "bilgi", "hatirlatma") else ""
+    where = "WHERE sirket_id=?" + (" AND tip=?" if tip else "")
+    rows = conn.execute(
+        f"SELECT * FROM bildirimler {where} ORDER BY okundu, id DESC LIMIT 100",
+        (db.sirket_id(req), tip) if tip else (db.sirket_id(req),),
+    ).fetchall()
+    sayac = {d: conn.execute("SELECT COUNT(*) c FROM bildirimler WHERE tip=? AND okundu=0 AND sirket_id=?",
+                             (d, db.sirket_id(req))).fetchone()["c"]
+             for d in ("uyari", "bilgi", "hatirlatma")}
+    conn.close()
+    return render_template("bildirimler.html", bildirimler=rows, tip=tip, sayac=sayac)
+
+
+@route(r"/bildirimler/ayarlar", methods=("GET", "POST"), roles=("Admin",))
+def bildirimler_ayarlar(req):
+    # Faz 6.1: kanal yönetimi Ayarlar'a taşındı — eski yol oraya yönlendirilir.
+    return redirect("/ayarlar/bildirim")
+
+
+@route(r"/bildirimler/tumunu-oku", roles=())
+def bildirimler_oku(req):
+    conn = db.get_conn()
+    conn.execute("UPDATE bildirimler SET okundu=1 WHERE okundu=0 AND sirket_id=?",
+                 (db.sirket_id(req),))
+    conn.commit()
+    conn.close()
+    flash(req, "Tüm bildirimler okundu işaretlendi.", "ok")
+    return redirect("/bildirimler")
+
+
+@route(r"/bildirimler/(?P<bid>\d+)/oku", roles=())
+def bildirim_oku(req, bid):
+    conn = db.get_conn()
+    conn.execute("UPDATE bildirimler SET okundu=1 WHERE id=? AND sirket_id=?",
+                 (int(bid), db.sirket_id(req)))
+    conn.commit()
+    conn.close()
+    return redirect("/bildirimler")
+
+
+# --------------------------------------------------------------------------
+# Yetki matrisi (Faz 6 — Admin)
+# --------------------------------------------------------------------------
+@route(r"/yetkiler", roles=("Admin",))
+def yetki_matrisi(req):
+    import core
+    satirlar = []
+    for rx, methods, fn, roles in core.ROUTES:
+        pat = rx.pattern
+        if roles is None:
+            yetki = "herkese açık"
+        elif roles == ():
+            yetki = "giriş yapmış herkes"
+        else:
+            yetki = ", ".join(roles)
+        satirlar.append({"rota": pat, "method": ", ".join(methods),
+                         "modul": fn.__module__, "yetki": yetki})
+    satirlar.sort(key=lambda s: s["modul"] + s["rota"])
+    ozet = {}
+    for s in satirlar:
+        ozet.setdefault(s["modul"], {"toplam": 0, "yazma": 0})
+        ozet[s["modul"]]["toplam"] += 1
+        if "POST" in s["method"] or "PUT" in s["method"] or "DELETE" in s["method"]:
+            ozet[s["modul"]]["yazma"] += 1
+    return render_template("yetkiler.html", satirlar=satirlar, ozet=ozet, ROLLER=core.ROLLER)
+
+
+# --------------------------------------------------------------------------
+# Sağlık / statik olmayan yardımcı uçlar
+# --------------------------------------------------------------------------
+@route(r"/saglik")
+def saglik(req):
+    return Response('{"durum":"ok"}', "200 OK", [("Content-Type", "application/json")])
+
+
+# --------------------------------------------------------------------------
+# F6 (v1.38.0) — Bildirim API + Yetki CSV + Şube Özet API + Sağlık API
+# --------------------------------------------------------------------------
+def _json(data):
+    return Response(json.dumps(data, ensure_ascii=False), "200 OK",
+                    [("Content-Type", "application/json; charset=utf-8")])
+
+
+@route(r"/api/bildirimler", roles=())
+def api_bildirimler(req):
+    """Bildirim listesi (JSON, K1): tip + okundu filtreleri, limit 50."""
+    conn = db.get_conn()
+    tip = req.q("tip") if req.q("tip") in ("uyari", "bilgi", "hatirlatma") else ""
+    okundu = req.q("okundu")
+    where, args = ["sirket_id=?"], [db.sirket_id(req)]
+    if tip:
+        where.append("tip=?")
+        args.append(tip)
+    if okundu in ("0", "1"):
+        where.append("okundu=?")
+        args.append(int(okundu))
+    rows = conn.execute(
+        "SELECT id, tip, baslik, mesaj, okundu, olusturma FROM bildirimler "
+        "WHERE " + " AND ".join(where) + " ORDER BY okundu, id DESC LIMIT 50",
+        args).fetchall()
+    conn.close()
+    data = [{"id": r["id"], "tip": r["tip"], "baslik": r["baslik"], "mesaj": r["mesaj"],
+             "okundu": r["okundu"], "tarih": r["olusturma"]} for r in rows]
+    return _json(data)
+
+
+@route(r"/yetkiler/csv", roles=("Admin",))
+def yetki_matrisi_csv(req):
+    """Yetki matrisi CSV (yalnız Admin) — core.ROUTES üzerinden, DB'ye dokunmaz."""
+    import core
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
+    w.writerow(["Rota Pattern", "Method", "Modul", "Yetki"])
+    for rx, methods, fn, roles in core.ROUTES:
+        if roles is None:
+            yetki = "herkese açık"
+        elif roles == ():
+            yetki = "giriş yapmış herkes"
+        else:
+            yetki = ", ".join(roles)
+        w.writerow([rx.pattern, ", ".join(methods), fn.__module__, yetki])
+    return Response("\ufeff" + buf.getvalue(), "200 OK", [
+        ("Content-Type", "text/csv; charset=utf-8"),
+        ("Content-Disposition", 'attachment; filename="yetki-matrisi.csv"'),
+    ])
+
+
+@route(r"/api/sube/ozet", roles=())
+def api_sube_ozet(req):
+    """Şube özeti (JSON, K1 + izole_sube): fatura/irsaliye adet + kasa bakiye."""
+    conn = db.get_conn()
+    sid = db.sirket_id(req)
+    iz = izole_sube(req)
+    where, args = ["s.sirket_id=?"], [sid]
+    if iz:
+        where.append("s.id=?")
+        args.append(iz)
+    subeler = conn.execute(
+        "SELECT s.id, s.kod, s.ad FROM sube s WHERE " + " AND ".join(where)
+        + " ORDER BY s.id", args).fetchall()
+    out = []
+    for s in subeler:
+        fa = conn.execute("SELECT COUNT(*) c FROM fatura WHERE sube_id=? AND sirket_id=?",
+                          (s["id"], sid)).fetchone()["c"]
+        ia = conn.execute("SELECT COUNT(*) c FROM irsaliye WHERE sube_id=? AND sirket_id=?",
+                          (s["id"], sid)).fetchone()["c"]
+        bak = 0.0
+        for k in conn.execute("SELECT id FROM kasa WHERE sube_id=? AND sirket_id=?",
+                              (s["id"], sid)).fetchall():
+            bak += kasa._bakiye(conn, kasa_id=k["id"], sid=sid)
+        out.append({"id": s["id"], "kod": s["kod"], "ad": s["ad"],
+                    "fatura_adet": fa, "irsaliye_adet": ia,
+                    "kasa_bakiye": round(bak, 2)})
+    conn.close()
+    return _json({"subeler": out})
+
+
+@route(r"/api/saglik", roles=())
+def api_saglik(req):
+    """Sağlık API: sürüm + DB + tarih + aktif şirket (mevcut /saglik korunur)."""
+    try:
+        conn = db.get_conn()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        db_durum = "ok"
+    except Exception:
+        db_durum = "hata"
+    return _json({"durum": "ok", "surum": SURUM,
+                  "tarih": datetime.date.today().isoformat(),
+                  "db": db_durum, "sirket_id": db.sirket_id(req)})
+
+
+def main():
+    db.init_db()
+    db.seed()
+    print(f"* Brn Teknoloji ERP başlatılıyor: http://{HOST}:{PORT}")
+    srv = make_server(HOST, PORT, wsgi_app)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

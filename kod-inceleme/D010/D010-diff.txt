@@ -1,0 +1,707 @@
+# D010 (v1.41.0) — DEĞİŞEN DOSYALAR DIFF
+# Karşılaştırma: 11915a9 (D009 kodu) → a438765 (D010 kodu)
+
+ .gitignore                          |   1 +
+ kod/CHANGELOG.md                    |  30 ++++++
+ kod/app.py                          |   1 +
+ kod/config.py                       |   2 +-
+ kod/templates/ayarlar/index.html    |   9 ++
+ kod/templates/ayarlar/yedekler.html |  54 ++++++++++
+ kod/test_d010_yedekleme.py          | 210 ++++++++++++++++++++++++++++++++++++
+ kod/test_f6_cila.py                 |   2 +-
+ kod/yedek.py                        | 169 +++++++++++++++++++++++++++++
+ kod/yedek_al.py                     |  92 ++++++++++------
+ 10 files changed, 534 insertions(+), 36 deletions(-)
+
+############################################################
+# TAM DIFF (kod/)
+############################################################
+diff --git a/.gitignore b/.gitignore
+index 7f54875..0faa2d7 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,6 +7,7 @@ __pycache__/
+ kod/data/*.db
+ kod/data/*.db-wal
+ kod/data/*.db-shm
++kod/data/yedek/
+ 
+ # --- Çalışma zamanı üretilenler ---
+ kod/uploads/
+diff --git a/kod/CHANGELOG.md b/kod/CHANGELOG.md
+index ee85e55..24c4a8b 100644
+--- a/kod/CHANGELOG.md
++++ b/kod/CHANGELOG.md
+@@ -8,6 +8,36 @@ Biçim: [Keep a Changelog](https://keepachangelog.com) · Sürümleme: **v1.MINO
+ 
+ ---
+ 
++## v1.41.0 — 2026-09-11
++
++### Eklenen — D010: Uygulama İçi Yedekleme & Geri Yükleme (yalnız Admin)
++`kod/yedek_al.py` komut satırı aracını web'e taşıyan yedek yönetimi (YENİ TABLO YOK):
++
++- **`GET /ayarlar/yedekler`** — `data/yedek/` içindeki `erp-*.db` yedeklerini listeler
++  (ad, boyut, bütünlük durumu, tablo sayısı); Ayarlar hub'ına yeni kart eklendi.
++- **`POST /ayarlar/yedek/al`** — SQLite `.backup()` API'si ile tutarlı anlık görüntü +
++  `PRAGMA integrity_check` doğrulaması; başarısız yedek diske bırakılmaz.
++- **`GET /ayarlar/yedek/indir/<dosya>`** — indirme (octet-stream).
++- **`POST /ayarlar/yedek/<dosya>/sil`** ve **`.../geri-yukle`** — silme + geri yükleme.
++- **Geri yükleme güvenliği:** önce bütünlük doğrulanır (bozuk dosya REDDEDİLİR); sonra
++  otomatik **güvenlik yedeği** alınır; kopyalama sonrası WAL kalıntıları temizlenip şema/
++  migrasyon yeniden uygulanır ve bütünlük tekrar doğrulanır.
++- **Path traversal koruması:** dosya adı yalnızca `erp-YYYYMMDD-HHMMSS(-ffffff).db`
++  deseninde kabul edilir (`_gecerli`); `../` ve kodlanmış varyantları 403/404.
++- Tüm rotalar `roles=("Admin",)` — yedek tüm şirketlerin verisini içerdiği için K1 dışı.
++
++### Düzeltilen
++- `yedek_al.py`: aynı saniyede alınan iki yedek (örn. geri yükleme sırasındaki güvenlik
++  yedeği) aynı dosya adını alıp birbirini EZİYORDU → dosya adına mikrosaniye eklendi.
++- CLI `main()`: `yedek_al()` refactor'u sonrası hedef dizin `stat` sıralaması düzeltildi.
++
++### Testler
++- `test_d010_yedekleme.py` YENİ — **16/16** (al+doğrula, yetki 403, traversal reddi,
++  indir/sil, geri yükleme roundtrip + güvenlik yedeği, bozuk yedek reddi, FK/kalıntı).
++- Tam regresyon (25 dosya) **561/561**; iş mantığı/K1/rol davranışı değişmedi.
++
++---
++
+ ## v1.40.0 — 2026-09-11
+ 
+ ### Eklenen — D009: Güvenlik & Sağlamlık Sertleştirme
+diff --git a/kod/app.py b/kod/app.py
+index cd666ee..80aa210 100644
+--- a/kod/app.py
++++ b/kod/app.py
+@@ -52,6 +52,7 @@ import eksik_teslimat  # noqa: F401  — Eksik Teslimatlar + Satın Alma Raporu
+ import pos  # noqa: F401  — POS (Satış Noktası) modülü rota kayıtları (C)
+ import bakim  # noqa: F401  — Bakım Sözleşmesi modülü rota kayıtları (D)
+ import crm  # noqa: F401  — CRM (Aktivite/Görev takibi) modülü rota kayıtları (E)
++import yedek  # noqa: F401  — Uygulama içi yedekleme & geri yükleme (D010)
+ 
+ AYLAR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+          "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+diff --git a/kod/config.py b/kod/config.py
+index ddaefbf..a9e1c49 100644
+--- a/kod/config.py
++++ b/kod/config.py
+@@ -16,7 +16,7 @@ FIRMA_ADI = "Brn Teknoloji"
+ FIRMA_ALT = "İşletme Yönetim Sistemi"
+ 
+ # Uygulama sürümü — her geliştirme partisinde artırılır; CHANGELOG.md ile birlikte izlenir.
+-SURUM = "1.40.0"
++SURUM = "1.41.0"
+ SURUM_TARIHI = "2026-09-11"
+ 
+ # K18 — Döviz Takip: desteklenen para birimleri (TRY temel; kurlar doviz_kur tablosunda).
+diff --git a/kod/templates/ayarlar/index.html b/kod/templates/ayarlar/index.html
+index dbbe24a..076d356 100644
+--- a/kod/templates/ayarlar/index.html
++++ b/kod/templates/ayarlar/index.html
+@@ -54,6 +54,15 @@
+     </div>
+     <p class="hint">GİB entegratör bağlantısı (e-Fatura/e-Arşiv/e-İrsaliye)</p>
+   </a>
++
++  <a class="card link-card" href="/ayarlar/yedekler">
++    <div class="card-head"><h2>💾 Yedekleme</h2></div>
++    <div class="kv">
++      <div><span>İşlem</span><b>Al · İndir · Geri Yükle</b></div>
++      <div><span>Bütünlük</span><b>otomatik doğrulama</b></div>
++    </div>
++    <p class="hint">Veritabanının tutarlı yedeği + güvenlik yedeğiyle geri yükleme</p>
++  </a>
+ </div>
+ 
+ <div class="card">
+diff --git a/kod/templates/ayarlar/yedekler.html b/kod/templates/ayarlar/yedekler.html
+new file mode 100644
+index 0000000..7cefb32
+--- /dev/null
++++ b/kod/templates/ayarlar/yedekler.html
+@@ -0,0 +1,54 @@
++{% extends "base.html" %}
++{% block title %}Yedekleme — Brn Teknoloji ERP{% endblock %}
++{% block crumb %}Yönetim / Ayarlar / Yedekleme{% endblock %}
++
++{% block content %}
++<div class="page-head">
++  <div><h1>💾 Yedekleme &amp; Geri Yükleme</h1>
++  <div class="desc">Veritabanının tutarlı anlık görüntüleri (SQLite <code>.backup()</code> + bütünlük doğrulama). Yalnızca Admin.</div></div>
++  <form method="post" action="/ayarlar/yedek/al">
++    <input type="hidden" name="csrf" value="{{ csrf_token }}">
++    <button class="btn primary" type="submit">🔄 Şimdi Yedek Al</button>
++  </form>
++</div>
++
++<div class="card">
++  <div class="card-head"><h2>Mevcut Yedekler <span class="muted">(son {{ sakla }} adet saklanır)</span></h2></div>
++  {% if not yedekler %}
++  <p class="hint">Henüz yedek yok. "Şimdi Yedek Al" ile ilk yedeği oluşturun.</p>
++  {% else %}
++  <table class="table">
++    <thead>
++      <tr><th>Dosya</th><th>Boyut</th><th>Bütünlük</th><th>Tablo</th><th style="text-align:right">İşlem</th></tr>
++    </thead>
++    <tbody>
++    {% for y in yedekler %}
++      <tr>
++        <td><code>{{ y.ad }}</code></td>
++        <td>{{ (y.boyut / 1024)|round(1) }} KB</td>
++        <td>
++          {% if y.durum == 'ok' %}<span class="badge b-ok">ok</span>
++          {% else %}<span class="badge b-danger">bozuk</span>{% endif %}
++        </td>
++        <td>{{ y.tablo or '—' }}</td>
++        <td style="text-align:right; white-space:nowrap">
++          <a class="btn ghost" href="/ayarlar/yedek/indir/{{ y.ad }}">⬇ İndir</a>
++          <form method="post" action="/ayarlar/yedek/{{ y.ad }}/geri-yukle" style="display:inline"
++                onsubmit="return confirm('Bu yedek geri yüklensin mi? Önce otomatik güvenlik yedeği alınır.')">
++            <input type="hidden" name="csrf" value="{{ csrf_token }}">
++            <button class="btn warn" type="submit">↩ Geri Yükle</button>
++          </form>
++          <form method="post" action="/ayarlar/yedek/{{ y.ad }}/sil" style="display:inline"
++                onsubmit="return confirm('Bu yedek silinsin mi?')">
++            <input type="hidden" name="csrf" value="{{ csrf_token }}">
++            <button class="btn danger" type="submit">🗑</button>
++          </form>
++        </td>
++      </tr>
++    {% endfor %}
++    </tbody>
++  </table>
++  {% endif %}
++  <p class="hint">⚠️ Yedekler sunucu diskinde tutulur. Disk arızasına karşı önemli yedekleri indirip harici ortamda saklayın.</p>
++</div>
++{% endblock %}
+diff --git a/kod/test_d010_yedekleme.py b/kod/test_d010_yedekleme.py
+new file mode 100644
+index 0000000..0801527
+--- /dev/null
++++ b/kod/test_d010_yedekleme.py
+@@ -0,0 +1,210 @@
++# -*- coding: utf-8 -*-
++"""D010 — Uygulama İçi Yedekleme & Geri Yükleme (v1.41.0) e2e testi.
++
++16 kontrol. Sunucu 8080'de çalışırken:
++    python3 test_d010_yedekleme.py
++
++Kapsam (GM onaylı D010 taslağı):
++  1-2   Yedek al + bütünlük doğrulama (listele)
++  3-4   Yetki: Admin dışı (Depo) 403 (GET + POST)
++  5     Path traversal: geçersiz/../ dosya adı reddi
++  6     İndir (octet-stream, boyut > 0)
++  7     Sil
++  8-11  Geri yükleme roundtrip + güvenlik yedeği + veri kanıtı
++  12    Bozuk yedek geri yüklenmez (DB sağlam kalır)
++  13-14 Regresyon: /saglik + F6/F5c uçları çalışır
++  15-16 FK bütünlüğü + D010TEST kalıntısı yok
++"""
++import os
++import sqlite3
++
++import requests
++
++import db as dbutil
++import yedek_al as ya
++
++from config import DB_PATH, DATA_DIR
++
++BASE = "http://127.0.0.1:8080"
++DB = "data/erp.db"
++MARK = "D010TEST"
++YEDEK_DIR = os.path.join(DATA_DIR, "yedek")
++
++ok, fail = [], []
++
++
++def check(name, cond, detay=""):
++    (ok if cond else fail).append(name)
++    print((("  ✅ " if cond else "  ❌ ") + name + (f"  → {detay}" if detay else "")))
++
++
++def db(q, *a):
++    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
++    r = c.execute(q, a).fetchall(); c.close(); return r
++
++
++def db1(q, *a):
++    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
++    r = c.execute(q, a).fetchone(); c.close(); return r
++
++
++def dbx(q, *a):
++    c = sqlite3.connect(DB); c.execute(q, a); c.commit(); c.close()
++
++
++def giris(kadi="admin", sifre="1234"):
++    s = requests.Session()
++    r = s.post(BASE + "/giris", data={"kullanici_adi": kadi, "sifre": sifre},
++               allow_redirects=False)
++    return s, r
++
++
++def yedekler_disk():
++    os.makedirs(YEDEK_DIR, exist_ok=True)
++    return sorted(f for f in os.listdir(YEDEK_DIR)
++                  if f.startswith("erp-") and f.endswith(".db"))
++
++
++# Temizlik: önceki çalışmalardan kalan işaret + çöp dosya
++dbx("DELETE FROM meta WHERE anahtar LIKE ?", MARK + "%")
++for f in yedekler_disk():
++    if f == "erp-20200101-000000.db":  # bozuk-test çöpü
++        try:
++            os.remove(os.path.join(YEDEK_DIR, f))
++        except OSError:
++            pass
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM A — Yedek Al + Listele")
++print("=" * 70)
++
++s, r = giris()
++check("1. admin girişi", r.status_code == 302 and bool(r.cookies.get("erp_session")),
++      f"status={r.status_code}")
++
++r = s.get(BASE + "/ayarlar/yedekler", allow_redirects=False)
++check("2. /ayarlar/yedekler (Admin) 200 + içerik",
++      r.status_code == 200 and "Mevcut Yedekler" in r.text and "Yedek Al" in r.text,
++      f"status={r.status_code}")
++
++once = len(yedekler_disk())
++r = s.post(BASE + "/ayarlar/yedek/al", allow_redirects=False)
++sonra = yedekler_disk()
++durum, tablo, _ = (ya._dogrula(os.path.join(YEDEK_DIR, sonra[-1]))
++                   if sonra else ("hata", 0, ""))
++check("3. yedek al → yeni erp-*.db + bütünlük ok",
++      r.status_code == 302 and len(sonra) == once + 1 and durum == "ok",
++      f"status={r.status_code}, önce={once}, sonra={len(sonra)}, bütünlük={durum}, tablo={tablo}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM B — Yetki (Admin dışı 403)")
++print("=" * 70)
++
++d, _ = giris("depo", "1234")
++r = d.get(BASE + "/ayarlar/yedekler", allow_redirects=False)
++check("4. Depo GET /ayarlar/yedekler → 403", r.status_code == 403, f"status={r.status_code}")
++r = d.post(BASE + "/ayarlar/yedek/al", allow_redirects=False)
++check("5. Depo POST /ayarlar/yedek/al → 403", r.status_code == 403, f"status={r.status_code}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM C — Path Traversal + İndir + Sil")
++print("=" * 70)
++
++r = s.get(BASE + "/ayarlar/yedek/indir/config.py", allow_redirects=False)
++check("6. geçersiz dosya adı (config.py) → 403", r.status_code == 403, f"status={r.status_code}")
++r = s.get(BASE + "/ayarlar/yedek/indir/..%2F..%2Fconfig.py", allow_redirects=False)
++check("7. traversal girişimi (..%2F..%2F) reddedilir (403/404)",
++      r.status_code in (403, 404), f"status={r.status_code}")
++
++hedef = sonra[-1]
++r = s.get(BASE + "/ayarlar/yedek/indir/" + hedef, allow_redirects=False)
++ct = r.headers.get("Content-Type", "")
++check("8. yedek indir → 200 + octet-stream + boyut>0",
++      r.status_code == 200 and ct == "application/octet-stream" and len(r.content) > 0,
++      f"status={r.status_code}, ct={ct}, size={len(r.content)}")
++
++r = s.post(BASE + "/ayarlar/yedek/" + hedef + "/sil", allow_redirects=False)
++kalan = yedekler_disk()
++check("9. yedek sil → dosya diskten gider",
++      r.status_code == 302 and hedef not in kalan, f"status={r.status_code}, kaldı={hedef in kalan}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM D — Geri Yükleme (roundtrip + güvenlik yedeği)")
++print("=" * 70)
++
++dbx("INSERT OR REPLACE INTO meta(anahtar, deger) VALUES(?, 'A')", MARK)
++r = s.post(BASE + "/ayarlar/yedek/al", allow_redirects=False)
++yedek_B = yedekler_disk()[-1]
++dbx("INSERT OR REPLACE INTO meta(anahtar, deger) VALUES(?, 'B')", MARK)
++
++adet_once = len(yedekler_disk())
++r = s.post(BASE + "/ayarlar/yedek/" + yedek_B + "/geri-yukle", allow_redirects=False)
++adet_sonra = len(yedekler_disk())
++deger = (db1("SELECT deger FROM meta WHERE anahtar=?", MARK) or {"deger": None})["deger"]
++check("10. geri yükleme → meta değeri 'A'ya döner (veri kanıtı)",
++      r.status_code == 302 and deger == "A", f"status={r.status_code}, deger={deger}")
++check("11. geri yükleme öncesi otomatik güvenlik yedeği alınır",
++      adet_sonra >= adet_once + 1, f"önce={adet_once}, sonra={adet_sonra}")
++
++# Geri yükleme sonrası oturumu tazele (sessionler tablosu yedekten geldi).
++s, _ = giris()
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM E — Bozuk Yedek Reddi")
++print("=" * 70)
++
++carpik = os.path.join(YEDEK_DIR, "erp-20200101-000000.db")
++with open(carpik, "wb") as f:
++    f.write(b"bu bir sqlite veritabani degil" * 64)
++dbx("INSERT OR REPLACE INTO meta(anahtar, deger) VALUES(?, 'C')", MARK)
++r = s.post(BASE + "/ayarlar/yedek/erp-20200101-000000.db/geri-yukle", allow_redirects=False)
++deger = (db1("SELECT deger FROM meta WHERE anahtar=?", MARK) or {"deger": None})["deger"]
++dbx("DELETE FROM meta WHERE anahtar=?", MARK)
++try:
++    os.remove(carpik)
++except OSError:
++    pass
++c = sqlite3.connect(DB)
++sonuc = c.execute("PRAGMA integrity_check").fetchone()[0]
++c.close()
++check("12. bozuk yedek geri yüklenmez (meta 'C' kalır, DB sağlam)",
++      deger == "C" and sonuc == "ok", f"deger={deger}, integrity={sonuc}")
++
++# =============================================================================
++print("=" * 70)
++print("BÖLÜM F — Regresyon + Bütünlük")
++print("=" * 70)
++
++s2, _ = giris()
++r = s2.get(BASE + "/api/saglik", allow_redirects=False)
++js = r.json()
++check("13. /api/saglik canlı + sürüm 1.41.0", r.status_code == 200 and js.get("surum") == "1.41.0",
++      f"status={r.status_code}, surum={js.get('surum')}")
++
++r = s2.get(BASE + "/api/bildirimler", allow_redirects=False)
++check("14. F6 bildirim API çalışıyor (200)", r.status_code == 200, f"status={r.status_code}")
++
++fk = db1("SELECT COUNT(*) c FROM pragma_foreign_key_check")["c"]
++kalinti = db1("SELECT COUNT(*) c FROM meta WHERE anahtar LIKE ?", MARK + "%")["c"]
++check("15. FK bütünlüğü 0 + D010TEST kalıntısı yok", fk == 0 and kalinti == 0,
++      f"fk={fk}, kalıntı={kalinti}")
++
++# Çalışma sırasında üretilen yedekleri temizle (teslimi kirletme).
++for f in yedekler_disk():
++    try:
++        os.remove(os.path.join(YEDEK_DIR, f))
++    except OSError:
++        pass
++check("16. test yedekleri temizlendi", yedekler_disk() == [], f"kalan={len(yedekler_disk())}")
++
++print()
++print(f"=== SONUÇ: {len(ok)} başarılı / {len(fail)} başarısız (toplam {len(ok) + len(fail)}) ===")
++if fail:
++    print("BAŞARISIZ:", fail)
++    raise SystemExit(1)
++print("TÜM D010 YEDEKLEME TESTLERİ GEÇTİ ✅")
+diff --git a/kod/test_f6_cila.py b/kod/test_f6_cila.py
+index 0941d0e..8589e5c 100644
+--- a/kod/test_f6_cila.py
++++ b/kod/test_f6_cila.py
+@@ -166,7 +166,7 @@ check("13. test_saglik", r.status_code == 200 and '"durum":"ok"' in r.text,
+ # 14) test_api_saglik ----------------------------------------------------------
+ d = admin.get(BASE + "/api/saglik").json()
+ check("14. test_api_saglik",
+-      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.40.0",
++      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.41.0",
+       f"surum={d.get('surum')}, db={d.get('db')}")
+ 
+ # 15) test_f5c_korundu ---------------------------------------------------------
+diff --git a/kod/yedek.py b/kod/yedek.py
+new file mode 100644
+index 0000000..136f8ba
+--- /dev/null
++++ b/kod/yedek.py
+@@ -0,0 +1,169 @@
++# -*- coding: utf-8 -*-
++"""D010 — Uygulama İçi Yedekleme & Geri Yükleme (yalnız Admin).
++
++`kod/yedek_al.py` içindeki `yedek_al()` + `_dogrula()` yardımcıları yeniden kullanılır
++(kod çoğaltma yok). Web katmanı yalnızca rotaları + izinleri + path-traversal korumasını ekler.
++
++Güvenlik kararları:
++  * Tüm rotalar roles=("Admin",) — yedek TÜM şirketlerin verisini içerir, K1 kapsamına girmez.
++  * Dosya adı yalnızca `erp-YYYYMMDD-HHMMSS.db` desenine izin verilir (path traversal imkânsız).
++  * Geri yükleme: önce bütünlük doğrulanır; bozuk dosya reddedilir. Bütünlük ok ise önce
++    otomatik GÜVENLİK YEDEĞİ alınır, sonra yedek kopyalanır; sonrasında WAL kalıntıları
++    temizlenip şema/migrasyon yeniden uygulanır ve bütünlük tekrar doğrulanır.
++"""
++import os
++import re
++import sqlite3
++
++import db
++import yedek_al as ya
++
++from config import DB_PATH, DATA_DIR
++from core import route, render_template, redirect, flash, audit, Response
++
++ADMIN = ("Admin",)
++YEDEK_DIR = os.path.join(DATA_DIR, "yedek")
++SAKLA = 30
++# Mikrosaniye eki isteğe bağlı: yeni yedekler erp-YYYYMMDD-HHMMSS-ffffff.db;
++# eski (saniye çözünürlüklü) yedekler de yönetilebilsin diye her ikisi kabul.
++_AD_RE = re.compile(r"^erp-\d{8}-\d{6}(-\d{6})?\.db$")
++
++
++def _gecerli(ad):
++    """Yalnızca aracın ürettiği erp-YYYYMMDD-HHMMSS.db desenini kabul et."""
++    return bool(_AD_RE.match(ad or "")) and os.path.basename(ad) == ad
++
++
++def _liste():
++    os.makedirs(YEDEK_DIR, exist_ok=True)
++    out = []
++    for f in sorted(os.listdir(YEDEK_DIR), reverse=True):
++        if not _AD_RE.match(f):
++            continue
++        yol = os.path.join(YEDEK_DIR, f)
++        if not os.path.isfile(yol):
++            continue
++        durum, tablo, _ = ya._dogrula(yol)
++        st = os.stat(yol)
++        out.append({"ad": f, "boyut": st.st_size, "mtime": st.st_mtime,
++                    "durum": durum, "tablo": tablo})
++    return out
++
++
++def _geri_yukle(yol):
++    """Bütünlük → güvenlik yedeği → backup API ile geri yükle → şema uygula → son doğrulama."""
++    # 1) Yedek bütünlük doğrulaması — bozuk dosya GERİ YÜKLENMEZ.
++    durum, _tablo, sonuc = ya._dogrula(yol)
++    if durum != "ok":
++        return False, f"Geri yükleme reddedildi — yedek bütünlüğü bozuk: {sonuc}"
++
++    # 2) Otomatik güvenlik yedeği (geri yükleme öncesi zorunlu).
++    g = ya.yedek_al(YEDEK_DIR, SAKLA)
++    if not g["ok"]:
++        return False, "Güvenlik yedeği alınamadı: " + g["mesaj"]
++
++    # 3) Geri yükleme: yedek → canlı DB. SQLite'ın backup() API'si ters yönde kullanılır
++    #    (WAL/checkpoint güvenli; dosya kopyalamak veya -wal/-shm silmek YOKTUR).
++    try:
++        src = sqlite3.connect(yol)
++        try:
++            dst = sqlite3.connect(DB_PATH, timeout=10)
++            try:
++                dst.execute("PRAGMA busy_timeout = 8000")
++                src.backup(dst)
++            finally:
++                dst.close()
++        finally:
++            src.close()
++    except sqlite3.Error as e:
++        return False, f"Geri yükleme başarısız: {e}"
++
++    # 4) Şemayı ve migrasyonları yeniden uygula (eski bir yedek gelmişse eksik kolonları ekle).
++    db.init_db()
++
++    # 5) Geri yükleme sonrası bütünlük doğrulaması.
++    try:
++        c = sqlite3.connect(DB_PATH)
++        try:
++            son = c.execute("PRAGMA integrity_check").fetchone()[0]
++        finally:
++            c.close()
++    except sqlite3.Error:
++        son = "hata"
++    if son != "ok":
++        return False, f"Geri yükleme sonrası doğrulama başarısız: {son}"
++
++    return True, (f"'{os.path.basename(yol)}' geri yüklendi "
++                  f"(öncesinde güvenlik yedeği: {g['dosya']}).")
++
++
++# ---------------------------------------------------------------------------
++# Rotalar
++# ---------------------------------------------------------------------------
++@route(r"/ayarlar/yedekler", roles=ADMIN)
++def yedekler(req):
++    return render_template("ayarlar/yedekler.html", yedekler=_liste(), sakla=SAKLA)
++
++
++@route(r"/ayarlar/yedek/al", methods=("POST",), roles=ADMIN)
++def yedek_al(req):
++    g = ya.yedek_al(YEDEK_DIR, SAKLA)
++    if g["ok"]:
++        flash(req, f"Yedek alındı: {g['dosya']} ({g['boyut'] // 1024} KB, "
++                   f"{g['tablo']} tablo, bütünlük: ok).", "ok")
++        audit(req, "yedek", 0, "al", {"dosya": g["dosya"], "boyut": g["boyut"]})
++    else:
++        flash(req, "Yedek alınamadı: " + g["mesaj"], "danger")
++    return redirect("/ayarlar/yedekler")
++
++
++@route(r"/ayarlar/yedek/indir/(?P<dosya>[^/]+)", roles=ADMIN)
++def yedek_indir(req, dosya):
++    if not _gecerli(dosya):
++        return Response("Geçersiz dosya adı.", "403 Forbidden")
++    yol = os.path.join(YEDEK_DIR, dosya)
++    if not os.path.isfile(yol):
++        return Response("Yedek bulunamadı.", "404 Not Found")
++    with open(yol, "rb") as f:
++        data = f.read()
++    return Response(data, "200 OK", [
++        ("Content-Type", "application/octet-stream"),
++        ("Content-Length", str(len(data))),
++        ("Content-Disposition", f'attachment; filename="{dosya}"'),
++    ])
++
++
++@route(r"/ayarlar/yedek/(?P<dosya>[^/]+)/sil", methods=("POST",), roles=ADMIN)
++def yedek_sil(req, dosya):
++    if not _gecerli(dosya):
++        flash(req, "Geçersiz dosya adı.", "danger")
++        return redirect("/ayarlar/yedekler")
++    yol = os.path.join(YEDEK_DIR, dosya)
++    if os.path.isfile(yol):
++        try:
++            os.remove(yol)
++            flash(req, f"{dosya} silindi.", "ok")
++            audit(req, "yedek", 0, "sil", {"dosya": dosya})
++        except OSError as e:
++            flash(req, f"Silinemedi: {e}", "danger")
++    else:
++        flash(req, "Yedek bulunamadı.", "danger")
++    return redirect("/ayarlar/yedekler")
++
++
++@route(r"/ayarlar/yedek/(?P<dosya>[^/]+)/geri-yukle", methods=("POST",), roles=ADMIN)
++def yedek_geri_yukle(req, dosya):
++    if not _gecerli(dosya):
++        flash(req, "Geçersiz dosya adı.", "danger")
++        return redirect("/ayarlar/yedekler")
++    yol = os.path.join(YEDEK_DIR, dosya)
++    if not os.path.isfile(yol):
++        flash(req, "Yedek bulunamadı.", "danger")
++        return redirect("/ayarlar/yedekler")
++    ok, mesaj = _geri_yukle(yol)
++    if ok:
++        flash(req, mesaj, "ok")
++        audit(req, "yedek", 0, "geri-yukle", {"dosya": dosya})
++    else:
++        flash(req, mesaj, "danger")
++    return redirect("/ayarlar/yedekler")
+diff --git a/kod/yedek_al.py b/kod/yedek_al.py
+index bd69db8..3cd64d1 100644
+--- a/kod/yedek_al.py
++++ b/kod/yedek_al.py
+@@ -73,32 +73,24 @@ def _dogrula(dosya):
+     return "ok", tablo, sonuc
+ 
+ 
+-def main() -> int:
+-    args = [a for a in sys.argv[1:]]
+-    if args and args[0] in HELP_FLAGS:
+-        print(__doc__)
+-        return 0
+-
+-    hedef = args[0] if len(args) >= 1 else os.path.join(BASE_DIR, "yedek")
+-    try:
+-        sakla = int(args[1]) if len(args) >= 2 else 30
+-    except ValueError:
+-        print("HATA: saklanacak adet bir sayı olmalı. (ör: 30)")
+-        return 2
+-    if sakla < 1:
+-        print("HATA: saklanacak adet en az 1 olmalı.")
+-        return 2
+-
++def yedek_al(hedef, sakla=30):
++    """Tutarlı yedek al + bütünlük doğrula + eskileri buda (yeniden kullanılabilir).
++
++    Dönüş (dict):
++        ok      : bool   — yedek alındı ve bütünlük doğrulandı mı
++        dosya   : str    — yalnızca dosya adı (başarıda)
++        boyut   : int    — bayt
++        tablo   : int    — tablo sayısı (başarıda)
++        mesaj   : str    — hata açıklaması (başarısızlıkta)
++        silinen : int    — budanan eski yedek adedi
++    """
+     if not os.path.isfile(DB_PATH):
+-        print(f"HATA: veritabanı bulunamadı → {DB_PATH}")
+-        return 1
+-
++        return {"ok": False, "mesaj": f"veritabanı bulunamadı → {DB_PATH}"}
+     os.makedirs(hedef, exist_ok=True)
+ 
+-    # Kaynak ve hedefin aynı fiziksel diskte olup olmadığı (bilgilendirme için).
+-    ayni_disk = os.stat(DB_PATH).st_dev == os.stat(hedef).st_dev
+-
+-    damga = datetime.now().strftime("%Y%m%d-%H%M%S")
++    # Mikrosaniye çözünürlüğü: aynı saniyede alınan iki yedek (örn. geri yükleme
++    # sırasındaki güvenlik yedeği) birbirinin üzerine YAZMASIN diye benzersiz damga.
++    damga = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+     hedef_dosya = os.path.join(hedef, f"erp-{damga}.db")
+ 
+     # Tutarlı anlık görüntü: kaynağı okur, hedef dosyaya yazar.
+@@ -113,18 +105,19 @@ def main() -> int:
+         finally:
+             src.close()
+     except sqlite3.Error as e:
+-        print(f"⚠️  UYARI: yedek alınamadı → {e}")
+-        print(f"   Kaynak: {DB_PATH} — bu yedek güvenilir DEĞİL, kullanmayın.")
+-        return 3
++        return {"ok": False, "dosya": os.path.basename(hedef_dosya), "mesaj": str(e)}
+ 
+     boyut = os.path.getsize(hedef_dosya)
+ 
+     # Bütünlük doğrulaması — sonuç GERÇEKTEN kontrol edilir (bkz. _dogrula).
+     durum, tablo, sonuc = _dogrula(hedef_dosya)
+     if durum != "ok":
+-        print(f"⚠️  UYARI: yedek bütünlük doğrulaması BAŞARISIZ → {sonuc}")
+-        print(f"   Dosya: {hedef_dosya} — bu yedek güvenilir DEĞİL, kullanmayın.")
+-        return 3
++        try:
++            os.remove(hedef_dosya)  # bozuk yedeği diske bırakma
++        except OSError:
++            pass
++        return {"ok": False, "dosya": os.path.basename(hedef_dosya),
++                "mesaj": f"bütünlük doğrulaması başarısız → {sonuc}"}
+ 
+     # Eskileri buda (yalnızca bu aracın ürettiği erp-*.db dosyaları).
+     mevcut = sorted(
+@@ -139,12 +132,43 @@ def main() -> int:
+         except OSError:
+             pass
+ 
++    return {"ok": True, "dosya": os.path.basename(hedef_dosya), "boyut": boyut,
++            "tablo": tablo, "mesaj": sonuc, "silinen": silinen}
++
++
++def main() -> int:
++    args = [a for a in sys.argv[1:]]
++    if args and args[0] in HELP_FLAGS:
++        print(__doc__)
++        return 0
++
++    hedef = args[0] if len(args) >= 1 else os.path.join(BASE_DIR, "yedek")
++    try:
++        sakla = int(args[1]) if len(args) >= 2 else 30
++    except ValueError:
++        print("HATA: saklanacak adet bir sayı olmalı. (ör: 30)")
++        return 2
++    if sakla < 1:
++        print("HATA: saklanacak adet en az 1 olmalı.")
++        return 2
++
++    if not os.path.isfile(DB_PATH):
++        print(f"HATA: veritabanı bulunamadı → {DB_PATH}")
++        return 1
++
++    g = yedek_al(hedef, sakla)
++    if not g["ok"]:
++        print(f"⚠️  UYARI: yedek alınamadı → {g.get('mesaj')}")
++        print(f"   Kaynak: {DB_PATH} — bu yedek güvenilir DEĞİL, kullanmayın.")
++        return 3
++
++    # Kaynak ve hedefin aynı fiziksel diskte olup olmadığı (bilgilendirme için).
++    ayni_disk = os.stat(DB_PATH).st_dev == os.stat(hedef).st_dev
++
+     print("✅ Yedek alındı")
+-    print(f"   Dosya  : {hedef_dosya}")
+-    print(f"   Boyut  : {boyut / 1024:.1f} KB")
+-    print(f"   Tablo   : {tablo} (bütünlük: {sonuc})")
+-    print(f"   Saklanan: {len(mevcut) - silinen} yedek (en fazla {sakla})"
+-          + (f", {silinen} eski silindi" if silinen else ""))
++    print(f"   Dosya  : {os.path.join(hedef, g['dosya'])}")
++    print(f"   Boyut  : {g['boyut'] / 1024:.1f} KB")
++    print(f"   Tablo   : {g['tablo']} (bütünlük: {g['mesaj']})")
+     if ayni_disk:
+         print("ℹ️  Not: yedek, kaynakla aynı diskte — yanlışlıkla silme/bozulmaya")
+         print("        karşı korur; disk arızasına karşı hedefi harici disk/bulut yapın.")

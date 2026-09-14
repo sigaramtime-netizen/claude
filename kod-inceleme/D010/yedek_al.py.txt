@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Brn Teknoloji ERP — Yedekleme Aracı
+====================================
+data/erp.db dosyasını tarih damgalı, tutarlı bir anlık görüntü olarak kopyalar.
+
+Kullanım:
+    python3 yedek_al.py [hedef_klasor] [saklanacak_adet]
+
+    hedef_klasor      : yedeklerin yazılacağı klasör (varsayılan: ./yedek)
+    saklanacak_adet   : kaç yedeğin saklanacağı (varsayılan: 30, eskiler silinir)
+
+Örnek:
+    python3 yedek_al.py yedek 30
+    python3 yedek_al.py "/mnt/harici_disk/erp_yedek" 90
+    python3 yedek_al.py "/home/user/Google Drive/erp_yedek" 30
+
+Çıkış kodu:
+    0  başarılı (yedek alındı ve bütünlük doğrulandı)
+    1  veritabanı bulunamadı
+    2  geçersiz argüman
+    3  yedek alındı ama bütünlük doğrulaması başarısız (güvenilir DEĞİL)
+
+Notlar:
+- SQLite'ın .backup() API'si kullanılır; uygulama çalışıyor olsa bile (canlı
+  yazma sırasında) tutarlı bir anlık görüntü alınır — dosya kopyalamaktan güvenlidir.
+- Aynı veritabanına hiçbir şey YAZMAZ, yalnızca okur ve yeni dosya oluşturur.
+- Yedek alındıktan sonra PRAGMA integrity_check ile DOĞRULANIR; "ok" değilse
+  script uyarı verir ve çıkış kodu 3 döner.
+- Yalnızca kendi ürettiği erp-*.db dosyalarını budar; klasördeki diğer dosyalara
+  dokunmaz.
+- ÖNEMLİ: varsayılan hedef (./yedek) kaynakla aynı disktedir — bu yalnızca
+  yanlışlıkla silme/bozulmaya karşı korur. Disk arızasına karşı hedefi harici
+  disk / bulut senkron klasörü yapın (betik her yolu kabul eder).
+- Haftalık otomatik çalıştırma (cron) örneği:
+      0 3 * * 1  cd /home/user/erp && python3 yedek_al.py /mnt/yedek/erp 30
+  (Her pazartesi 03:00'te yedek alır, son 30 adedi saklar.)
+"""
+
+import os
+import sys
+import sqlite3
+from datetime import datetime
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "data", "erp.db")
+
+HELP_FLAGS = {"-h", "--help", "/?"}
+
+
+def _dogrula(dosya):
+    """Yedek dosyasının bütünlüğünü doğrular.
+
+    Dönüş: (durum, tablo_sayisi, mesaj) — durum 'ok' veya 'hata'.
+    PRAGMA integrity_check sonucu GERÇEKTEN okunur ve değerlendirilir:
+    yalnızca "ok" başarı sayılır; aksi halde (veya dosya okunamıyorsa) 'hata' döner.
+    """
+    try:
+        k = sqlite3.connect(dosya)
+        try:
+            tablo = k.execute(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchone()[0]
+            sonuc = k.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            k.close()
+    except sqlite3.Error as e:
+        return "hata", None, f"doğrulanamadı → {e}"
+    if sonuc != "ok":
+        return "hata", tablo, f"bütünlük kontrolü: {sonuc}"
+    return "ok", tablo, sonuc
+
+
+def yedek_al(hedef, sakla=30):
+    """Tutarlı yedek al + bütünlük doğrula + eskileri buda (yeniden kullanılabilir).
+
+    Dönüş (dict):
+        ok      : bool   — yedek alındı ve bütünlük doğrulandı mı
+        dosya   : str    — yalnızca dosya adı (başarıda)
+        boyut   : int    — bayt
+        tablo   : int    — tablo sayısı (başarıda)
+        mesaj   : str    — hata açıklaması (başarısızlıkta)
+        silinen : int    — budanan eski yedek adedi
+    """
+    if not os.path.isfile(DB_PATH):
+        return {"ok": False, "mesaj": f"veritabanı bulunamadı → {DB_PATH}"}
+    os.makedirs(hedef, exist_ok=True)
+
+    # Mikrosaniye çözünürlüğü: aynı saniyede alınan iki yedek (örn. geri yükleme
+    # sırasındaki güvenlik yedeği) birbirinin üzerine YAZMASIN diye benzersiz damga.
+    damga = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    hedef_dosya = os.path.join(hedef, f"erp-{damga}.db")
+
+    # Tutarlı anlık görüntü: kaynağı okur, hedef dosyaya yazar.
+    try:
+        src = sqlite3.connect(DB_PATH)
+        try:
+            dst = sqlite3.connect(hedef_dosya)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+    except sqlite3.Error as e:
+        return {"ok": False, "dosya": os.path.basename(hedef_dosya), "mesaj": str(e)}
+
+    boyut = os.path.getsize(hedef_dosya)
+
+    # Bütünlük doğrulaması — sonuç GERÇEKTEN kontrol edilir (bkz. _dogrula).
+    durum, tablo, sonuc = _dogrula(hedef_dosya)
+    if durum != "ok":
+        try:
+            os.remove(hedef_dosya)  # bozuk yedeği diske bırakma
+        except OSError:
+            pass
+        return {"ok": False, "dosya": os.path.basename(hedef_dosya),
+                "mesaj": f"bütünlük doğrulaması başarısız → {sonuc}"}
+
+    # Eskileri buda (yalnızca bu aracın ürettiği erp-*.db dosyaları).
+    mevcut = sorted(
+        f for f in os.listdir(hedef)
+        if f.startswith("erp-") and f.endswith(".db")
+    )
+    silinen = 0
+    for eski in mevcut[: -sakla]:
+        try:
+            os.remove(os.path.join(hedef, eski))
+            silinen += 1
+        except OSError:
+            pass
+
+    return {"ok": True, "dosya": os.path.basename(hedef_dosya), "boyut": boyut,
+            "tablo": tablo, "mesaj": sonuc, "silinen": silinen}
+
+
+def main() -> int:
+    args = [a for a in sys.argv[1:]]
+    if args and args[0] in HELP_FLAGS:
+        print(__doc__)
+        return 0
+
+    hedef = args[0] if len(args) >= 1 else os.path.join(BASE_DIR, "yedek")
+    try:
+        sakla = int(args[1]) if len(args) >= 2 else 30
+    except ValueError:
+        print("HATA: saklanacak adet bir sayı olmalı. (ör: 30)")
+        return 2
+    if sakla < 1:
+        print("HATA: saklanacak adet en az 1 olmalı.")
+        return 2
+
+    if not os.path.isfile(DB_PATH):
+        print(f"HATA: veritabanı bulunamadı → {DB_PATH}")
+        return 1
+
+    g = yedek_al(hedef, sakla)
+    if not g["ok"]:
+        print(f"⚠️  UYARI: yedek alınamadı → {g.get('mesaj')}")
+        print(f"   Kaynak: {DB_PATH} — bu yedek güvenilir DEĞİL, kullanmayın.")
+        return 3
+
+    # Kaynak ve hedefin aynı fiziksel diskte olup olmadığı (bilgilendirme için).
+    ayni_disk = os.stat(DB_PATH).st_dev == os.stat(hedef).st_dev
+
+    print("✅ Yedek alındı")
+    print(f"   Dosya  : {os.path.join(hedef, g['dosya'])}")
+    print(f"   Boyut  : {g['boyut'] / 1024:.1f} KB")
+    print(f"   Tablo   : {g['tablo']} (bütünlük: {g['mesaj']})")
+    if ayni_disk:
+        print("ℹ️  Not: yedek, kaynakla aynı diskte — yanlışlıkla silme/bozulmaya")
+        print("        karşı korur; disk arızasına karşı hedefi harici disk/bulut yapın.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

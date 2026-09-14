@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Yedekleme — Brn Teknoloji ERP{% endblock %}
+{% block crumb %}Yönetim / Ayarlar / Yedekleme{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div><h1>💾 Yedekleme &amp; Geri Yükleme</h1>
+  <div class="desc">Veritabanının tutarlı anlık görüntüleri (SQLite <code>.backup()</code> + bütünlük doğrulama). Yalnızca Admin.</div></div>
+  <form method="post" action="/ayarlar/yedek/al">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="btn primary" type="submit">🔄 Şimdi Yedek Al</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Mevcut Yedekler <span class="muted">(son {{ sakla }} adet saklanır)</span></h2></div>
+  {% if not yedekler %}
+  <p class="hint">Henüz yedek yok. "Şimdi Yedek Al" ile ilk yedeği oluşturun.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr><th>Dosya</th><th>Boyut</th><th>Bütünlük</th><th>Tablo</th><th style="text-align:right">İşlem</th></tr>
+    </thead>
+    <tbody>
+    {% for y in yedekler %}
+      <tr>
+        <td><code>{{ y.ad }}</code></td>
+        <td>{{ (y.boyut / 1024)|round(1) }} KB</td>
+        <td>
+          {% if y.durum == 'ok' %}<span class="badge b-ok">ok</span>
+          {% else %}<span class="badge b-danger">bozuk</span>{% endif %}
+        </td>
+        <td>{{ y.tablo or '—' }}</td>
+        <td style="text-align:right; white-space:nowrap">
+          <a class="btn ghost" href="/ayarlar/yedek/indir/{{ y.ad }}">⬇ İndir</a>
+          <form method="post" action="/ayarlar/yedek/{{ y.ad }}/geri-yukle" style="display:inline"
+                onsubmit="return confirm('Bu yedek geri yüklensin mi? Önce otomatik güvenlik yedeği alınır.')">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <button class="btn warn" type="submit">↩ Geri Yükle</button>
+          </form>
+          <form method="post" action="/ayarlar/yedek/{{ y.ad }}/sil" style="display:inline"
+                onsubmit="return confirm('Bu yedek silinsin mi?')">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <button class="btn danger" type="submit">🗑</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="hint">⚠️ Yedekler sunucu diskinde tutulur. Disk arızasına karşı önemli yedekleri indirip harici ortamda saklayın.</p>
+</div>
+{% endblock %}

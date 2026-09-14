@@ -1,0 +1,169 @@
+# -*- coding: utf-8 -*-
+"""D010 — Uygulama İçi Yedekleme & Geri Yükleme (yalnız Admin).
+
+`kod/yedek_al.py` içindeki `yedek_al()` + `_dogrula()` yardımcıları yeniden kullanılır
+(kod çoğaltma yok). Web katmanı yalnızca rotaları + izinleri + path-traversal korumasını ekler.
+
+Güvenlik kararları:
+  * Tüm rotalar roles=("Admin",) — yedek TÜM şirketlerin verisini içerir, K1 kapsamına girmez.
+  * Dosya adı yalnızca `erp-YYYYMMDD-HHMMSS.db` desenine izin verilir (path traversal imkânsız).
+  * Geri yükleme: önce bütünlük doğrulanır; bozuk dosya reddedilir. Bütünlük ok ise önce
+    otomatik GÜVENLİK YEDEĞİ alınır, sonra yedek kopyalanır; sonrasında WAL kalıntıları
+    temizlenip şema/migrasyon yeniden uygulanır ve bütünlük tekrar doğrulanır.
+"""
+import os
+import re
+import sqlite3
+
+import db
+import yedek_al as ya
+
+from config import DB_PATH, DATA_DIR
+from core import route, render_template, redirect, flash, audit, Response
+
+ADMIN = ("Admin",)
+YEDEK_DIR = os.path.join(DATA_DIR, "yedek")
+SAKLA = 30
+# Mikrosaniye eki isteğe bağlı: yeni yedekler erp-YYYYMMDD-HHMMSS-ffffff.db;
+# eski (saniye çözünürlüklü) yedekler de yönetilebilsin diye her ikisi kabul.
+_AD_RE = re.compile(r"^erp-\d{8}-\d{6}(-\d{6})?\.db$")
+
+
+def _gecerli(ad):
+    """Yalnızca aracın ürettiği erp-YYYYMMDD-HHMMSS.db desenini kabul et."""
+    return bool(_AD_RE.match(ad or "")) and os.path.basename(ad) == ad
+
+
+def _liste():
+    os.makedirs(YEDEK_DIR, exist_ok=True)
+    out = []
+    for f in sorted(os.listdir(YEDEK_DIR), reverse=True):
+        if not _AD_RE.match(f):
+            continue
+        yol = os.path.join(YEDEK_DIR, f)
+        if not os.path.isfile(yol):
+            continue
+        durum, tablo, _ = ya._dogrula(yol)
+        st = os.stat(yol)
+        out.append({"ad": f, "boyut": st.st_size, "mtime": st.st_mtime,
+                    "durum": durum, "tablo": tablo})
+    return out
+
+
+def _geri_yukle(yol):
+    """Bütünlük → güvenlik yedeği → backup API ile geri yükle → şema uygula → son doğrulama."""
+    # 1) Yedek bütünlük doğrulaması — bozuk dosya GERİ YÜKLENMEZ.
+    durum, _tablo, sonuc = ya._dogrula(yol)
+    if durum != "ok":
+        return False, f"Geri yükleme reddedildi — yedek bütünlüğü bozuk: {sonuc}"
+
+    # 2) Otomatik güvenlik yedeği (geri yükleme öncesi zorunlu).
+    g = ya.yedek_al(YEDEK_DIR, SAKLA)
+    if not g["ok"]:
+        return False, "Güvenlik yedeği alınamadı: " + g["mesaj"]
+
+    # 3) Geri yükleme: yedek → canlı DB. SQLite'ın backup() API'si ters yönde kullanılır
+    #    (WAL/checkpoint güvenli; dosya kopyalamak veya -wal/-shm silmek YOKTUR).
+    try:
+        src = sqlite3.connect(yol)
+        try:
+            dst = sqlite3.connect(DB_PATH, timeout=10)
+            try:
+                dst.execute("PRAGMA busy_timeout = 8000")
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+    except sqlite3.Error as e:
+        return False, f"Geri yükleme başarısız: {e}"
+
+    # 4) Şemayı ve migrasyonları yeniden uygula (eski bir yedek gelmişse eksik kolonları ekle).
+    db.init_db()
+
+    # 5) Geri yükleme sonrası bütünlük doğrulaması.
+    try:
+        c = sqlite3.connect(DB_PATH)
+        try:
+            son = c.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            c.close()
+    except sqlite3.Error:
+        son = "hata"
+    if son != "ok":
+        return False, f"Geri yükleme sonrası doğrulama başarısız: {son}"
+
+    return True, (f"'{os.path.basename(yol)}' geri yüklendi "
+                  f"(öncesinde güvenlik yedeği: {g['dosya']}).")
+
+
+# ---------------------------------------------------------------------------
+# Rotalar
+# ---------------------------------------------------------------------------
+@route(r"/ayarlar/yedekler", roles=ADMIN)
+def yedekler(req):
+    return render_template("ayarlar/yedekler.html", yedekler=_liste(), sakla=SAKLA)
+
+
+@route(r"/ayarlar/yedek/al", methods=("POST",), roles=ADMIN)
+def yedek_al(req):
+    g = ya.yedek_al(YEDEK_DIR, SAKLA)
+    if g["ok"]:
+        flash(req, f"Yedek alındı: {g['dosya']} ({g['boyut'] // 1024} KB, "
+                   f"{g['tablo']} tablo, bütünlük: ok).", "ok")
+        audit(req, "yedek", 0, "al", {"dosya": g["dosya"], "boyut": g["boyut"]})
+    else:
+        flash(req, "Yedek alınamadı: " + g["mesaj"], "danger")
+    return redirect("/ayarlar/yedekler")
+
+
+@route(r"/ayarlar/yedek/indir/(?P<dosya>[^/]+)", roles=ADMIN)
+def yedek_indir(req, dosya):
+    if not _gecerli(dosya):
+        return Response("Geçersiz dosya adı.", "403 Forbidden")
+    yol = os.path.join(YEDEK_DIR, dosya)
+    if not os.path.isfile(yol):
+        return Response("Yedek bulunamadı.", "404 Not Found")
+    with open(yol, "rb") as f:
+        data = f.read()
+    return Response(data, "200 OK", [
+        ("Content-Type", "application/octet-stream"),
+        ("Content-Length", str(len(data))),
+        ("Content-Disposition", f'attachment; filename="{dosya}"'),
+    ])
+
+
+@route(r"/ayarlar/yedek/(?P<dosya>[^/]+)/sil", methods=("POST",), roles=ADMIN)
+def yedek_sil(req, dosya):
+    if not _gecerli(dosya):
+        flash(req, "Geçersiz dosya adı.", "danger")
+        return redirect("/ayarlar/yedekler")
+    yol = os.path.join(YEDEK_DIR, dosya)
+    if os.path.isfile(yol):
+        try:
+            os.remove(yol)
+            flash(req, f"{dosya} silindi.", "ok")
+            audit(req, "yedek", 0, "sil", {"dosya": dosya})
+        except OSError as e:
+            flash(req, f"Silinemedi: {e}", "danger")
+    else:
+        flash(req, "Yedek bulunamadı.", "danger")
+    return redirect("/ayarlar/yedekler")
+
+
+@route(r"/ayarlar/yedek/(?P<dosya>[^/]+)/geri-yukle", methods=("POST",), roles=ADMIN)
+def yedek_geri_yukle(req, dosya):
+    if not _gecerli(dosya):
+        flash(req, "Geçersiz dosya adı.", "danger")
+        return redirect("/ayarlar/yedekler")
+    yol = os.path.join(YEDEK_DIR, dosya)
+    if not os.path.isfile(yol):
+        flash(req, "Yedek bulunamadı.", "danger")
+        return redirect("/ayarlar/yedekler")
+    ok, mesaj = _geri_yukle(yol)
+    if ok:
+        flash(req, mesaj, "ok")
+        audit(req, "yedek", 0, "geri-yukle", {"dosya": dosya})
+    else:
+        flash(req, mesaj, "danger")
+    return redirect("/ayarlar/yedekler")

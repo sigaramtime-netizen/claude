@@ -1,0 +1,210 @@
+# -*- coding: utf-8 -*-
+"""D010 — Uygulama İçi Yedekleme & Geri Yükleme (v1.41.0) e2e testi.
+
+16 kontrol. Sunucu 8080'de çalışırken:
+    python3 test_d010_yedekleme.py
+
+Kapsam (GM onaylı D010 taslağı):
+  1-2   Yedek al + bütünlük doğrulama (listele)
+  3-4   Yetki: Admin dışı (Depo) 403 (GET + POST)
+  5     Path traversal: geçersiz/../ dosya adı reddi
+  6     İndir (octet-stream, boyut > 0)
+  7     Sil
+  8-11  Geri yükleme roundtrip + güvenlik yedeği + veri kanıtı
+  12    Bozuk yedek geri yüklenmez (DB sağlam kalır)
+  13-14 Regresyon: /saglik + F6/F5c uçları çalışır
+  15-16 FK bütünlüğü + D010TEST kalıntısı yok
+"""
+import os
+import sqlite3
+
+import requests
+
+import db as dbutil
+import yedek_al as ya
+
+from config import DB_PATH, DATA_DIR
+
+BASE = "http://127.0.0.1:8080"
+DB = "data/erp.db"
+MARK = "D010TEST"
+YEDEK_DIR = os.path.join(DATA_DIR, "yedek")
+
+ok, fail = [], []
+
+
+def check(name, cond, detay=""):
+    (ok if cond else fail).append(name)
+    print((("  ✅ " if cond else "  ❌ ") + name + (f"  → {detay}" if detay else "")))
+
+
+def db(q, *a):
+    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    r = c.execute(q, a).fetchall(); c.close(); return r
+
+
+def db1(q, *a):
+    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    r = c.execute(q, a).fetchone(); c.close(); return r
+
+
+def dbx(q, *a):
+    c = sqlite3.connect(DB); c.execute(q, a); c.commit(); c.close()
+
+
+def giris(kadi="admin", sifre="1234"):
+    s = requests.Session()
+    r = s.post(BASE + "/giris", data={"kullanici_adi": kadi, "sifre": sifre},
+               allow_redirects=False)
+    return s, r
+
+
+def yedekler_disk():
+    os.makedirs(YEDEK_DIR, exist_ok=True)
+    return sorted(f for f in os.listdir(YEDEK_DIR)
+                  if f.startswith("erp-") and f.endswith(".db"))
+
+
+# Temizlik: önceki çalışmalardan kalan işaret + çöp dosya
+dbx("DELETE FROM meta WHERE anahtar LIKE ?", MARK + "%")
+for f in yedekler_disk():
+    if f == "erp-20200101-000000.db":  # bozuk-test çöpü
+        try:
+            os.remove(os.path.join(YEDEK_DIR, f))
+        except OSError:
+            pass
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM A — Yedek Al + Listele")
+print("=" * 70)
+
+s, r = giris()
+check("1. admin girişi", r.status_code == 302 and bool(r.cookies.get("erp_session")),
+      f"status={r.status_code}")
+
+r = s.get(BASE + "/ayarlar/yedekler", allow_redirects=False)
+check("2. /ayarlar/yedekler (Admin) 200 + içerik",
+      r.status_code == 200 and "Mevcut Yedekler" in r.text and "Yedek Al" in r.text,
+      f"status={r.status_code}")
+
+once = len(yedekler_disk())
+r = s.post(BASE + "/ayarlar/yedek/al", allow_redirects=False)
+sonra = yedekler_disk()
+durum, tablo, _ = (ya._dogrula(os.path.join(YEDEK_DIR, sonra[-1]))
+                   if sonra else ("hata", 0, ""))
+check("3. yedek al → yeni erp-*.db + bütünlük ok",
+      r.status_code == 302 and len(sonra) == once + 1 and durum == "ok",
+      f"status={r.status_code}, önce={once}, sonra={len(sonra)}, bütünlük={durum}, tablo={tablo}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM B — Yetki (Admin dışı 403)")
+print("=" * 70)
+
+d, _ = giris("depo", "1234")
+r = d.get(BASE + "/ayarlar/yedekler", allow_redirects=False)
+check("4. Depo GET /ayarlar/yedekler → 403", r.status_code == 403, f"status={r.status_code}")
+r = d.post(BASE + "/ayarlar/yedek/al", allow_redirects=False)
+check("5. Depo POST /ayarlar/yedek/al → 403", r.status_code == 403, f"status={r.status_code}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM C — Path Traversal + İndir + Sil")
+print("=" * 70)
+
+r = s.get(BASE + "/ayarlar/yedek/indir/config.py", allow_redirects=False)
+check("6. geçersiz dosya adı (config.py) → 403", r.status_code == 403, f"status={r.status_code}")
+r = s.get(BASE + "/ayarlar/yedek/indir/..%2F..%2Fconfig.py", allow_redirects=False)
+check("7. traversal girişimi (..%2F..%2F) reddedilir (403/404)",
+      r.status_code in (403, 404), f"status={r.status_code}")
+
+hedef = sonra[-1]
+r = s.get(BASE + "/ayarlar/yedek/indir/" + hedef, allow_redirects=False)
+ct = r.headers.get("Content-Type", "")
+check("8. yedek indir → 200 + octet-stream + boyut>0",
+      r.status_code == 200 and ct == "application/octet-stream" and len(r.content) > 0,
+      f"status={r.status_code}, ct={ct}, size={len(r.content)}")
+
+r = s.post(BASE + "/ayarlar/yedek/" + hedef + "/sil", allow_redirects=False)
+kalan = yedekler_disk()
+check("9. yedek sil → dosya diskten gider",
+      r.status_code == 302 and hedef not in kalan, f"status={r.status_code}, kaldı={hedef in kalan}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM D — Geri Yükleme (roundtrip + güvenlik yedeği)")
+print("=" * 70)
+
+dbx("INSERT OR REPLACE INTO meta(anahtar, deger) VALUES(?, 'A')", MARK)
+r = s.post(BASE + "/ayarlar/yedek/al", allow_redirects=False)
+yedek_B = yedekler_disk()[-1]
+dbx("INSERT OR REPLACE INTO meta(anahtar, deger) VALUES(?, 'B')", MARK)
+
+adet_once = len(yedekler_disk())
+r = s.post(BASE + "/ayarlar/yedek/" + yedek_B + "/geri-yukle", allow_redirects=False)
+adet_sonra = len(yedekler_disk())
+deger = (db1("SELECT deger FROM meta WHERE anahtar=?", MARK) or {"deger": None})["deger"]
+check("10. geri yükleme → meta değeri 'A'ya döner (veri kanıtı)",
+      r.status_code == 302 and deger == "A", f"status={r.status_code}, deger={deger}")
+check("11. geri yükleme öncesi otomatik güvenlik yedeği alınır",
+      adet_sonra >= adet_once + 1, f"önce={adet_once}, sonra={adet_sonra}")
+
+# Geri yükleme sonrası oturumu tazele (sessionler tablosu yedekten geldi).
+s, _ = giris()
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM E — Bozuk Yedek Reddi")
+print("=" * 70)
+
+carpik = os.path.join(YEDEK_DIR, "erp-20200101-000000.db")
+with open(carpik, "wb") as f:
+    f.write(b"bu bir sqlite veritabani degil" * 64)
+dbx("INSERT OR REPLACE INTO meta(anahtar, deger) VALUES(?, 'C')", MARK)
+r = s.post(BASE + "/ayarlar/yedek/erp-20200101-000000.db/geri-yukle", allow_redirects=False)
+deger = (db1("SELECT deger FROM meta WHERE anahtar=?", MARK) or {"deger": None})["deger"]
+dbx("DELETE FROM meta WHERE anahtar=?", MARK)
+try:
+    os.remove(carpik)
+except OSError:
+    pass
+c = sqlite3.connect(DB)
+sonuc = c.execute("PRAGMA integrity_check").fetchone()[0]
+c.close()
+check("12. bozuk yedek geri yüklenmez (meta 'C' kalır, DB sağlam)",
+      deger == "C" and sonuc == "ok", f"deger={deger}, integrity={sonuc}")
+
+# =============================================================================
+print("=" * 70)
+print("BÖLÜM F — Regresyon + Bütünlük")
+print("=" * 70)
+
+s2, _ = giris()
+r = s2.get(BASE + "/api/saglik", allow_redirects=False)
+js = r.json()
+check("13. /api/saglik canlı + sürüm 1.41.0", r.status_code == 200 and js.get("surum") == "1.41.0",
+      f"status={r.status_code}, surum={js.get('surum')}")
+
+r = s2.get(BASE + "/api/bildirimler", allow_redirects=False)
+check("14. F6 bildirim API çalışıyor (200)", r.status_code == 200, f"status={r.status_code}")
+
+fk = db1("SELECT COUNT(*) c FROM pragma_foreign_key_check")["c"]
+kalinti = db1("SELECT COUNT(*) c FROM meta WHERE anahtar LIKE ?", MARK + "%")["c"]
+check("15. FK bütünlüğü 0 + D010TEST kalıntısı yok", fk == 0 and kalinti == 0,
+      f"fk={fk}, kalıntı={kalinti}")
+
+# Çalışma sırasında üretilen yedekleri temizle (teslimi kirletme).
+for f in yedekler_disk():
+    try:
+        os.remove(os.path.join(YEDEK_DIR, f))
+    except OSError:
+        pass
+check("16. test yedekleri temizlendi", yedekler_disk() == [], f"kalan={len(yedekler_disk())}")
+
+print()
+print(f"=== SONUÇ: {len(ok)} başarılı / {len(fail)} başarısız (toplam {len(ok) + len(fail)}) ===")
+if fail:
+    print("BAŞARISIZ:", fail)
+    raise SystemExit(1)
+print("TÜM D010 YEDEKLEME TESTLERİ GEÇTİ ✅")
