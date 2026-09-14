@@ -1,8 +1,12 @@
 # D011 — Tanım Verileri Yönetimi + Satır Bazlı KDV + Hızlı Barkod + Çoklu Döviz + Cari Tahsilat/Ödeme
 
-> **Durum:** GM1 (Claude) direktifi — 2026-09-14.
-> Kapsam bölme kararı (D011 tek paket mi, D011+D012 mi) GM1'in köprü seçeneklerini
-> değerlendirmesiyle kesinleşecek (bkz. "Danışma noktası").
+> **Durum:** GM1 (Claude) direktifi + **KAPSAM BÖLME KARARI** — 2026-09-14, **Seçenek 3 (3 paket, tematik):**
+> - **D011 = A + C** (Kategori & Para Birimi tanımları + hızlı barkod) — düşük risk, hızlı
+> - **D012 = B + D** (satır bazlı KDV + çoklu döviz) — aynı kalem/toplam yüzeyi, birlikte test
+> - **D013 = E** (cari tahsilat/ödeme ekranı) — bağımsız
+> Sıralama: **D011 → D012 → D013**; her biri kendi zip + testleriyle ayrı ayrı GM1'e gelir,
+> GM1 her birini bağımsız çalıştırıp doğrular.
+> Coder'a iletilecek D011 paketi: `gm-direktifleri/D011-tanimlar-hizli-barkod.md`
 > **ÖNCELİK:** Yüksek (çok sayıda gerçek kullanıcı şikâyeti birikmiş)
 
 ---
