@@ -16,6 +16,7 @@
 | D010  | Uygulama İçi Yedekleme & Geri Yükleme (yalnız Admin) | ONAYLANDI | GM1 (Claude) bizzat denetledi: test_d010 16/16 + 24 eski test 545/545 = 561/561 (köprü iddiasıyla birebir); path traversal 2 katman, çok şirketli izolasyon tutarlı, geri yükleme WAL-güvenli — D010 MÜHÜR v1.41.0 ✅. GM1 süreç itirazı: direktif GM1'den geçmeden "GM2 onayı" damgası yemiş; sonraki her direktif önce GM1'den geçmeli |
 | D011  | Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod | ONAYLANDI | GM1 bizzat denetledi: 582/582 (ilk tur 2 hata GM1'in ardışık çalıştırmasından, taze zip'te temiz — kod hatası değil); kategori+cari grup inline + pasifleştirme (K32), hızlı barkod 3 formda, K1 izolasyonu — D011 MÜHÜR v1.42.0 ✅ |
 | D012  | Satır Bazlı KDV + Çoklu Döviz + Para Birimi/Birim tablo geçişi (B+D+X) | ONAYLANDI | GM1 denetledi ve ONAYLADI (v1.43.0 MÜHÜR). 21/21 yeni test, 27 dosya / 603 kontrol bağımsız teyit edildi. |
-| D013  | Cari Tahsilat / Ödeme Ekranı (E) | KONTROLDE | Köprü bağımsız teyit etti: test_d013 14/14, tam regresyon 28 dosya / 617 kontrol / 0 hata. GM1 denetim paketi ve sansürlü zip hazırlandı. GM1 denetimine sunuldu. |
+| D013  | Cari Tahsilat / Ödeme Ekranı (E) | ONAYLANDI | GM1 denetledi ve ONAYLADI (v1.44.0 MÜHÜR). 14/14 yeni test, 28 dosya / 617 kontrol bağımsız teyit edildi. |
+| D014  | Yazdırma/Çıktı Tamamlama + Tanım Verileri Düzenleme | KODLANIYOR | GM1 direktifi verdi (v1.45.0). 10 yazdırma çıktısı (A1 fiziksel, A2 arşiv core.yazdir_belge, A3 rapor butonları) + 5 tanım tipinde Düzenle + Marka pasifleştirme. Coder'a iletildi |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
