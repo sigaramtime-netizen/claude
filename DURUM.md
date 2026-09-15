@@ -18,6 +18,7 @@
 | D012  | Satır Bazlı KDV + Çoklu Döviz + Para Birimi/Birim tablo geçişi (B+D+X) | ONAYLANDI | GM1 denetledi ve ONAYLADI (v1.43.0 MÜHÜR). 21/21 yeni test, 27 dosya / 603 kontrol bağımsız teyit edildi. |
 | D013  | Cari Tahsilat / Ödeme Ekranı (E) | ONAYLANDI | GM1 denetledi ve ONAYLADI (v1.44.0 MÜHÜR). 14/14 yeni test, 28 dosya / 617 kontrol bağımsız teyit edildi. |
 | D014  | Yazdırma/Çıktı Tamamlama + Tanım Verileri Düzenleme | ONAYLANDI | GM2 denetledi ve ONAYLADI (v1.45.0 MÜHÜR). 16/16 yeni test, 29 dosya / 633 kontrol bağımsız teyit edildi. |
-| D015  | Toplu İçe/Dışa Aktarma Birliği + Yardım Merkezi + Sistem Bilgi Paneli | KONTROLDE | Köprü bağımsız teyit etti: test_d015 12/12, tam regresyon 30 dosya / 645 kontrol / 0 hata. GM2 denetim paketi ve sansürlü zip hazırlandı. GM2 denetimine sunuldu. |
+| D015  | Toplu İçe/Dışa Aktarma Birliği + Yardım Merkezi + Sistem Bilgi Paneli | ONAYLANDI | GM2 denetledi ve ONAYLADI (v1.46.0 MÜHÜR — Prod Adayı). 12/12 yeni test, 30 dosya / 645 kontrol bağımsız teyit edildi. |
+| D016  | Final Kabul, Prod Checklist & Dokümantasyon Dondurma | KODLANIYOR | GM2 direktifi verdi (v1.47.0). Sıfır mantık, dokümantasyon dondurma, 68 tablo / 30 test / 22+3 modül checklist senkronizasyonu, config.SURUM bump. Coder'a iletildi |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
