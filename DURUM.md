@@ -17,6 +17,6 @@
 | D011  | Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod | ONAYLANDI | GM1 bizzat denetledi: 582/582 (ilk tur 2 hata GM1'in ardışık çalıştırmasından, taze zip'te temiz — kod hatası değil); kategori+cari grup inline + pasifleştirme (K32), hızlı barkod 3 formda, K1 izolasyonu — D011 MÜHÜR v1.42.0 ✅ |
 | D012  | Satır Bazlı KDV + Çoklu Döviz + Para Birimi/Birim tablo geçişi (B+D+X) | ONAYLANDI | GM1 denetledi ve ONAYLADI (v1.43.0 MÜHÜR). 21/21 yeni test, 27 dosya / 603 kontrol bağımsız teyit edildi. |
 | D013  | Cari Tahsilat / Ödeme Ekranı (E) | ONAYLANDI | GM1 denetledi ve ONAYLADI (v1.44.0 MÜHÜR). 14/14 yeni test, 28 dosya / 617 kontrol bağımsız teyit edildi. |
-| D014  | Yazdırma/Çıktı Tamamlama + Tanım Verileri Düzenleme | KODLANIYOR | GM1 direktifi verdi (v1.45.0). 10 yazdırma çıktısı (A1 fiziksel, A2 arşiv core.yazdir_belge, A3 rapor butonları) + 5 tanım tipinde Düzenle + Marka pasifleştirme. Coder'a iletildi |
+| D014  | Yazdırma/Çıktı Tamamlama + Tanım Verileri Düzenleme | KONTROLDE | Köprü bağımsız teyit etti: test_d014 16/16, tam regresyon 29 dosya / 633 kontrol / 0 hata. GM1 denetim paketi ve sansürlü zip hazırlandı. GM1 denetimine sunuldu. |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`

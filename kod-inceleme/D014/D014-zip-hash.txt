@@ -1,0 +1,17 @@
+D014 (v1.45.0) teslim ZIP — hash (SANSRÜRLÜ)
+===========================================
+dosya : teslim/D014-v1.45.0.zip
+boyut : 959221 bayt
+MD5   : 4c2375c2affbea3d2b596d61900113e5
+SHA256: 64b25c8d3916ad4e5aac500bfd061688193f60c1be84c793625abbf3332d7df8
+
+Sansür: gerçek kişi adı (Yakup Erbaş) → MÜŞTERİ-A / D007-MUSTERIA
+        (kod/test_d007_iyilestirmeler.py + docs/D007-kullanici-bildirimleri-ozet.md;
+        KÖPRÜ D009/D010/D011/D012/D013 deseniyle birebir, case-sensitive;
+        sansürlü test_d007 derlenebilir — SyntaxError yok).
+İçerik: kod/ + docs/ + ANAYASA/ROL/DURUM + D014 direktifi (kanonik GM1 dosyası) +
+        R014 raporu + demo seed'li DB (kod/data/erp.db; D014 sonrası, FK temiz).
+        PNG/resim YOK; __pycache__ YOK; data/yedek YOK.
+        Yeni (7): test_d014 + makbuz + servis/bakım/banka/demirbas yazdırma +
+        tanim_duzenle şablonları; silinen (1): teklif/yazdir.html (konsolidasyon).
+        Toplam 284 dosya.

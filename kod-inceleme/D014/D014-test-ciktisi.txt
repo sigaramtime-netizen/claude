@@ -1,0 +1,25 @@
+BÖLÜM A1 — Fiziksel Çıktılar
+  ✅ 1. makbuz 200 + belge/cari/kırılım/toplam/imza/kullanıcı  → status=200, belge=THS-2026-001
+  ✅ 2. servis fişi 200 + no/ariza/teknisyen/parça/işçilik  → status=200
+  ✅ 3. bakım sözleşmesi 200 + no/cihaz/bedel/koşullar  → status=200
+  ✅ 4. banka fişi 200 + BANKA FİŞİ/hesap/tutar  → status=200
+BÖLÜM A2 — Arşiv Çıktıları (yazdir_belge)
+  ✅ 5. transfer sevk 200 + DT-no/ürün/depolar, fiyatsız  → status=200
+  ✅ 6. demirbaş amortisman 200 + kod/dönem/net değer  → status=200
+  ✅ 7. satın alma talebi 200 + no/ürün/tahmini toplam  → status=200
+  ✅ 8. alınan teklif 200 + no/tedarikçi/genel toplam  → status=200
+  ✅ 9. teklif konsolidasyonu: ortak şablon (no + Genel Toplam)  → status=200, no=TKF-2026-001
+BÖLÜM A3 — Rapor Butonları + POS Kısayolu
+  ✅ 10. CRM/eksik/rapor Yazdır + POS fatura kısayolu  → crm=True, eksik=True, rapor=True, pos=True
+BÖLÜM B — Tanım Düzenleme + Koruma + Marka Pasif
+  ✅ 11. 4 tipte ad düzenleme OK (kategori/grup/döviz/marka)  → status=302/302/302/302
+  ✅ 12. kullanılan PB kodu kilitli (DT14 korunur) + boşta kod değişir  → kullanılan=DT14, boşta=ZZ9
+  ✅ 13. marka pasifleştirme + stok formunda seçilemez  → status=302, aktif=0
+  ✅ 14. kullanılan grup tipi + birim adı kilitli  → tip=Bölge, birim=D014TEST Birim
+BÖLÜM K1/FK — İzolasyon + Bütünlük
+  ✅ 15. K1: yabancı servis yazdır + yabancı marka düzenle engellenir  → servis=302, marka=302
+BÖLÜM F — Temizlik
+  ✅ 16. FK bütünlüğü 0 + D014TEST kalıntısı yok  → fk=0, kalıntı=0
+
+=== SONUÇ: 16 başarılı / 0 başarısız (toplam 16) ===
+TÜM D014 TESTLERİ GEÇTİ ✅
