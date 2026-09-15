@@ -1,0 +1,17 @@
+D015 (v1.46.0) teslim ZIP — hash (SANSRÜRLÜ)
+===========================================
+dosya : teslim/D015-v1.46.0.zip
+boyut : 1000323 bayt
+MD5   : 941d574e9cd35166008e10d617f0f064
+SHA256: 8dc43c42e00198a47e9469f7cea2db1ef2c4733b537970d9959cf188525a231b
+
+Sansür: gerçek kişi adı (Yakup Erbaş) → MÜŞTERİ-A / D007-MUSTERIA
+        (kod/test_d007_iyilestirmeler.py + docs/D007-kullanici-bildirimleri-ozet.md;
+        KÖPRÜ deseniyle birebir, case-sensitive; sansürlü test_d007
+        derlenebilir — SyntaxError yok).
+İçerik: kod/ + docs/ + ANAYASA/ROL/DURUM + D015 direktifi (kanonik GM2 dosyası) +
+        R015 raporu + demo seed'li DB (kod/data/erp.db; D015 sonrası, FK temiz).
+        PNG/resim YOK; __pycache__ YOK; data/yedek YOK.
+        Yeni (9): aktarim.py + yardim.py + sistem.py + test_d015 +
+        shortcuts.js + aktarim form/onizleme + yardim merkez + sistem bilgi şablonları.
+        Toplam 293 dosya.

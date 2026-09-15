@@ -1,0 +1,35 @@
+===== D015 (v1.46.0) — TAM REGRESYON =====
+Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.46.0
+
+[test_alinan_teklif.py           ] exit=0 | SONUÇ: 23 başarılı / 0 başarısız
+[test_bakim.py                   ] exit=0 | === SONUÇ: 29 başarılı / 0 başarısız ===
+[test_belge_sayac_e2e.py         ] exit=0 | SONUÇ: 9 başarılı / 0 başarısız
+[test_coklu_sirket.py            ] exit=0 | SONUÇ: 16 başarılı / 0 başarısız
+[test_crm.py                     ] exit=0 | === SONUÇ: 25 başarılı / 0 başarısız ===
+[test_d007_iyilestirmeler.py     ] exit=0 | === SONUÇ: 31 başarılı / 0 başarısız (toplam 31) ===
+[test_d009_guvenlik.py           ] exit=0 | === SONUÇ: 18 başarılı / 0 başarısız (toplam 18) ===
+[test_d010_yedekleme.py          ] exit=0 | === SONUÇ: 16 başarılı / 0 başarısız (toplam 16) ===
+[test_d011_tanimlar_barkod.py    ] exit=0 | === SONUÇ: 21 başarılı / 0 başarısız (toplam 21) ===
+[test_d012_kdv_doviz_master.py   ] exit=0 | === SONUÇ: 21 başarılı / 0 başarısız (toplam 21) ===
+[test_d013_cari_tahsilat_odeme.py] exit=0 | === SONUÇ: 14 başarılı / 0 başarısız (toplam 14) ===
+[test_d014_yazdirma_tanimlar.py  ] exit=0 | === SONUÇ: 16 başarılı / 0 başarısız (toplam 16) ===
+[test_d015_toplu_yardim_sistem.py] exit=0 | === SONUÇ: 12 başarılı / 0 başarısız (toplam 12) ===
+[test_eksik_teslimat.py          ] exit=0 | SONUÇ: 21 başarılı / 0 başarısız
+[test_f1_mali.py                 ] exit=0 | === SONUÇ: 25 başarılı / 0 başarısız ===
+[test_f2_kdv.py                  ] exit=0 | === SONUÇ: 34 başarılı / 0 başarısız ===
+[test_f3_arama.py                ] exit=0 | === SONUÇ: 30 başarılı / 0 başarısız ===
+[test_f4_edonusum.py             ] exit=0 | === SONUÇ: 22 başarılı / 0 başarısız ===
+[test_f5a_finansal.py            ] exit=0 | SONUÇ: 18/18 geçti, 0 başarısız
+[test_f5b_demirbas.py            ] exit=0 | SONUÇ: 18/18 geçti, 0 başarısız
+[test_f5c_beyanname.py           ] exit=0 | SONUÇ: 18/18 geçti, 0 başarısız
+[test_f6_cila.py                 ] exit=0 | SONUÇ: 18/18 geçti, 0 başarısız
+[test_izolasyon_e2e.py           ] exit=0 | SONUÇ: 22 başarılı / 0 başarısız
+[test_izolasyon_mali_e2e.py      ] exit=0 | SONUÇ: 19 başarılı / 0 başarısız
+[test_manuel_satir.py            ] exit=0 | SONUÇ: 28 ✅ / 0 ❌
+[test_pos.py                     ] exit=0 | === SONUÇ: 41 başarılı / 0 başarısız ===
+[test_satin_alma_talep.py        ] exit=0 | SONUÇ: 23 başarılı / 0 başarısız
+[test_silme_kurallari.py         ] exit=0 | SONUÇ: 23 başarılı / 0 başarısız
+[test_sirket_yonetimi.py         ] exit=0 | SONUÇ: 19 başarılı / 0 başarısız
+[test_teklif_siparis_manuel.py   ] exit=0 | SONUÇ: 15 başarılı / 0 başarısız
+
+TOPLAM: 30 dosya, 645 kontrol, 0 başarısız (exit!=0 veya fail: 0)
