@@ -1,0 +1,15 @@
+D016 (v1.47.0) PROD FİNAL teslim ZIP — hash (SANSRÜRLÜ)
+====================================================
+dosya : teslim/D016-v1.47.0.zip
+boyut : 1012421 bayt
+MD5   : 9afa331fa31f926ab68d4c3b6a0b74ad
+SHA256: 87ab075f90dbfff6911fb0d1d174404d37b228edb2184feecc7b46c813dbf87f
+
+Sansür: gerçek isim ZIP'in hiçbir metin dosyasında geçmiyor (tam tarama temiz);
+        2 kaynak dosya paketleyiciyle MÜŞTERİ-A / D007-MUSTERIA'ya çevrilir
+        (kod/test_d007_iyilestirmeler.py + docs/D007-kullanici-bildirimleri-ozet.md;
+        sansürlü test_d007 derlenebilir — SyntaxError yok).
+İçerik: kod/ (SURUM=1.47.0) + docs/ (FINAL-KABUL v1.47 senkronlu) + ANAYASA/ROL/DURUM +
+        D016 direktifi (kanonik GM2 dosyası) + R016 raporu +
+        demo seed'li DB (kod/data/erp.db; 68 tablo, FK temiz).
+        PNG/resim YOK; __pycache__ YOK; data/yedek YOK. Toplam 293 dosya.

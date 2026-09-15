@@ -1,0 +1,19 @@
+BÖLÜM A — Aktarım Birliği
+  ✅ 1. şablonlar 200 + BOM + doğru başlık  → status=200/200/200
+  ✅ 2. marka/birim/kategori: önizleme (yazma yok) + onay → DB'de  → [('marka', True, 302), ('birim', True, 302), ('kategori', True, 302)]
+  ✅ 3. stok aktarım: FK çözümleme + audit  → status=302, audit=4
+  ✅ 4. cari aktarım: tip + limit doğru  → status=302
+  ✅ 5. validasyon: 3 hata + token yok + yazma yok  → hatalar listelendi, yazılan=0
+  ✅ 6. mevcut kayıt atlanır (çift yazılmaz)  → önce=1, sonra=1
+  ✅ 7. K1: s2 aktarımı izole (sirket_id + s1 dökümünde yok)  → sirket=253
+  ✅ 8. dışa aktarma CSV'de MARK satırları  → stok+cari CSV OK
+BÖLÜM B — Yardım + Kısayollar
+  ✅ 9. /yardim 12 kart + ?q filtresi  → kart=12
+  ✅ 10. shortcuts.js <2KB + base modal  → boyut=1622
+BÖLÜM C — Sistem Bilgi
+  ✅ 11. admin 200 (sürüm+hash+integrity+FK+saglik) + satis 403  → satis=403
+BÖLÜM F — Temizlik
+  ✅ 12. FK bütünlüğü 0 + D015TEST kalıntısı yok  → fk=0, kalıntı=0
+
+=== SONUÇ: 12 başarılı / 0 başarısız (toplam 12) ===
+TÜM D015 TESTLERİ GEÇTİ ✅

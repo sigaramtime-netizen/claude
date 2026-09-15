@@ -1,0 +1,15 @@
+ DURUM.md                                 |  2 +-
+ coder-raporlari/R016-final-kabul-prod.md | 34 ++++++++++++++++
+ docs/FINAL-KABUL-PROD-CHECKLIST.md       | 65 ++++++++++++++++++++++--------
+ kod/CHANGELOG.md                         | 17 ++++++++
+ kod/config.py                            |  2 +-
+ kod/regresyon_runner.py                  |  4 +-
+ kod/test_d010_yedekleme.py               |  4 +-
+ kod/test_d011_tanimlar_barkod.py         |  2 +-
+ kod/test_d012_kdv_doviz_master.py        |  2 +-
+ kod/test_d013_cari_tahsilat_odeme.py     |  2 +-
+ kod/test_d014_yazdirma_tanimlar.py       |  2 +-
+ kod/test_d015_toplu_yardim_sistem.py     |  6 +--
+ kod/test_f6_cila.py                      |  2 +-
+ paketle_d016.py                          | 69 ++++++++++++++++++++++++++++++++
+ 14 files changed, 182 insertions(+), 31 deletions(-)
