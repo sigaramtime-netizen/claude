@@ -1,0 +1,16 @@
+D013 (v1.44.0) teslim ZIP — hash (SANSRÜRLÜ)
+===========================================
+dosya : teslim/D013-v1.44.0.zip
+boyut : 916608 bayt
+MD5   : 73f8cfad3b27fe011f1e743268a12fd8
+SHA256: 9b804e5a367a80cf4743ef7e093739a47f4669d37c3f78171742b0b7aa9bb9d8
+
+Sansür: gerçek kişi adı (Yakup Erbaş) → MÜŞTERİ-A / D007-MUSTERIA
+        (kod/test_d007_iyilestirmeler.py + docs/D007-kullanici-bildirimleri-ozet.md;
+        KÖPRÜ D009/D010/D011/D012 deseniyle birebir, case-sensitive; sansürlü test_d007
+        derlenebilir — SyntaxError yok).
+İçerik: kod/ + docs/ + ANAYASA/ROL/DURUM + D013 direktifi (kanonik GM1 dosyası) +
+        R013 raporu + demo seed'li DB (kod/data/erp.db; D013 sonrası, FK temiz).
+        PNG/resim YOK; __pycache__ YOK; data/yedek YOK.
+        Yeni: kod/cari_odeme.py + kod/test_d013_cari_tahsilat_odeme.py +
+        kod/templates/cari/tahsilat_odeme.html (278 dosya).

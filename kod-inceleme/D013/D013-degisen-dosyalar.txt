@@ -1,0 +1,19 @@
+ DURUM.md                                    |   2 +-
+ coder-raporlari/R013-cari-tahsilat-odeme.md |  59 ++++++
+ kod/CHANGELOG.md                            |  24 +++
+ kod/app.py                                  |   1 +
+ kod/cari_odeme.py                           | 294 ++++++++++++++++++++++++++++
+ kod/cek_senet.py                            |  34 +++-
+ kod/config.py                               |   4 +-
+ kod/regresyon_runner.py                     |   4 +-
+ kod/templates/cari/detay.html               |   2 +
+ kod/templates/cari/ekstre.html              |   2 +
+ kod/templates/cari/tahsilat_odeme.html      | 199 +++++++++++++++++++
+ kod/templates/kartoteks/cari.html           |   2 +-
+ kod/test_d010_yedekleme.py                  |   4 +-
+ kod/test_d011_tanimlar_barkod.py            |   2 +-
+ kod/test_d012_kdv_doviz_master.py           |   4 +-
+ kod/test_d013_cari_tahsilat_odeme.py        | 294 ++++++++++++++++++++++++++++
+ kod/test_f6_cila.py                         |   2 +-
+ paketle_d013.py                             |  69 +++++++
+ 18 files changed, 980 insertions(+), 22 deletions(-)
