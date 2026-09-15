@@ -1,0 +1,43 @@
+===== D012 (v1.43.0) — DEĞİŞEN DOSYA LİSTESİ (diff: eb4ff25..5885ce2) =====
+Commit: 5885ce2 | Tarih: 2026-09-15 07:18:57 +0000
+
+ DURUM.md                                           |   2 +-
+ ...12-satir-kdv-coklu-doviz-parabirimi-birim-db.md | 132 ++++++++++
+ kanitlar/v1.43.0/D012-tam-regresyon.txt            |  32 +++
+ kanitlar/v1.43.0/D012-test-ciktisi.txt             |  36 +++
+ kod/CHANGELOG.md                                   |  40 +++
+ kod/alinan_teklif.py                               |   6 +-
+ kod/ayarlar.py                                     |  46 +++-
+ kod/banka.py                                       |   4 +-
+ kod/cari.py                                        |  41 ++-
+ kod/cek_senet.py                                   |  10 +-
+ kod/config.py                                      |   4 +-
+ kod/db.py                                          | 106 +++++++-
+ kod/doviz.py                                       |  16 +-
+ kod/fatura.py                                      |  30 ++-
+ kod/irsaliye.py                                    |  36 ++-
+ kod/kartoteks.py                                   |  35 ++-
+ kod/kasa.py                                        |   4 +-
+ kod/regresyon_runner.py                            |   4 +-
+ kod/satin_alma.py                                  |   2 +-
+ kod/siparis.py                                     |  28 ++-
+ kod/static/js/form-satir.js                        |  56 ++++-
+ kod/stok.py                                        |  57 ++++-
+ kod/teklif.py                                      |  28 ++-
+ kod/templates/ayarlar/tanimlar.html                |  63 ++++-
+ kod/templates/cari/ekstre.html                     |  23 ++
+ kod/templates/fatura/detay.html                    |   6 +
+ kod/templates/fatura/form.html                     |   2 +-
+ kod/templates/irsaliye/form.html                   |   2 +-
+ kod/templates/kartoteks/cari.html                  |  12 +
+ kod/templates/siparis/detay.html                   |   6 +
+ kod/templates/siparis/form.html                    |   2 +-
+ kod/templates/stok/form.html                       |  76 +++++-
+ kod/templates/teklif/detay.html                    |   6 +
+ kod/templates/teklif/form.html                     |   2 +-
+ kod/test_d010_yedekleme.py                         |   4 +-
+ kod/test_d011_tanimlar_barkod.py                   |   2 +-
+ kod/test_d012_kdv_doviz_master.py                  | 279 +++++++++++++++++++++
+ kod/test_f6_cila.py                                |   2 +-
+ paketle_d012.py                                    |  69 +++++
+ 39 files changed, 1205 insertions(+), 106 deletions(-)

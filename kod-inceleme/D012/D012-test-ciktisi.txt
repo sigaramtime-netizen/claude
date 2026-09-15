@@ -1,0 +1,36 @@
+  ✅ 1. admin girişi  → status=302
+======================================================================
+BÖLÜM B — Satır Bazlı KDV (aynı belgede karışık dahil/hariç)
+======================================================================
+  ✅ 2. karışık KDV toplamları doğru (ara=200, kdv=40, genel=240)  → 200.0/40.0/240.0
+  ✅ 3. kalemlerde kdv_dahil override saklandı (0,1) + dahil satır net yazıldı  → [(0, 100.0), (1, 100.0)]
+  ✅ 4. boş override → belge geneli uygulanır (kdv_dahil NULL + net yazılır, kdv=20, genel=120)  → kdv_dahil=None, fiyat=100.0, kdv=20.0, genel=120.0
+======================================================================
+BÖLÜM X — Para Birimi & Birim DB Tablo (tohum / inline / pasifleştir / K1)
+======================================================================
+  ✅ 5. tohum: para_birimi 4 (TRY/USD/EUR/GBP) + birim 11  → pb=4, br=11
+  ✅ 6. birim inline ekleme (200 + aktif=1 + sirket_id=1)  → status=200, id=25
+  ✅ 7. birim idempotent (küçük harf → aynı id)  → id=25
+  ✅ 8. para birimi inline ekleme (200 + aktif=1 + sirket_id=1)  → status=200, id=18
+  ✅ 9. para birimi idempotent (küçük harf kod → aynı id)  → id=18
+  ✅ 10. STOK_WRITE dışı rol (servis) → 403  → status=403
+  ✅ 11. birim pasifleştirildi (aktif=0, silinmedi)  → aktif=0
+  ✅ 12. pasif birim stok formunda seçilemez  → status=200
+  ✅ 13. para birimi pasifleştirildi (aktif=0, silinmedi)  → aktif=0
+  ✅ 14. TRY pasifleştirilemez (aktif=1 korunur)  → aktif=1
+  ✅ 15. K1 izolasyonu (birim + para birimi şirket bazlı ayrı kayıt)  → brm=25(1)/26(68), pb=18(1)/19(68)
+======================================================================
+BÖLÜM D — Döviz + TL Eşzamanlı Gösterim & Filtreler
+======================================================================
+  ✅ 16. USD fatura detayında döviz + TL karşılığı görünür  → status=200
+  ✅ 17. cari hareket K2: TL karşılığı (borc = genel×kur) + para_birimi=USD  → borc=4104.0, beklenen=4104.0
+  ✅ 18. ekstre Para Birimi filtresi: USD hareket görünür, TRY gizlenir  → status=200
+  ✅ 19. ekstre döviz alt toplamları (Tümü) + kartoteks pb filtresi  → status=200
+  ✅ 20. kartoteks Para Birimi filtresi + döviz alt toplamları  → status=200
+======================================================================
+BÖLÜM F — Bütünlük + Kalıntı Temizliği
+======================================================================
+  ✅ 21. FK bütünlüğü 0 + D012TEST kalıntısı yok  → fk=0, kalıntı=0
+
+=== SONUÇ: 21 başarılı / 0 başarısız (toplam 21) ===
+TÜM D012 TESTLERİ GEÇTİ ✅

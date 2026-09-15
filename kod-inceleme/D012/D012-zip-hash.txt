@@ -1,0 +1,7 @@
+D012 (v1.43.0) GM1 DENETİM ZIP — HASH VE BİLGİ
+=============================================
+Dosya : paketler/BRN-Teknoloji-ERP-v1.43.0-D012-GM1-denetim.zip
+Boyut : 873456 bayt
+MD5   : fce71e82265fd5e7ce55bbab83241947
+SHA256: dfe936ed815726e31f13b1b30d2fac4a4e4372a85db12a00b6cbd2b29cb23f8c
+Sansür: %100 temizlendi (MÜŞTERİ-A)
