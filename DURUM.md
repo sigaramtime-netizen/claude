@@ -20,6 +20,7 @@
 | D014  | Yazdırma/Çıktı Tamamlama + Tanım Verileri Düzenleme | ONAYLANDI | GM2 denetledi ve ONAYLADI (v1.45.0 MÜHÜR). 16/16 yeni test, 29 dosya / 633 kontrol bağımsız teyit edildi. |
 | D015  | Toplu İçe/Dışa Aktarma Birliği + Yardım Merkezi + Sistem Bilgi Paneli | ONAYLANDI | GM2 denetledi ve ONAYLADI (v1.46.0 MÜHÜR — Prod Adayı). 12/12 yeni test, 30 dosya / 645 kontrol bağımsız teyit edildi. |
 | D016  | Final Kabul, Prod Checklist & Dokümantasyon Dondurma | ONAYLANDI | GM2 denetledi ve ONAYLADI (v1.47.0 PROD FİNAL MÜHÜR) 🏁. 68 tablo, 30 test dosyası / 645 kontrol 0 hata. |
-| D017  | Gerçek Ticari Akış & Akınsoft Standardı | KODLANIYOR | Direktif verildi (v1.48.0). Küsürat 6 hane serbestisi (step=any), Çift dövizli fatura gridi (USD+TL yan yana), Alış faturasında tedarikçi fatura no, Kalemlerde Stok Kodu+Barkod+Serbest Açıklama, Cari ekstrede tıklanabilir belge linkleri, Üst menüde Ödemeler & Tahsilatlar butonu. Coder'a iletildi |
+| D017  | Gerçek Ticari Akış & Akınsoft Standardı | ONAYLANDI | Köprü test etti: 6 hane küsürat, çift döviz grid, belge_no, 3'lü kalem, ekstre linkleri, tediye menüsü. 12/12 test, 31 dosya / 657 kontrol 0 hata (v1.48.0 MÜHÜR). |
+| D018  | Akıllı PDF / e-Fatura Okuyucu & Otomatik Cari/Stok/Fatura Entegrasyonu | KODLANIYOR | Direktif verildi (v1.49.0). PDF yükleme ile cariyi otomatik açma/eşleştirme, faturadaki stok kartlarını otomatik oluşturma, fatura başlık ve küsüratlı kalemleri tek tıkla doldurma. Coder'a iletildi |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
