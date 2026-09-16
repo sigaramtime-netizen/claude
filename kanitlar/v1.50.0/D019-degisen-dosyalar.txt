@@ -1,0 +1,55 @@
+ M DURUM.md
+ M kod/CHANGELOG.md
+ M kod/cari.py
+ M kod/config.py
+ M kod/core.py
+ M kod/db.py
+ M kod/efatura.py
+ M kod/efatura_parser.py
+ M kod/fatura.py
+ M kod/regresyon_runner.py
+ M kod/static/js/efatura-doldur.js
+ M kod/templates/cari/ekstre.html
+ M kod/templates/fatura/detay.html
+ M kod/templates/fatura/liste.html
+ M kod/templates/irsaliye/detay.html
+ M kod/templates/yazdir/belge.html
+ M kod/test_d010_yedekleme.py
+ M kod/test_d011_tanimlar_barkod.py
+ M kod/test_d012_kdv_doviz_master.py
+ M kod/test_d013_cari_tahsilat_odeme.py
+ M kod/test_d014_yazdirma_tanimlar.py
+ M kod/test_d015_toplu_yardim_sistem.py
+ M kod/test_d017_akinsoft_ticari_akis.py
+ M kod/test_d018_efatura_otomasyon.py
+ M kod/test_f6_cila.py
+?? coder-raporlari/R019-doviz-gosterim-ekstre-red-fisi.md
+?? kanitlar/v1.50.0/
+?? kod/templates/cari/ekstre_yazdir.html
+?? kod/test_d019_cift_doviz_gosterim.py
+ DURUM.md                              |   2 +-
+ kod/CHANGELOG.md                      |  31 ++++++++
+ kod/cari.py                           | 136 +++++++++++++++++++++++++++++-----
+ kod/config.py                         |   4 +-
+ kod/core.py                           |  14 +++-
+ kod/db.py                             |  38 +++++++++-
+ kod/efatura.py                        |  16 +++-
+ kod/efatura_parser.py                 |  84 +++++++++++++++++++--
+ kod/fatura.py                         | 123 +++++++++++++++++++++++++++---
+ kod/regresyon_runner.py               |   4 +-
+ kod/static/js/efatura-doldur.js       |  16 ++--
+ kod/templates/cari/ekstre.html        |  18 +++--
+ kod/templates/fatura/detay.html       |  34 +++++----
+ kod/templates/fatura/liste.html       |   1 +
+ kod/templates/irsaliye/detay.html     |  20 +++--
+ kod/templates/yazdir/belge.html       |  25 ++++---
+ kod/test_d010_yedekleme.py            |   4 +-
+ kod/test_d011_tanimlar_barkod.py      |   2 +-
+ kod/test_d012_kdv_doviz_master.py     |   2 +-
+ kod/test_d013_cari_tahsilat_odeme.py  |   2 +-
+ kod/test_d014_yazdirma_tanimlar.py    |   2 +-
+ kod/test_d015_toplu_yardim_sistem.py  |   6 +-
+ kod/test_d017_akinsoft_ticari_akis.py |   2 +-
+ kod/test_d018_efatura_otomasyon.py    |   2 +-
+ kod/test_f6_cila.py                   |   2 +-
+ 25 files changed, 489 insertions(+), 101 deletions(-)

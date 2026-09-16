@@ -1,0 +1,1119 @@
+diff --git a/DURUM.md b/DURUM.md
+index 6bb88c0..8452031 100644
+--- a/DURUM.md
++++ b/DURUM.md
+@@ -22,6 +22,6 @@
+ | D016  | Final Kabul, Prod Checklist & Dokümantasyon Dondurma | ONAYLANDI | GM2 denetledi ve ONAYLADI (v1.47.0 PROD FİNAL MÜHÜR) 🏁. 68 tablo, 30 test dosyası / 645 kontrol 0 hata. |
+ | D017  | Gerçek Ticari Akış & Akınsoft Standardı | ONAYLANDI | Köprü test etti: 6 hane küsürat, çift döviz grid, belge_no, 3'lü kalem, ekstre linkleri, tediye menüsü. 12/12 test, 31 dosya / 657 kontrol 0 hata (v1.48.0 MÜHÜR). |
+ | D018  | Akıllı PDF / e-Fatura Okuyucu & Otomatik Cari/Stok/Fatura Entegrasyonu | ONAYLANDI | pypdf entegrasyonu, herzEFATURA tam uyumlu, otomatik cari/stok/fatura doldurma. 11/11 test, 32 dosya / 668 kontrol 0 hata (v1.49.0 MÜHÜR). |
+-| D019  | Dövizli Gösterim, Ekstre Raporlama & e-Fatura Aktarım Cilası (H1-H9) | KODLANIYOR | Analist 05 raporu direktife dönüştürüldü (v1.50.0). Para filtresi döviz desteği, Fatura/İrsaliye yan yana USD+TL kolonları, Ekstre TL bazlı bakiye ve Yazdır/CSV desteği, Cari kod/il/ilçe otomasyonu, None temizliği, Red fişi. Coder'a iletildi |
++| D019  | Dövizli Gösterim, Ekstre Raporlama & e-Fatura Aktarım Cilası (H1-H9) | KODLANDI | Coder bitirdi (v1.50.0): `|para(birim)` + çift kolon (fatura/irsaliye/yazdır), FATURA NO + Tedarikçi Belge No, ekstre Bakiye(TL) + H6 kartı + yazdır/CSV, CARI- kod + il/ilçe, None temizliği, Red fişi (cari ters + storno + stok tersi + Reddedildi). 12/12 yeni test, 33 dosya / 680 kontrol 0 hata. Teslim ZIP + rapor hazır, KÖPRÜ kontrolüne sunuldu |
+ 
+ Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
+diff --git a/kod/CHANGELOG.md b/kod/CHANGELOG.md
+index 46c6c5c..6d01b5b 100644
+--- a/kod/CHANGELOG.md
++++ b/kod/CHANGELOG.md
+@@ -8,6 +8,37 @@ Biçim: [Keep a Changelog](https://keepachangelog.com) · Sürümleme: **v1.MINO
+ 
+ ---
+ 
++## v1.50.0 — 2026-09-16
++
++### Eklenen — D019: Dövizli Gösterim, Ekstre Raporlama & e-Fatura Cilası (H1-H9)
++KÖPRÜ direktifi (`D019-doviz-gosterim-ekstre-efatura-cila.md`, Analist 05 raporu).
++
++**Dövizli gösterim (H3/H4/H5):** `|para(birim)` filtresi ($/€/£/₺; dövizde asla
++₺). Fatura/irsaliye detay ve tüm yazdırma çıktıları dövizli belgede çift kolon
++(döviz + TL karşılığı), TL belgede tek kolon. Yazdırmada `FATURA NO` /
++`İRSALİYE NO` etiketi + `Tedarikçi Belge No` (Alış).
++
++**Ekstre (H6/H7):** Bakiye sütunu `Bakiye (TL)`; satırlarda TL tutar + döviz
++alt detayı (`1.000,00 $`); kartoteks altında para-birimi kartı
++(`1.000,00 USD ≈ 48.450,00 ₺ (Kur: 48,45)`). `/ekstre/yazdir` (Wolvox çıktı)
+++ `?fmt=csv` (BOM, `;`, TR sayı) + ekran butonları.
++
++**Kalan (H9):** Ödenen/kalan döviz bazlı, TL yaklaşık parantezde
++(`Ödenen: 500,00 $ (≈ 24.225,00 ₺) · Kalan: 500,00 $`); tahsilat/ödeme
++satırları kur ile belge para birimine çevrilir.
++
++**Aktarım cilası (H1/H2):** e-Fatura cari açılışında `CARI-{VKN}` tekil kodu
++(VKN yoksa seri) + adres→il/ilçe ayrışımı (UBL + 81 il sezgiseli). Fatura
++formu ve ekstrede `None` render temizliği.
++
++**Red fişi (H8):** Onaylı faturaya `🔁 Red / İptal Fişi` (Admin/Muhasebe):
++cari ters kaydı, yevmiye storno (`red` sahne), Fatura-bağlı stok tersi, durum
++→ `Reddedildi`. Bağlı tahsilat/ödeme varsa işlem engellenir.
++
++### Değişen
++- `fatura.durum` CHECK: `Reddedildi` eklendi (otomatik rebuild, veri korunur).
++- Regresyon: 33 dosya / 680 kontrol, 0 hata.
++
+ ## v1.49.0 — 2026-09-16
+ 
+ ### Eklenen — D018: Akıllı e-Fatura Okuyucu & Otomatik Entegrasyon
+diff --git a/kod/cari.py b/kod/cari.py
+index 2a04f42..a3d283b 100644
+--- a/kod/cari.py
++++ b/kod/cari.py
+@@ -8,7 +8,9 @@ BORÇ/ALACAK KONVANSİYONU (çift taraflı muhasebe, tip bazlı ters çevirme YO
+ Yön, cari kartının tipine göre değişmez; işaret (bakiye pozitif/negatif) "kim kime borçlu"yu söyler.
+ Faz 2'de Fatura modülü cari hareketlerini aynı konvansiyonla otomatik üretecektir.
+ """
++import csv
+ import datetime
++import io
+ import json
+ import urllib.parse
+ 
+@@ -394,6 +396,42 @@ def cari_sil(req, cid):
+     return redirect("/cari")
+ 
+ 
++def _ekstre_satirlar(rows, opening, cari_id):
++    """D019-H7 — ekstre satır zenginleştirme (ekran + yazdırma + CSV ortak).
++
++    K18: borc/alacak DAİMA TL karşılığı saklanır; bakiye TL bazlı yürür.
++    Döviz satırlar için orijinal tutar, satırın sabit kurundan geri hesaplanır.
++    """
++    bal = opening
++    for h in rows:
++        bal += (h["borc"] or 0) - (h["alacak"] or 0)
++        h["bakiye"] = bal
++        _pb_h = h.get("para_birimi") or "TRY"
++        _kur_h = h.get("doviz_kur") or 0.0
++        if _pb_h != "TRY" and _kur_h > 0:
++            h["borc_doviz"] = round((h["borc"] or 0) / _kur_h, 2)
++            h["alacak_doviz"] = round((h["alacak"] or 0) / _kur_h, 2)
++        else:
++            h["borc_doviz"] = h["alacak_doviz"] = None
++        # D017-M5 — tıklanabilir belge linki (detay + düzenleme akışı).
++        h["belge_url"] = None
++        _no = h.get("belge_no") or ""
++        _mod, _kid = h.get("ilgili_modul"), h.get("ilgili_kayit_id")
++        if _no.startswith("THS-") or _no.startswith("ODM-"):
++            h["belge_url"] = f"/cari/{cari_id}/makbuz/{_no}"
++        elif _mod == "Fatura" and _kid:
++            h["belge_url"] = f"/fatura/{_kid}"
++        elif _mod == "Irsaliye" and _kid:
++            h["belge_url"] = f"/irsaliye/{_kid}"
++        elif _mod == "Kasa" and _kid:
++            h["belge_url"] = f"/kasa/hareket/{_kid}/fis"
++        elif _mod == "Banka" and _kid:
++            h["belge_url"] = f"/banka/hareket/{_kid}/fis"
++        elif _mod == "CekSenet" and _kid:
++            h["belge_url"] = f"/cek_senet/{_kid}"
++    return rows
++
++
+ @route(r"/cari/(?P<cid>\d+)/ekstre", roles=())
+ def cari_ekstre(req, cid):
+     conn = db.get_conn()
+@@ -438,26 +476,7 @@ def cari_ekstre(req, cid):
+             "SELECT COALESCE(SUM(borc-alacak),0) AS s FROM cari_hareket WHERE " + " AND ".join(_ow),
+             _op,
+         ).fetchone()["s"]
+-    bal = opening
+-    for h in rows:
+-        bal += (h["borc"] or 0) - (h["alacak"] or 0)
+-        h["bakiye"] = bal
+-        # D017-M5 — tıklanabilir belge linki (detay + düzenleme akışı).
+-        h["belge_url"] = None
+-        _no = h.get("belge_no") or ""
+-        _mod, _kid = h.get("ilgili_modul"), h.get("ilgili_kayit_id")
+-        if _no.startswith("THS-") or _no.startswith("ODM-"):
+-            h["belge_url"] = f"/cari/{cari['id']}/makbuz/{_no}"
+-        elif _mod == "Fatura" and _kid:
+-            h["belge_url"] = f"/fatura/{_kid}"
+-        elif _mod == "Irsaliye" and _kid:
+-            h["belge_url"] = f"/irsaliye/{_kid}"
+-        elif _mod == "Kasa" and _kid:
+-            h["belge_url"] = f"/kasa/hareket/{_kid}/fis"
+-        elif _mod == "Banka" and _kid:
+-            h["belge_url"] = f"/banka/hareket/{_kid}/fis"
+-        elif _mod == "CekSenet" and _kid:
+-            h["belge_url"] = f"/cek_senet/{_kid}"
++    _ekstre_satirlar(rows, opening, cari["id"])
+ 
+     _tw, _tp = ["cari_id=?"], [cari["id"]]
+     if pb:
+@@ -479,6 +498,9 @@ def cari_ekstre(req, cid):
+             "FROM cari_hareket WHERE cari_id=? AND para_birimi=?", (cari["id"], _pb)).fetchone()
+         pb_totals.append({"kod": _pb, "borc": r["b"], "alacak": r["a"],
+                           "net": (r["b"] or 0) - (r["a"] or 0), "kur": r["k"] or 0.0})
++    if req.q("fmt") == "csv":
++        conn.close()
++        return _ekstre_csv(cari, rows, bakiye)
+     conn.close()
+ 
+     return render_template(
+@@ -490,6 +512,80 @@ def cari_ekstre(req, cid):
+     )
+ 
+ 
++def _ekstre_csv(cari, rows, bakiye):
++    """D019-H6 — ekstre CSV indirimi (BOM + ';' + TR sayı)."""
++    buf = io.StringIO()
++    w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
++    w.writerow(["Tarih", "Vade", "Belge Tipi", "Belge No", "Açıklama", "Para Birimi",
++                "Borç (TL)", "Alacak (TL)", "Bakiye (TL)"])
++
++    def _n(v):
++        return f"{(v or 0.0):.2f}".replace(".", ",")
++    for h in rows:
++        w.writerow([h.get("tarih") or "", h.get("vade") or "", h.get("belge_tipi") or "",
++                    h.get("belge_no") or "", h.get("aciklama") or "",
++                    h.get("para_birimi") or "TRY", _n(h.get("borc")), _n(h.get("alacak")),
++                    _n(h.get("bakiye"))])
++    w.writerow([])
++    w.writerow(["Bakiye (TL)", "", "", "", "", "", "", "", _n(bakiye)])
++    return Response("﻿" + buf.getvalue(), "200 OK", [
++        ("Content-Type", "text/csv; charset=utf-8"),
++        ("Content-Disposition",
++         f"attachment; filename=\"ekstre-{cari['id']}-{datetime.date.today().isoformat()}.csv\""),
++    ])
++
++
++@route(r"/cari/(?P<cid>\d+)/ekstre/yazdir", roles=())
++def cari_ekstre_yazdir(req, cid):
++    """D019-H6 — ekstre yazdırma çıktısı (Wolvox tema, filtreli)."""
++    conn = db.get_conn()
++    cari = conn.execute("SELECT * FROM cari_kart WHERE id=? AND sirket_id=?",
++                        (int(cid), db.sirket_id(req))).fetchone()
++    if not cari:
++        conn.close()
++        flash(req, "Cari bulunamadı.", "danger")
++        return redirect("/cari")
++    cari = dict(cari)
++    cari["tip_etiket"] = _tip_etiket(cari["tip"])
++    bas = req.q("bas")
++    bit = req.q("bit") or datetime.date.today().isoformat()
++    pb = req.q("pb")
++    sid = db.sirket_id(req)
++    if pb and pb not in db.para_birimleri(sid=sid):
++        pb = None
++    where, params = ["cari_id=?"], [cari["id"]]
++    if bas:
++        where.append("tarih >= ?")
++        params.append(bas)
++    if bit:
++        where.append("tarih <= ?")
++        params.append(bit)
++    if pb:
++        where.append("para_birimi=?")
++        params.append(pb)
++    rows = [dict(r) for r in conn.execute(
++        "SELECT * FROM cari_hareket WHERE " + " AND ".join(where) + " ORDER BY tarih, id",
++        params).fetchall()]
++    opening = 0.0
++    if bas:
++        _ow, _op = ["cari_id=?", "tarih < ?"], [cari["id"], bas]
++        if pb:
++            _ow.append("para_birimi=?")
++            _op.append(pb)
++        opening = conn.execute(
++            "SELECT COALESCE(SUM(borc-alacak),0) AS s FROM cari_hareket WHERE "
++            + " AND ".join(_ow), _op).fetchone()["s"]
++    _ekstre_satirlar(rows, opening, cari["id"])
++    tot = conn.execute(
++        "SELECT COALESCE(SUM(borc),0) b, COALESCE(SUM(alacak),0) a FROM cari_hareket "
++        "WHERE cari_id=?" + (" AND para_birimi=?" if pb else ""),
++        [cari["id"]] + ([pb] if pb else [])).fetchone()
++    conn.close()
++    return render_template("cari/ekstre_yazdir.html", cari=cari, hareketler=rows,
++                           bakiye=tot["b"] - tot["a"], top_borc=tot["b"],
++                           top_alacak=tot["a"], filtro={"bas": bas or "", "bit": bit, "pb": pb or ""})
++
++
+ @route(r"/cari/(?P<cid>\d+)/hareket", methods=("GET", "POST"), roles=WRITE_ROLES)
+ def cari_hareket(req, cid):
+     conn = db.get_conn()
+diff --git a/kod/config.py b/kod/config.py
+index f8f7561..cf9c9f8 100644
+--- a/kod/config.py
++++ b/kod/config.py
+@@ -16,8 +16,8 @@ FIRMA_ADI = "Brn Teknoloji"
+ FIRMA_ALT = "İşletme Yönetim Sistemi"
+ 
+ # Uygulama sürümü — her geliştirme partisinde artırılır; CHANGELOG.md ile birlikte izlenir.
+-SURUM = "1.49.0"
+-SURUM_TARIHI = "2026-09-15"
++SURUM = "1.50.0"
++SURUM_TARIHI = "2026-09-16"
+ 
+ # K18 — Döviz Takip: desteklenen para birimleri (TRY temel; kurlar doviz_kur tablosunda).
+ PARA_BIRIMLERI = ["TRY", "USD", "EUR", "GBP"]
+diff --git a/kod/core.py b/kod/core.py
+index 8d0a34f..585f409 100644
+--- a/kod/core.py
++++ b/kod/core.py
+@@ -546,9 +546,15 @@ def yazdir_belge(r, kalemler, no_key, tip_label):
+ 
+     `r` ilgili modülün _detay yardımcısının başlık dict'i, `kalemler` satır listesi.
+     """
++    _no_etiket = {"fatura_no": "FATURA NO", "irsaliye_no": "İRSALİYE NO",
++                  "teklif_no": "TEKLİF NO", "siparis_no": "SİPARİŞ NO",
++                  "talep_no": "TALEP NO", "transfer_no": "SEVK NO"}.get(no_key, "BELGE NO")
+     return {
+         "tip": tip_label,
+         "no": r.get(no_key),
++        "no_etiket": _no_etiket,
++        "belge_no": r.get("belge_no") or "",
++        "tip_kod": r.get("tip") or "",
+         "tarih": r.get("tarih"),
+         "vade": r.get("vade") or r.get("teslim_tarihi"),
+         "cari": r.get("cari_unvan") or "—",
+@@ -580,7 +586,11 @@ def sirket_koruma(req, kayit_sirket_id):
+ # --------------------------------------------------------------------------
+ # Şablon motoru
+ # --------------------------------------------------------------------------
+-def _para(v):
++PARA_SEMBOL = {"TRY": "₺", "USD": "$", "EUR": "€", "GBP": "£"}
++
++
++def _para(v, birim="TRY"):
++    """D019-H4 — para birimi duyarlı tutar. Belge dövizliyse ₺ basılmaz."""
+     try:
+         v = float(v or 0)
+     except (TypeError, ValueError):
+@@ -588,7 +598,7 @@ def _para(v):
+     s = f"{abs(v):,.2f}"
+     s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+     sign = "-" if v < 0 else ""
+-    return f"{sign}{s} ₺"
++    return f"{sign}{s} {PARA_SEMBOL.get((birim or 'TRY').upper(), '₺')}"
+ 
+ 
+ def _sayi(v):
+diff --git a/kod/db.py b/kod/db.py
+index d4cf13e..4f38558 100644
+--- a/kod/db.py
++++ b/kod/db.py
+@@ -736,7 +736,7 @@ CREATE TABLE IF NOT EXISTS fatura (
+     kaynak_irsaliye_id INTEGER REFERENCES irsaliye(id),
+     tarih TEXT NOT NULL,
+     vade TEXT,
+-    durum TEXT NOT NULL DEFAULT 'Taslak' CHECK (durum IN ('Taslak','Onaylandı','İptal')),
++    durum TEXT NOT NULL DEFAULT 'Taslak' CHECK (durum IN ('Taslak','Onaylandı','İptal','Reddedildi')),
+     para_birimi TEXT NOT NULL DEFAULT 'TRY',
+     doviz_kur REAL NOT NULL DEFAULT 1,
+     ara_toplam REAL NOT NULL DEFAULT 0,
+@@ -1307,6 +1307,42 @@ def _migrate(conn):
+         if "belge_no" not in cols:
+             conn.execute(f"ALTER TABLE {tablo} ADD COLUMN belge_no TEXT")
+ 
++    # --- D019-H8 (v1.50) — fatura CHECK'e 'Reddedildi' (tablo rebuild + trigger ihya) ---
++    _frow = conn.execute(
++        "SELECT sql FROM sqlite_master WHERE type='table' AND name='fatura'").fetchone()
++    if _frow and "'Reddedildi'" not in (_frow["sql"] or ""):
++        _fnew = _frow["sql"].replace(
++            "CHECK (durum IN ('Taslak','Onaylandı','İptal'))",
++            "CHECK (durum IN ('Taslak','Onaylandı','İptal','Reddedildi'))", 1)
++        if 'CREATE TABLE "fatura"' in _fnew:
++            _fnew = _fnew.replace('CREATE TABLE "fatura"', "CREATE TABLE fatura_yeni", 1)
++        elif "CREATE TABLE IF NOT EXISTS fatura" in _fnew:
++            _fnew = _fnew.replace("CREATE TABLE IF NOT EXISTS fatura",
++                                  "CREATE TABLE IF NOT EXISTS fatura_yeni", 1)
++        else:
++            _fnew = _fnew.replace("CREATE TABLE fatura", "CREATE TABLE fatura_yeni", 1)
++        conn.commit()
++        conn.execute("PRAGMA foreign_keys = OFF")
++        try:
++            conn.execute(_fnew)
++            conn.execute("INSERT INTO fatura_yeni SELECT * FROM fatura")
++            conn.execute("DROP TABLE fatura")
++            conn.execute("ALTER TABLE fatura_yeni RENAME TO fatura")
++        finally:
++            conn.commit()
++            conn.execute("PRAGMA foreign_keys = ON")
++        conn.executescript(
++            """
++            CREATE TRIGGER IF NOT EXISTS trg_fatura_sil_ebelge
++            AFTER DELETE ON fatura
++            BEGIN
++                DELETE FROM e_belge WHERE kaynak_fatura_id = OLD.id;
++                UPDATE gelen_belge SET donusum_fatura_id = NULL WHERE donusum_fatura_id = OLD.id;
++            END;
++            """)
++        conn.execute("CREATE INDEX IF NOT EXISTS idx_fatura_cari ON fatura(cari_id)")
++        conn.execute("CREATE INDEX IF NOT EXISTS idx_fatura_kaynak ON fatura(kaynak_irsaliye_id)")
++
+     # --- D007 (v1.39.0) — Stok kart ek alanlar (8 + model) + irsaliye döviz kuru ---
+     # Wolvox/Akınsoft referanslı alanlar: tevkifat, istisna, grup hiyerarşisi, özel kod 1-3.
+     # Geriye dönük uyumlu: mevcut kartlarda default 0/NULL; raporlar etkilenmez.
+diff --git a/kod/efatura.py b/kod/efatura.py
+index 81784a0..8922429 100644
+--- a/kod/efatura.py
++++ b/kod/efatura.py
+@@ -77,14 +77,26 @@ def _cari_bul_ya_da_ac(conn, req, cozum, sid):
+             return r["id"], False
+     if not unvan:
+         return None, False
++    # D019-H1 — kod None olmaz: VKN'den türetilir, yoksa CARI- serisinden tekil kod.
++    if vkn:
++        kod = f"CARI-{vkn}"
++        n = 2
++        while conn.execute("SELECT id FROM cari_kart WHERE kod=? AND sirket_id=?",
++                           (kod, sid)).fetchone():
++            kod = f"CARI-{vkn}-{n}"
++            n += 1
++    else:
++        kod = db.sonraki_belge_no(conn, "cari_kart", "kod", "CARI",
++                                  datetime.date.today().year, sid)
+     notlar = []
+     if c.get("ibanlar"):
+         notlar.append("IBAN: " + ", ".join(c["ibanlar"]))
+     cur = conn.execute(
+         "INSERT INTO cari_kart(kod, unvan, tip, telefon, email, vergi_dairesi, vergi_no, "
+-        "adres, not_, aktif, created_by, sirket_id) VALUES(?,?,?,?,?,?,?,?,?,1,?,?)",
+-        (None, unvan, "Tedarikci", c.get("telefon") or None, c.get("email") or None,
++        "adres, il, ilce, not_, aktif, created_by, sirket_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?,?)",
++        (kod, unvan, "Tedarikci", c.get("telefon") or None, c.get("email") or None,
+          c.get("vergi_dairesi") or None, vkn or None, c.get("adres") or None,
++         c.get("il") or None, c.get("ilce") or None,
+          "; ".join(notlar) or None, req.user["id"], sid))
+     return cur.lastrowid, True
+ 
+diff --git a/kod/efatura_parser.py b/kod/efatura_parser.py
+index 2245257..475a746 100644
+--- a/kod/efatura_parser.py
++++ b/kod/efatura_parser.py
+@@ -29,7 +29,7 @@ def _ln(tag):
+ 
+ def _pdf_metin(data):
+     """pypdf ile tam metin çıkarımı; başarısızsa zlib/stream dener."""
+-    # 1. pypdf kütüphanesi
++    # 1. pypdf kütüphanesi (NUL baytı = kodlama çözülemedi → yedeğe düş)
+     try:
+         import pypdf
+         reader = pypdf.PdfReader(io.BytesIO(data))
+@@ -39,7 +39,9 @@ def _pdf_metin(data):
+             if t and t.strip():
+                 metinler.append(t)
+         if metinler:
+-            return "\n".join(metinler)
++            birlesik = "\n".join(metinler)
++            if "\x00" not in birlesik:
++                return birlesik
+     except Exception:
+         pass
+ 
+@@ -79,8 +81,40 @@ def _tarih_iso(metin):
+             return f"{y:04d}-{a:02d}-{g:02d}"
+     return ""
+ 
++_ILLER = {"adana", "adıyaman", "afyonkarahisar", "ağrı", "amasya", "ankara", "antalya",
++          "artvin", "aydın", "balıkesir", "bilecik", "bingöl", "bitlis", "bolu", "burdur",
++          "bursa", "çanakkale", "çankırı", "çorum", "denizli", "diyarbakır", "edirne",
++          "elazığ", "erzincan", "erzurum", "eskişehir", "gaziantep", "giresun", "gümüşhane",
++          "hakkari", "hatay", "ısparta", "mersin", "istanbul", "izmir", "kars", "kastamonu",
++          "kayseri", "kırklareli", "kırşehir", "kocaeli", "konya", "kütahya", "malatya",
++          "manisa", "kahramanmaraş", "mardin", "muğla", "muş", "nevşehir", "niğde", "ordu",
++          "rize", "sakarya", "samsun", "siirt", "sinop", "sivas", "tekirdağ", "tokat",
++          "trabzon", "tunceli", "şanlıurfa", "uşak", "van", "yozgat", "zonguldak", "aksaray",
++          "bayburt", "karaman", "kırıkkale", "batman", "şırnak", "bartın", "ardahan",
++          "ığdır", "yalova", "karabük", "kilis", "osmaniye", "düzce"}
++
++
++def _il_ilce(adres):
++    """D019-H1 — adresten (ilçe, il). 'İLÇE / İL' biçimi öncelikli, sonra 81 il eşleşmesi."""
++    if not adres:
++        return "", ""
++    m = re.search(r"([A-Za-zçğıöşüÇĞİÖŞÜ ]+?)\s*/\s*([A-Za-zçğıöşüÇĞİÖŞÜ ]+)$",
++                  adres.strip().rstrip(".,"))
++    if m:
++        return m.group(1).strip().title(), m.group(2).strip().title()
++    kelimeler = re.findall(r"[A-Za-zçğıöşüÇĞİÖŞÜ]+", adres)
++    for i in range(len(kelimeler) - 1, -1, -1):
++        if kelimeler[i].lower() in _ILLER:
++            il = kelimeler[i].title()
++            ilce = kelimeler[i - 1].title() if i > 0 else ""
++            if ilce.lower() in ("no", "kat", "daire", "sokak", "cadde", "bulvar", "mah"):
++                ilce = ""
++            return ilce, il
++    return "", ""
++
++
+ def _regex_cozumle(metin):
+-    cari = {"unvan": "", "vkn": "", "vergi_dairesi": "", "adres": "",
++    cari = {"unvan": "", "vkn": "", "vergi_dairesi": "", "adres": "", "il": "", "ilce": "",
+             "telefon": "", "email": "", "ibanlar": []}
+     fatura = {"belge_no": "", "tarih": "", "para_birimi": "TRY", "kur": 1.0, "vade_gun": 0}
+     satirlar = [s.strip() for s in metin.splitlines() if s.strip()]
+@@ -109,6 +143,7 @@ def _regex_cozumle(metin):
+     m = re.search(r"(?:Adres|ADDRESS)\s*[:.]?\s*([^\n]{5,150})", metin, re.I)
+     if m:
+         cari["adres"] = m.group(1).strip()
++        cari["ilce"], cari["il"] = _il_ilce(cari["adres"])
+     # Telefon
+     m = re.search(r"(?:Tel|Telefon)\s*[:.]?\s*([\d\s\-()]{10,20})", metin, re.I)
+     if m:
+@@ -220,6 +255,30 @@ def _regex_cozumle(metin):
+                 if cleaned:
+                     curr_ad.append(cleaned)
+ 
++    # D019 — yedek kalem biçimi (basit metin faturalar):
++    # "1. ÜRÜN ADI 10 Adet 51.900103 20 519.00103"
++    if not kalemler:
++        bas2, son2 = -1, len(satirlar)
++        for i, s in enumerate(satirlar):
++            if bas2 < 0 and re.search(r"^(sıra|malzeme|kalemler|açıklama|urun|ürün)", s, re.I):
++                bas2 = i
++            elif bas2 >= 0 and re.search(r"(ara\s*toplam|mal\s*hizmet|kdv\s*tutar|genel\s*toplam|toplam\s*tutar)", s, re.I):
++                son2 = i
++                break
++        if bas2 >= 0:
++            for s in satirlar[bas2 + 1:son2]:
++                km = re.match(r"^\s*(\d{1,3})[.\)]\s*(.+?)\s+(\d+(?:[.,]\d+)?)\s+([A-Za-zçğıöşüÇĞİÖŞÜ]{2,10})\s+(\d+[.,]\d+)\s+%?(\d+(?:[.,]\d+)?)\s+(\d+[.,]\d+)\s*$", s)
++                if not km:
++                    continue
++                kalemler.append({
++                    "sira": int(km.group(1)),
++                    "ad": re.sub(r"\s+", " ", km.group(2)).strip(),
++                    "miktar": _sayi(km.group(3), 0.0) or 0.0, "birim": km.group(4),
++                    "birim_fiyat": _sayi(km.group(5), 0.0) or 0.0,
++                    "kdv_orani": _sayi(km.group(6), 20.0),
++                    "tutar": _sayi(km.group(7), 0.0) or 0.0,
++                })
++
+     # Toplamlar
+     m = re.search(r"Mal\s*Hizmet\s*Toplam\s*Tutarı\s*([\d.,]+)", metin, re.I)
+     if m:
+@@ -230,6 +289,19 @@ def _regex_cozumle(metin):
+     m = re.search(r"(?:Ödenecek\s*Tutar|Vergiler\s*Dahil\s*Toplam\s*Tutar)\s*([\d.,]+)", metin, re.I)
+     if m:
+         toplamlar["genel"] = _sayi(m.group(1), 0.0) or 0.0
++    # D019 — yedek toplam biçimi (basit metin faturalar)
++    if toplamlar["ara"] == 0.0:
++        m = re.search(r"Ara\s*Toplam\s*[:.]?\s*([\d.,]+)", metin, re.I)
++        if m:
++            toplamlar["ara"] = _sayi(m.group(1), 0.0) or 0.0
++    if toplamlar["kdv"] == 0.0:
++        m = re.search(r"KDV(?:\s*\(?%?\d*\)?)?\s*[:.]?\s*([\d.,]+)", metin, re.I)
++        if m:
++            toplamlar["kdv"] = _sayi(m.group(1), 0.0) or 0.0
++    if toplamlar["genel"] == 0.0:
++        m = re.search(r"Genel\s*Toplam\s*[:.]?\s*([\d.,]+)", metin, re.I)
++        if m:
++            toplamlar["genel"] = _sayi(m.group(1), 0.0) or 0.0
+ 
+     return cari, fatura, kalemler, toplamlar
+ 
+@@ -253,7 +325,7 @@ def _ubl_cozumle(xml_metin):
+                 return c.get(attr)
+         return ""
+ 
+-    cari = {"unvan": "", "vkn": "", "vergi_dairesi": "", "adres": "",
++    cari = {"unvan": "", "vkn": "", "vergi_dairesi": "", "adres": "", "il": "", "ilce": "",
+             "telefon": "", "email": "", "ibanlar": []}
+     for el in kok.iter():
+         if _ln(el.tag) != "AccountingSupplierParty":
+@@ -269,6 +341,8 @@ def _ubl_cozumle(xml_metin):
+                 parcalar = [bul(p, "StreetName"), bul(p, "CitySubdivisionName"),
+                             bul(p, "CityName"), bul(p, "Country")]
+                 cari["adres"] = ", ".join(x for x in parcalar if x)
++                cari["ilce"] = bul(p, "CitySubdivisionName")
++                cari["il"] = bul(p, "CityName")
+             elif _ln(p.tag) == "Contact":
+                 cari["telefon"] = cari["telefon"] or bul(p, "Telephone")
+                 cari["email"] = cari["email"] or bul(p, "ElectronicMail")
+@@ -276,7 +350,7 @@ def _ubl_cozumle(xml_metin):
+         if _ln(el.tag) == "PayeeFinancialAccount":
+             iban = re.sub(r"\s+", "", bul(el, "ID")).upper()
+             if re.fullmatch(r"TR\d{24}", iban) and iban not in cari["ibanlar"]:
+-                cari["ibanlar"].append(n)
++                cari["ibanlar"].append(iban)
+ 
+     fatura = {"belge_no": "", "tarih": "", "para_birimi": "TRY", "kur": 1.0, "vade_gun": 0}
+     for c in kok.iter():
+diff --git a/kod/fatura.py b/kod/fatura.py
+index 91534f7..00efcfd 100644
+--- a/kod/fatura.py
++++ b/kod/fatura.py
+@@ -27,7 +27,7 @@ FATURA_ONAY = ("Admin", "Muhasebe")
+ TIPLER = ["Satis", "Alis"]
+ TIP_LABEL = {"Satis": "Satış Faturası", "Alis": "Alış Faturası"}
+ TIP_ON_EK = {"Satis": "SF", "Alis": "AF"}
+-DURUMLAR = ["Taslak", "Onaylandı", "İptal"]
++DURUMLAR = ["Taslak", "Onaylandı", "İptal", "Reddedildi"]
+ DURUM_BADGE = {"Taslak": "b-muted", "Onaylandı": "b-ok", "İptal": "b-danger"}
+ 
+ 
+@@ -262,15 +262,30 @@ def _bagli_tahsilat_var(conn, fid):
+ 
+ def _odeme_durumu(conn, fid):
+     """K15 — faturaya bağlı Kasa/Banka tahsilat/ödeme toplamları."""
+-    ks = conn.execute("SELECT islem_tipi, tutar FROM kasa_hareket WHERE ilgili_modul='Fatura' "
+-                      "AND ilgili_kayit_id=?", (fid,)).fetchall()
+-    bs = conn.execute("SELECT islem_tipi, tutar FROM banka_hareket WHERE ilgili_modul='Fatura' "
+-                      "AND ilgili_kayit_id=?", (fid,)).fetchall()
+-    giris = sum((r["tutar"] or 0) for r in ks if r["islem_tipi"] == "Nakit Girişi")
+-    giris += sum((r["tutar"] or 0) for r in bs if r["islem_tipi"] == "Havale/EFT Girişi")
+-    cikis = sum((r["tutar"] or 0) for r in ks if r["islem_tipi"] == "Nakit Çıkışı")
+-    cikis += sum((r["tutar"] or 0) for r in bs if r["islem_tipi"] == "Havale/EFT Çıkışı")
+-    return {"giris": round(giris, 2), "cikis": round(cikis, 2), "adet": len(ks) + len(bs)}
++    # D019-H9 — her ödeme kendi kuruyla fatura pb'sine çevrilir (belge USD ise USD bazında).
++    f = conn.execute("SELECT para_birimi, doviz_kur FROM fatura WHERE id=?", (fid,)).fetchone()
++    fpb = (f["para_birimi"] if f else None) or "TRY"
++    fkur = (f["doviz_kur"] if f and f["doviz_kur"] else None) or 1.0
++    ks = conn.execute("SELECT islem_tipi, tutar, para_birimi, doviz_kur FROM kasa_hareket "
++                      "WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=?", (fid,)).fetchall()
++    bs = conn.execute("SELECT islem_tipi, tutar, para_birimi, doviz_kur FROM banka_hareket "
++                      "WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=?", (fid,)).fetchall()
++
++    def _cevrilmis(r):
++        t = r["tutar"] or 0.0
++        ppb = r["para_birimi"] or "TRY"
++        pkur = r["doviz_kur"] or 1.0
++        if ppb == fpb:
++            return t
++        tl = t * (pkur if ppb != "TRY" else 1.0)
++        return tl / fkur if fpb != "TRY" else tl
++
++    giris = sum(_cevrilmis(r) for r in ks if r["islem_tipi"] == "Nakit Girişi")
++    giris += sum(_cevrilmis(r) for r in bs if r["islem_tipi"] == "Havale/EFT Girişi")
++    cikis = sum(_cevrilmis(r) for r in ks if r["islem_tipi"] == "Nakit Çıkışı")
++    cikis += sum(_cevrilmis(r) for r in bs if r["islem_tipi"] == "Havale/EFT Çıkışı")
++    return {"giris": round(giris, 2), "cikis": round(cikis, 2), "adet": len(ks) + len(bs),
++            "pb": fpb, "kur": fkur}
+ 
+ 
+ # --------------------------------------------------------------------------
+@@ -374,6 +389,10 @@ def fatura_detay(req, fid):
+     odeme = _odeme_durumu(conn, f["id"])
+     odenen = round(odeme["giris"] - odeme["cikis"], 2) if f["tip"] == "Satis" else round(odeme["cikis"] - odeme["giris"], 2)
+     kalan = round((f["genel_toplam"] or 0) - odenen, 2)
++    # D019-H9 — TL karşılıklar (dövizli belgede parantez gösterim için).
++    _kur = (f["doviz_kur"] or 1.0) if (f["para_birimi"] or "TRY") != "TRY" else 1.0
++    odenen_tl = round(odenen * _kur, 2)
++    kalan_tl = round(kalan * _kur, 2)
+     ekler_list = ekler.ekler_for(conn, "Fatura", f["id"])
+     ek_upload = req.user["rol"] in ekler.EK_WRITE
+     e_belgeler = conn.execute(
+@@ -382,6 +401,7 @@ def fatura_detay(req, fid):
+     conn.close()
+     return render_template("fatura/detay.html", fatura=f, kalemler=kalemler, loglar=loglar,
+                            tip_label=TIP_LABEL, odeme=odeme, odenen=odenen, kalan=kalan,
++                           odenen_tl=odenen_tl, kalan_tl=kalan_tl,
+                            ekler=ekler_list, ek_upload=ek_upload, ek_modul="Fatura",
+                            ek_kayit_id=f["id"], ek_geri=f"/fatura/{f['id']}",
+                            e_belgeler=e_belgeler)
+@@ -717,6 +737,89 @@ def fatura_durum(req, fid):
+     return redirect(f"/fatura/{fid}")
+ 
+ 
++@route(r"/fatura/(?P<fid>\d+)/red-fisi", methods=("POST",), roles=FATURA_ONAY)
++def fatura_red_fisi(req, fid):
++    """D019-H8 — onaylı faturayı ters kayıtlarla sıfırla (storno), Reddedildi yap.
++
++    Silme YOK: cari ters hareket + yevmiye storno fişi (sahne='red') +
++    faturaya bağlı stok hareketlerinin tersi yazılır, durum Reddedildi olur.
++    Bağlı tahsilat/ödeme varsa önce onların iptali gerekir (iptal kuralıyla aynı).
++    """
++    conn = db.get_conn()
++    f = conn.execute("SELECT * FROM fatura WHERE id=? AND sirket_id=?",
++                     (int(fid), db.sirket_id(req))).fetchone()
++    if not f:
++        conn.close()
++        flash(req, "Fatura bulunamadı.", "danger")
++        return redirect("/fatura")
++    if f["durum"] != "Onaylandı":
++        conn.close()
++        flash(req, "Yalnızca 'Onaylandı' durumundaki faturaya red fişi oluşturulabilir.", "danger")
++        return redirect(f"/fatura/{fid}")
++    if _bagli_tahsilat_var(conn, int(fid)):
++        conn.close()
++        flash(req, "Bu faturaya bağlı tahsilat/ödeme kaydı var (Kasa/Banka). "
++                   "Önce ilgili hareketi iptal edin, sonra red fişi oluşturun.", "danger")
++        return redirect(f"/fatura/{fid}")
++    f = dict(f)
++    bugun = datetime.date.today().isoformat()
++
++    # 1) Cari ters kayıt (orijinal silinmez — denetim izi korunur).
++    pb = f.get("para_birimi") or "TRY"
++    kur = f.get("doviz_kur") or 1.0
++    tutar_tl = round((f["genel_toplam"] or 0.0) * kur, 2)
++    if not f["kaynak_irsaliye_id"]:
++        if f["tip"] == "Satis":
++            cari.hareket_ekle(conn, f["cari_id"], bugun, "Red Fişi", f["fatura_no"],
++                              f"Red fişi ({f['fatura_no']})", borc=0.0, alacak=tutar_tl,
++                              ilgili_modul="Fatura", ilgili_kayit_id=f["id"],
++                              created_by=req.user["id"], para_birimi=pb, doviz_kur=kur)
++        else:
++            cari.hareket_ekle(conn, f["cari_id"], bugun, "Red Fişi", f["fatura_no"],
++                              f"Red fişi ({f['fatura_no']})", borc=tutar_tl, alacak=0.0,
++                              ilgili_modul="Fatura", ilgili_kayit_id=f["id"],
++                              created_by=req.user["id"], para_birimi=pb, doviz_kur=kur)
++
++    # 2) Yevmiye storno (orijinal fiş durur; ters fiş sahne='red' ile yazılır).
++    if not f["kaynak_irsaliye_id"]:
++        orig = conn.execute("SELECT * FROM yevmiye WHERE kaynak_modul='Fatura' AND kaynak_id=? "
++                            "AND COALESCE(kaynak_sahne,'')=''", (f["id"],)).fetchone()
++        if orig:
++            kalemler = conn.execute("SELECT * FROM yevmiye_kalem WHERE yevmiye_id=? ORDER BY id",
++                                    (orig["id"],)).fetchall()
++            sid = db.sirket_id(req)
++            fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "FIS",
++                                         datetime.date.today().year, sid)
++            cur = conn.execute(
++                "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, kaynak_id, "
++                "kaynak_sahne, sube_id, created_by, sirket_id) VALUES(?,?,?,?,?,?,?,?,?)",
++                (fis_no, bugun, f"Red fişi ({f['fatura_no']})", "Fatura", f["id"], "red",
++                 orig["sube_id"], req.user["id"], sid))
++            for k in kalemler:
++                conn.execute("INSERT INTO yevmiye_kalem(yevmiye_id, hesap_id, borc, alacak, "
++                             "aciklama, sirket_id) VALUES(?,?,?,?,?,?)",
++                             (cur.lastrowid, k["hesap_id"], k["alacak"], k["borc"],
++                              k["aciklama"], sid))
++
++    # 3) Stok tersi: YALNIZCA faturaya bağlı hareketler (POS satışı vb.;
++    #    irsaliye hareketlerine dokunulmaz — onların iptali irsaliyeden yapılır).
++    for h in conn.execute("SELECT * FROM stok_hareket WHERE ilgili_modul='Fatura' "
++                          "AND ilgili_kayit_id=?", (f["id"],)).fetchall():
++        stok._hareket_olustur(conn, req, h["stok_id"], h["varyant_id"] or 0, h["depo_id"],
++                              "Red Fişi İade", -(h["miktar"] or 0.0),
++                              aciklama=f"Red fişi ({f['fatura_no']})",
++                              belge_no=f["fatura_no"], ilgili_modul="Fatura",
++                              ilgili_kayit_id=f["id"], tarih=bugun)
++
++    conn.execute("UPDATE fatura SET durum='Reddedildi', updated_at=datetime('now','localtime') "
++                 "WHERE id=?", (f["id"],))
++    conn.commit()
++    audit(req, "fatura", f["id"], "red-fisi", {"fatura_no": f["fatura_no"]})
++    conn.close()
++    flash(req, f"Red fişi oluşturuldu: {f['fatura_no']} sıfırlandı (Reddedildi).", "ok")
++    return redirect(f"/fatura/{fid}")
++
++
+ @route(r"/fatura/(?P<fid>\d+)/yazdir", roles=())
+ def fatura_yazdir(req, fid):
+     conn = db.get_conn()
+diff --git a/kod/regresyon_runner.py b/kod/regresyon_runner.py
+index 3fda89b..9d28866 100644
+--- a/kod/regresyon_runner.py
++++ b/kod/regresyon_runner.py
+@@ -51,8 +51,8 @@ for t in tests:
+     rows.append((t, exitc, summary))
+ 
+ report = []
+-report.append(f"===== D018 (v1.49.0) — TAM REGRESYON =====")
+-report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.49.0")
++report.append(f"===== D019 (v1.50.0) — TAM REGRESYON =====")
++report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.50.0")
+ report.append("")
+ for t, e, s in rows:
+     report.append(f"[{t:<32}] exit={e} | {s}")
+diff --git a/kod/static/js/efatura-doldur.js b/kod/static/js/efatura-doldur.js
+index 61acc54..c365cdc 100644
+--- a/kod/static/js/efatura-doldur.js
++++ b/kod/static/js/efatura-doldur.js
+@@ -77,24 +77,28 @@
+           var tr = trs[trs.length - 1];
+           if (!tr) return;
+           function q(n) { return tr.querySelector('[name=' + n + ']'); }
++          function deger(el, v, yedek) {
++            if (el) el.value = (v == null || v === '') ? (yedek != null ? yedek : '') : v;
++          }
+           var es = harita[k.ad] || {};
+           if (q('k_stok_id')) q('k_stok_id').value = es.stok_id || '';
+           var ara = tr.querySelector('.stok-ara');
+-          if (ara) ara.value = (es.kod ? es.kod + ' — ' : '') + k.ad;
++          if (ara) ara.value = (es.kod ? es.kod + ' — ' : '') + (k.ad || '');
+           var roz = tr.querySelector('.satir-durum');
+           if (roz) {
+             roz.style.display = '';
+             roz.textContent = es.stok_id ? (es.kod || '') : 'manuel';
+             roz.className = 'badge ' + (es.stok_id ? 'b-muted' : 'b-warn') + ' satir-durum';
+           }
+-          if (!es.stok_id && q('k_manuel_ad')) q('k_manuel_ad').value = k.ad;
+-          if (q('k_miktar')) q('k_miktar').value = k.miktar;
+-          if (q('k_birim_fiyat')) q('k_birim_fiyat').value = k.birim_fiyat;
+-          if (q('k_kdv')) q('k_kdv').value = k.kdv_orani;
++          if (!es.stok_id && q('k_manuel_ad')) q('k_manuel_ad').value = k.ad || '';
++          deger(q('k_miktar'), k.miktar, 1);
++          deger(q('k_birim_fiyat'), k.birim_fiyat, 0);
++          deger(q('k_kdv'), k.kdv_orani, 20);
+           if (q('k_iskonto')) q('k_iskonto').value = 0;
+           var ga = tr.querySelector('.goruntu-ad');
+-          if (ga) ga.value = k.ad;
++          if (ga) ga.value = k.ad || '';
+           var bsel = tr.querySelector('select[name=k_birim]');
++          k.birim = k.birim || 'Adet';
+           if (bsel && k.birim) {
+             var ok = false;
+             for (var i = 0; i < bsel.options.length; i++) {
+diff --git a/kod/templates/cari/ekstre.html b/kod/templates/cari/ekstre.html
+index 28a2bcc..3b9df3d 100644
+--- a/kod/templates/cari/ekstre.html
++++ b/kod/templates/cari/ekstre.html
+@@ -12,6 +12,8 @@
+     <a class="btn" href="/cari/{{ cari.id }}">← Karta dön</a>
+     <a class="btn" href="/cari/{{ cari.id }}/tahsilat">💰 Tahsilat</a>
+     <a class="btn" href="/cari/{{ cari.id }}/odeme">💸 Ödeme</a>
++    <a class="btn" href="/cari/{{ cari.id }}/ekstre/yazdir?bas={{ filtro.bas }}&bit={{ filtro.bit }}&pb={{ filtro.pb or '' }}">🖨 Yazdır</a>
++    <a class="btn" href="/cari/{{ cari.id }}/ekstre?fmt=csv&bas={{ filtro.bas }}&bit={{ filtro.bit }}&pb={{ filtro.pb or '' }}">⬇ CSV İndir</a>
+     <a class="btn primary" href="/cari/{{ cari.id }}/hareket">+ Hareket Ekle</a>
+   </div>
+ </div>
+@@ -66,17 +68,17 @@
+   <div class="tbl-wrap">
+   <table class="tbl">
+     <thead>
+-      <tr><th>Tarih</th><th>Vade</th><th>Belge</th><th>Açıklama</th><th class="num">Borç</th><th class="num">Alacak</th><th class="num">Bakiye</th><th></th></tr>
++      <tr><th>Tarih</th><th>Vade</th><th>Belge</th><th>Açıklama</th><th class="num">Borç (₺)</th><th class="num">Alacak (₺)</th><th class="num">Bakiye (TL)</th><th></th></tr>
+     </thead>
+     <tbody>
+       {% for h in hareketler %}
+       <tr>
+         <td>{{ h.tarih|tarih }}</td>
+         <td class="muted">{{ h.vade|tarih }}</td>
+-        <td><span class="badge b-muted">{{ h.belge_tipi }}</span> {% if h.belge_url %}<a href="{{ h.belge_url }}">{{ h.belge_no }}</a>{% else %}{{ h.belge_no }}{% endif %}</td>
+-        <td>{{ h.aciklama }}</td>
+-        <td class="num">{{ h.borc|para }}</td>
+-        <td class="num">{{ h.alacak|para }}</td>
++        <td><span class="badge b-muted">{{ h.belge_tipi }}</span> {% if h.belge_url %}<a href="{{ h.belge_url }}">{{ h.belge_no or '' }}</a>{% else %}{{ h.belge_no or '' }}{% endif %}</td>
++        <td>{{ h.aciklama or '' }}</td>
++        <td class="num">{{ h.borc|para }}{% if h.borc_doviz %}<div class="hint">{{ h.borc_doviz|para(h.para_birimi) }}</div>{% endif %}</td>
++        <td class="num">{{ h.alacak|para }}{% if h.alacak_doviz %}<div class="hint">{{ h.alacak_doviz|para(h.para_birimi) }}</div>{% endif %}</td>
+         <td class="num strong">{{ h.bakiye|para }}</td>
+         <td class="right">{% if h.belge_tipi in ['Tahsilat', 'Ödeme'] and h.belge_no and (h.belge_no.startswith('THS-') or h.belge_no.startswith('ODM-')) %}<a class="btn sm ghost" href="/cari/{{ cari.id }}/makbuz/{{ h.belge_no }}">Makbuz</a>{% endif %}</td>
+       </tr>
+@@ -94,9 +96,11 @@
+     {% for t in pb_totals %}
+     <div>
+       <div class="k-label muted">{{ t.kod }}</div>
+-      <div class="strong">{{ t.net|para }}</div>
+       {% if t.kod != 'TRY' and t.kur > 0 %}
+-      <div class="hint">≈ {{ (t.net / t.kur)|sayi }} {{ t.kod }}</div>
++      <div class="strong">{{ (t.net / t.kur)|sayi }} {{ t.kod }}</div>
++      <div class="hint">≈ {{ t.net|para }} (Kur: {{ t.kur|sayi }})</div>
++      {% else %}
++      <div class="strong">{{ t.net|para }}</div>
+       {% endif %}
+     </div>
+     {% else %}
+diff --git a/kod/templates/fatura/detay.html b/kod/templates/fatura/detay.html
+index cc44ecd..270f22b 100644
+--- a/kod/templates/fatura/detay.html
++++ b/kod/templates/fatura/detay.html
+@@ -13,6 +13,7 @@
+       {% if fatura.belge_no %} · 📄 Belge No: <b>{{ fatura.belge_no }}</b>{% endif %}
+       · {% if fatura.durum == 'Taslak' %}<span class="badge b-muted">Taslak</span>
+       {% elif fatura.durum == 'Onaylandı' %}<span class="badge b-ok">Onaylandı</span>
++      {% elif fatura.durum == 'Reddedildi' %}<span class="badge b-danger">Reddedildi</span>
+       {% else %}<span class="badge b-danger">İptal</span>{% endif %}
+     </div>
+     {% if fatura.kaynak_irsaliye_no %}
+@@ -47,12 +48,12 @@
+     <div>
+       <div class="muted">💳 Ödeme Durumu (bağlı Kasa/Banka hareketleri)</div>
+       {% if fatura.tip == 'Satis' %}
+-      <div class="strong" style="font-size:17px;">Tahsil edilen: {{ odenen|para }} <span class="muted">· Kalan: {{ kalan|para }}</span></div>
++      <div class="strong" style="font-size:17px;">Tahsil edilen: {{ odenen|para(fatura.para_birimi) }}{% if fatura.para_birimi != 'TRY' %} (≈ {{ odenen_tl|para }}){% endif %} <span class="muted">· Kalan: {{ kalan|para(fatura.para_birimi) }}{% if fatura.para_birimi != 'TRY' %} (≈ {{ kalan_tl|para }}){% endif %}</span></div>
+       {% else %}
+-      <div class="strong" style="font-size:17px;">Ödenen: {{ odenen|para }} <span class="muted">· Kalan: {{ kalan|para }}</span></div>
++      <div class="strong" style="font-size:17px;">Ödenen: {{ odenen|para(fatura.para_birimi) }}{% if fatura.para_birimi != 'TRY' %} (≈ {{ odenen_tl|para }}){% endif %} <span class="muted">· Kalan: {{ kalan|para(fatura.para_birimi) }}{% if fatura.para_birimi != 'TRY' %} (≈ {{ kalan_tl|para }}){% endif %}</span></div>
+       {% endif %}
+     </div>
+-    <div class="muted">Toplam {{ fatura.genel_toplam|para }} · bağlı hareket: {{ odeme.adet }}</div>
++    <div class="muted">Toplam {{ fatura.genel_toplam|para(fatura.para_birimi) }} · bağlı hareket: {{ odeme.adet }}</div>
+   </div>
+ </div>
+ {% endif %}
+@@ -67,9 +68,12 @@
+   </div>
+   <div class="hint" style="margin-top:10px;">💡 Onaylanınca {% if fatura.tip == 'Satis' %}müşteriye borç (bakiye +){% else %}tedarikçiye alacak (bakiye −){% endif %} işlenir. Stok etkisi İrsaliye'de tamamlandı; fatura stok'a dokunmaz.</div>
+   {% elif fatura.durum == 'Onaylandı' %}
+-  <form method="post" action="/fatura/{{ fatura.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="İptal"><button class="btn danger">✕ İptal Et (cari hareketi geri al)</button></form>
++  <div style="display:flex;gap:8px;flex-wrap:wrap;">
++    <form method="post" action="/fatura/{{ fatura.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="İptal"><button class="btn danger">✕ İptal Et (cari hareketi geri al)</button></form>
++    <form method="post" action="/fatura/{{ fatura.id }}/red-fisi" onsubmit="return confirm('Red fişi oluşturulsun mu? Cari + stok + yevmiye ters kayıtla sıfırlanır, fatura Reddedildi olur.');"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn warn">🔁 Red / İptal Fişi Oluştur</button></form>
++  </div>
+   {% else %}
+-  <div class="muted">İptal edilmiş fatura için durum işlemi yok.</div>
++  <div class="muted">İptal/Red edilmiş fatura için durum işlemi yok.</div>
+   {% endif %}
+ </div>
+ {% endif %}
+@@ -79,28 +83,32 @@
+   <div class="tbl-wrap">
+   <table class="tbl">
+     <thead>
+-      <tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Birim Fiyat</th>
+-          <th class="num">İskonto %</th><th class="num">KDV %</th><th class="num">Net Tutar</th></tr>
++      <tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Birim Fiyat{% if fatura.para_birimi != 'TRY' %} ({{ fatura.para_birimi }}){% endif %}</th>
++          {% if fatura.para_birimi != 'TRY' %}<th class="num">Birim Fiyat (TL)</th>{% endif %}
++          <th class="num">İskonto %</th><th class="num">KDV %</th><th class="num">Net Tutar{% if fatura.para_birimi != 'TRY' %} ({{ fatura.para_birimi }}){% endif %}</th>
++          {% if fatura.para_birimi != 'TRY' %}<th class="num">Tutar (TL)</th>{% endif %}</tr>
+     </thead>
+     <tbody>
+       {% for k in kalemler %}
+       <tr>
+         <td class="strong">{{ k.gorunen_ad }}{% if k.varyant_ad %} <span class="badge b-info">{{ k.varyant_ad }}</span>{% endif %}{% if k.manuel %} <span class="badge b-warn">manuel</span>{% else %} <span class="muted">{{ k.stok_kod }}</span>{% endif %}</td>
+         <td class="num">{{ k.miktar|sayi }} <span class="muted">{{ k.birim_goster }}</span></td>
+-        <td class="num">{{ k.birim_fiyat|para }}</td>
++        <td class="num">{{ k.birim_fiyat|para(fatura.para_birimi) }}</td>
++        {% if fatura.para_birimi != 'TRY' %}<td class="num muted">{{ (k.birim_fiyat * (fatura.doviz_kur or 1))|para }}</td>{% endif %}
+         <td class="num muted">%{{ k.iskonto_orani|sayi }}</td>
+         <td class="num muted">%{{ k.kdv_orani|sayi }}</td>
+-        <td class="num strong">{{ k.tutar|para }}</td>
++        <td class="num strong">{{ k.tutar|para(fatura.para_birimi) }}</td>
++        {% if fatura.para_birimi != 'TRY' %}<td class="num muted">{{ (k.tutar * (fatura.doviz_kur or 1))|para }}</td>{% endif %}
+       </tr>
+       {% endfor %}
+     </tbody>
+   </table>
+   </div>
+   <div style="display:flex;justify-content:flex-end;margin-top:12px;gap:24px;">
+-    <div><div class="muted" style="font-size:12px;">Ara Toplam</div><div class="strong">{{ fatura.ara_toplam|para }}</div></div>
+-    <div><div class="muted" style="font-size:12px;">İskonto</div><div class="strong">{{ fatura.iskonto_toplam|para }}</div></div>
+-    <div><div class="muted" style="font-size:12px;">KDV</div><div class="strong">{{ fatura.kdv_toplam|para }}</div></div>
+-    <div><div class="muted" style="font-size:12px;">Genel Toplam</div><div class="strong" style="font-size:17px;">{{ fatura.genel_toplam|para }}</div></div>
++    <div><div class="muted" style="font-size:12px;">Ara Toplam</div><div class="strong">{{ fatura.ara_toplam|para(fatura.para_birimi) }}</div></div>
++    <div><div class="muted" style="font-size:12px;">İskonto</div><div class="strong">{{ fatura.iskonto_toplam|para(fatura.para_birimi) }}</div></div>
++    <div><div class="muted" style="font-size:12px;">KDV</div><div class="strong">{{ fatura.kdv_toplam|para(fatura.para_birimi) }}</div></div>
++    <div><div class="muted" style="font-size:12px;">Genel Toplam</div><div class="strong" style="font-size:17px;">{{ fatura.genel_toplam|para(fatura.para_birimi) }}</div></div>
+   </div>
+   {% if fatura.para_birimi and fatura.para_birimi != 'TRY' %}
+   <div class="hint" style="text-align:right;margin-top:8px;">
+diff --git a/kod/templates/fatura/liste.html b/kod/templates/fatura/liste.html
+index c39e3af..2f416c5 100644
+--- a/kod/templates/fatura/liste.html
++++ b/kod/templates/fatura/liste.html
+@@ -52,6 +52,7 @@
+         <td>
+           {% if t.durum == 'Taslak' %}<span class="badge b-muted">Taslak</span>
+           {% elif t.durum == 'Onaylandı' %}<span class="badge b-ok">Onaylandı</span>
++          {% elif t.durum == 'Reddedildi' %}<span class="badge b-danger">Reddedildi</span>
+           {% else %}<span class="badge b-danger">İptal</span>{% endif %}
+         </td>
+         <td class="right">
+diff --git a/kod/templates/irsaliye/detay.html b/kod/templates/irsaliye/detay.html
+index ce5bd28..56cfcc5 100644
+--- a/kod/templates/irsaliye/detay.html
++++ b/kod/templates/irsaliye/detay.html
+@@ -78,28 +78,32 @@
+   <div class="tbl-wrap">
+   <table class="tbl">
+     <thead>
+-      <tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Birim Fiyat</th>
+-          <th class="num">İskonto %</th><th class="num">KDV %</th><th class="num">Net Tutar</th></tr>
++      <tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Birim Fiyat{% if irsaliye.para_birimi != 'TRY' %} ({{ irsaliye.para_birimi }}){% endif %}</th>
++          {% if irsaliye.para_birimi != 'TRY' %}<th class="num">Birim Fiyat (TL)</th>{% endif %}
++          <th class="num">İskonto %</th><th class="num">KDV %</th><th class="num">Net Tutar{% if irsaliye.para_birimi != 'TRY' %} ({{ irsaliye.para_birimi }}){% endif %}</th>
++          {% if irsaliye.para_birimi != 'TRY' %}<th class="num">Tutar (TL)</th>{% endif %}</tr>
+     </thead>
+     <tbody>
+       {% for k in kalemler %}
+       <tr>
+         <td class="strong">{{ k.gorunen_ad }}{% if k.varyant_ad %} <span class="badge b-info">{{ k.varyant_ad }}</span>{% endif %}{% if k.manuel %} <span class="badge b-warn">manuel</span>{% else %} <span class="muted">{{ k.stok_kod }}</span>{% endif %}</td>
+         <td class="num">{{ k.miktar|sayi }} <span class="muted">{{ k.birim_goster }}</span></td>
+-        <td class="num">{{ k.birim_fiyat|para }}</td>
++        <td class="num">{{ k.birim_fiyat|para(irsaliye.para_birimi) }}</td>
++        {% if irsaliye.para_birimi != 'TRY' %}<td class="num muted">{{ (k.birim_fiyat * (irsaliye.doviz_kur or 1))|para }}</td>{% endif %}
+         <td class="num muted">%{{ k.iskonto_orani|sayi }}</td>
+         <td class="num muted">%{{ k.kdv_orani|sayi }}</td>
+-        <td class="num strong">{{ k.tutar|para }}</td>
++        <td class="num strong">{{ k.tutar|para(irsaliye.para_birimi) }}</td>
++        {% if irsaliye.para_birimi != 'TRY' %}<td class="num muted">{{ (k.tutar * (irsaliye.doviz_kur or 1))|para }}</td>{% endif %}
+       </tr>
+       {% endfor %}
+     </tbody>
+   </table>
+   </div>
+   <div style="display:flex;justify-content:flex-end;margin-top:12px;gap:24px;">
+-    <div><div class="muted" style="font-size:12px;">Ara Toplam</div><div class="strong">{{ irsaliye.ara_toplam|para }}</div></div>
+-    <div><div class="muted" style="font-size:12px;">İskonto</div><div class="strong">{{ irsaliye.iskonto_toplam|para }}</div></div>
+-    <div><div class="muted" style="font-size:12px;">KDV</div><div class="strong">{{ irsaliye.kdv_toplam|para }}</div></div>
+-    <div><div class="muted" style="font-size:12px;">Genel Toplam</div><div class="strong" style="font-size:17px;">{{ irsaliye.genel_toplam|para }}</div></div>
++    <div><div class="muted" style="font-size:12px;">Ara Toplam</div><div class="strong">{{ irsaliye.ara_toplam|para(irsaliye.para_birimi) }}</div></div>
++    <div><div class="muted" style="font-size:12px;">İskonto</div><div class="strong">{{ irsaliye.iskonto_toplam|para(irsaliye.para_birimi) }}</div></div>
++    <div><div class="muted" style="font-size:12px;">KDV</div><div class="strong">{{ irsaliye.kdv_toplam|para(irsaliye.para_birimi) }}</div></div>
++    <div><div class="muted" style="font-size:12px;">Genel Toplam</div><div class="strong" style="font-size:17px;">{{ irsaliye.genel_toplam|para(irsaliye.para_birimi) }}</div></div>
+   </div>
+   {% if irsaliye.para_birimi and irsaliye.para_birimi != 'TRY' %}
+   <div class="hint" style="text-align:right;margin-top:8px;">
+diff --git a/kod/templates/yazdir/belge.html b/kod/templates/yazdir/belge.html
+index 8abb785..f327434 100644
+--- a/kod/templates/yazdir/belge.html
++++ b/kod/templates/yazdir/belge.html
+@@ -40,7 +40,8 @@
+       <div style="font-size:11px;color:#7a8ba0;">{{ firma.adres or '' }}{% if firma.telefon %} · Tel: {{ firma.telefon }}{% endif %}{% if firma.vergi_no %} · {{ firma.vergi_dairesi or '' }} V.No: {{ firma.vergi_no }}{% endif %}</div>
+     </div>
+     <div class="meta">
+-      <b>{{ belge.no }}</b><br>
++      <b>{{ belge.no_etiket }}: {{ belge.no }}</b><br>
++      {% if belge.belge_no %}Tedarikçi Belge No: <b>{{ belge.belge_no }}</b><br>{% endif %}
+       Tarih: {{ belge.tarih|tarih }}{% if belge.vade %}<br>Vade: {{ belge.vade|tarih }}{% endif %}
+     </div>
+   </div>
+@@ -52,31 +53,35 @@
+ 
+   <table>
+     <thead>
+-      <tr><th>Ürün</th><th class="num">Miktar</th>{% if not fiyat_gizli %}<th class="num">Birim Fiyat</th>
+-          <th class="num">İskonto %</th><th class="num">KDV %</th><th class="num">Tutar</th>{% endif %}</tr>
++      <tr><th>Ürün</th><th class="num">Miktar</th>{% if not fiyat_gizli %}<th class="num">Birim Fiyat{% if belge.para_birimi != 'TRY' %} ({{ belge.para_birimi }}){% endif %}</th>
++          {% if belge.para_birimi != 'TRY' %}<th class="num">Birim Fiyat (TL)</th>{% endif %}
++          <th class="num">İskonto %</th><th class="num">KDV %</th><th class="num">Tutar{% if belge.para_birimi != 'TRY' %} ({{ belge.para_birimi }}){% endif %}</th>
++          {% if belge.para_birimi != 'TRY' %}<th class="num">Tutar (TL)</th>{% endif %}{% endif %}</tr>
+     </thead>
+     <tbody>
+       {% for k in belge.kalemler %}
+       <tr>
+         <td>{{ k.gorunen_ad }}{% if k.varyant_ad %} ({{ k.varyant_ad }}){% endif %}{% if k.manuel %} <b style="color:#b76e00;">manuel</b>{% else %} <span style="color:#7a8ba0;">{{ k.stok_kod }}</span>{% endif %}</td>
+         <td class="num">{{ k.miktar|sayi }} {{ k.birim_goster }}</td>
+-        {% if not fiyat_gizli %}<td class="num">{{ k.birim_fiyat|para }}</td>
++        {% if not fiyat_gizli %}<td class="num">{{ k.birim_fiyat|para(belge.para_birimi) }}</td>
++        {% if belge.para_birimi != 'TRY' %}<td class="num">{{ (k.birim_fiyat * (belge.doviz_kur or 1))|para }}</td>{% endif %}
+         <td class="num">%{{ k.iskonto_orani|sayi }}</td>
+         <td class="num">%{{ k.kdv_orani|sayi }}</td>
+-        <td class="num">{{ k.tutar|para }}</td>{% endif %}
++        <td class="num">{{ k.tutar|para(belge.para_birimi) }}</td>
++        {% if belge.para_birimi != 'TRY' %}<td class="num">{{ (k.tutar * (belge.doviz_kur or 1))|para }}</td>{% endif %}{% endif %}
+       </tr>
+       {% else %}
+-      <tr><td colspan="{{ 2 if fiyat_gizli else 6 }}" style="text-align:center;color:#7a8ba0;">Kalem yok.</td></tr>
++      <tr><td colspan="{{ 2 if fiyat_gizli else (8 if belge.para_birimi != 'TRY' else 6) }}" style="text-align:center;color:#7a8ba0;">Kalem yok.</td></tr>
+       {% endfor %}
+     </tbody>
+   </table>
+ 
+   {% if not fiyat_gizli %}
+   <div class="totals">
+-    <div>Ara Toplam: {{ belge.ara_toplam|para }}</div>
+-    <div>İskonto: −{{ belge.iskonto_toplam|para }}</div>
+-    <div>KDV: {{ belge.kdv_toplam|para }}</div>
+-    <div class="genel">Genel Toplam: {{ belge.genel_toplam|para }}</div>
++    <div>Ara Toplam: {{ belge.ara_toplam|para(belge.para_birimi) }}</div>
++    <div>İskonto: −{{ belge.iskonto_toplam|para(belge.para_birimi) }}</div>
++    <div>KDV: {{ belge.kdv_toplam|para(belge.para_birimi) }}</div>
++    <div class="genel">Genel Toplam: {{ belge.genel_toplam|para(belge.para_birimi) }}</div>
+     {% if belge.para_birimi and belge.para_birimi != 'TRY' %}
+     <div style="font-size:12px;color:#666;text-align:right;margin-top:4px;">TL karşılığı ≈ {{ (belge.genel_toplam * (belge.doviz_kur or 1))|para }} (Kur: 1 {{ belge.para_birimi }} = {{ belge.doviz_kur|sayi }} TL)</div>
+     {% endif %}
+diff --git a/kod/test_d010_yedekleme.py b/kod/test_d010_yedekleme.py
+index 09e4144..d58486a 100644
+--- a/kod/test_d010_yedekleme.py
++++ b/kod/test_d010_yedekleme.py
+@@ -1,5 +1,5 @@
+ # -*- coding: utf-8 -*-
+-"""D010 — Uygulama İçi Yedekleme & Geri Yükleme (v1.49.0) e2e testi.
++"""D010 — Uygulama İçi Yedekleme & Geri Yükleme (v1.50.0) e2e testi.
+ 
+ 16 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d010_yedekleme.py
+@@ -183,7 +183,7 @@ print("=" * 70)
+ s2, _ = giris()
+ r = s2.get(BASE + "/api/saglik", allow_redirects=False)
+ js = r.json()
+-check("13. /api/saglik canlı + sürüm 1.49.0", r.status_code == 200 and js.get("surum") == "1.49.0",
++check("13. /api/saglik canlı + sürüm 1.50.0", r.status_code == 200 and js.get("surum") == "1.50.0",
+       f"status={r.status_code}, surum={js.get('surum')}")
+ 
+ r = s2.get(BASE + "/api/bildirimler", allow_redirects=False)
+diff --git a/kod/test_d011_tanimlar_barkod.py b/kod/test_d011_tanimlar_barkod.py
+index 623e224..c5a6ef9 100644
+--- a/kod/test_d011_tanimlar_barkod.py
++++ b/kod/test_d011_tanimlar_barkod.py
+@@ -1,5 +1,5 @@
+ # -*- coding: utf-8 -*-
+-"""D011 — Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod (v1.49.0) e2e testi.
++"""D011 — Tanım Verileri (Kategori & Cari Grup) + Hızlı Barkod (v1.50.0) e2e testi.
+ 
+ 20 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d011_tanimlar_barkod.py
+diff --git a/kod/test_d012_kdv_doviz_master.py b/kod/test_d012_kdv_doviz_master.py
+index 4900ffe..ac26950 100644
+--- a/kod/test_d012_kdv_doviz_master.py
++++ b/kod/test_d012_kdv_doviz_master.py
+@@ -1,5 +1,5 @@
+ # -*- coding: utf-8 -*-
+-"""D012 — Satır Bazlı KDV + Çoklu Döviz + Para Birimi & Birim DB Tablo (v1.49.0) e2e testi.
++"""D012 — Satır Bazlı KDV + Çoklu Döviz + Para Birimi & Birim DB Tablo (v1.50.0) e2e testi.
+ 
+ 21 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d012_kdv_doviz_master.py
+diff --git a/kod/test_d013_cari_tahsilat_odeme.py b/kod/test_d013_cari_tahsilat_odeme.py
+index 200cf6c..f83e070 100644
+--- a/kod/test_d013_cari_tahsilat_odeme.py
++++ b/kod/test_d013_cari_tahsilat_odeme.py
+@@ -1,5 +1,5 @@
+ # -*- coding: utf-8 -*-
+-"""D013 — Cari Tahsilat / Ödeme Ekranı (v1.49.0) e2e testi.
++"""D013 — Cari Tahsilat / Ödeme Ekranı (v1.50.0) e2e testi.
+ 
+ 14 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d013_cari_tahsilat_odeme.py
+diff --git a/kod/test_d014_yazdirma_tanimlar.py b/kod/test_d014_yazdirma_tanimlar.py
+index 45ea7a5..4b314ea 100644
+--- a/kod/test_d014_yazdirma_tanimlar.py
++++ b/kod/test_d014_yazdirma_tanimlar.py
+@@ -1,5 +1,5 @@
+ # -*- coding: utf-8 -*-
+-"""D014 — Yazdırma/Çıktı Tamamlama + Tanım Verileri Düzenleme (v1.49.0) e2e testi.
++"""D014 — Yazdırma/Çıktı Tamamlama + Tanım Verileri Düzenleme (v1.50.0) e2e testi.
+ 
+ 16 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d014_yazdirma_tanimlar.py
+diff --git a/kod/test_d015_toplu_yardim_sistem.py b/kod/test_d015_toplu_yardim_sistem.py
+index 1ae4770..bfff9d6 100644
+--- a/kod/test_d015_toplu_yardim_sistem.py
++++ b/kod/test_d015_toplu_yardim_sistem.py
+@@ -1,10 +1,10 @@
+ # -*- coding: utf-8 -*-
+-"""D015 — Toplu İçe/Dışa Aktarma + Yardım + Sistem Bilgi (v1.49.0) e2e testi.
++"""D015 — Toplu İçe/Dışa Aktarma + Yardım + Sistem Bilgi (v1.50.0) e2e testi.
+ 
+ 12 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d015_toplu_yardim_sistem.py
+ 
+-Kapsam (GM direktifi D015-toplu-ice-dis-aktarma-yardim-sistem-bilgi-v1.49.0.md):
++Kapsam (GM direktifi D015-toplu-ice-dis-aktarma-yardim-sistem-bilgi-v1.50.0.md):
+   A (1-8)  Şablon + önizleme/onay aktarımı (5 liste) + validasyon + atlama + K1 + dışa aktarma
+   B (9-10) /yardim kartlar + filtre + shortcuts.js + modal
+   C (11)   /sistem/bilgi Admin 200 + yetkisiz 403
+@@ -166,7 +166,7 @@ sv, _ = giris("satis", "1234")
+ r403 = sv.get(BASE + "/sistem/bilgi", allow_redirects=False)
+ import re as _re
+ check("11. admin 200 (sürüm+hash+integrity+FK+saglik) + satis 403",
+-      "v1.49.0" in h and _re.search(r"[0-9a-f]{40}", h) is not None
++      "v1.50.0" in h and _re.search(r"[0-9a-f]{40}", h) is not None
+       and "Integrity Check" in h and ">ok<" in h and "0 sorun" in h
+       and "api/saglik" in h and 'href="/sistem/bilgi"' in h0 and r403.status_code == 403,
+       f"satis={r403.status_code}")
+diff --git a/kod/test_d017_akinsoft_ticari_akis.py b/kod/test_d017_akinsoft_ticari_akis.py
+index da6f099..ccf3b1a 100644
+--- a/kod/test_d017_akinsoft_ticari_akis.py
++++ b/kod/test_d017_akinsoft_ticari_akis.py
+@@ -1,5 +1,5 @@
+ # -*- coding: utf-8 -*-
+-"""D017 — Gerçek Ticari Akış & Akınsoft Standardı (v1.49.0) e2e testi.
++"""D017 — Gerçek Ticari Akış & Akınsoft Standardı (v1.50.0) e2e testi.
+ 
+ 12 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d017_akinsoft_ticari_akis.py
+diff --git a/kod/test_d018_efatura_otomasyon.py b/kod/test_d018_efatura_otomasyon.py
+index 5e50c31..7115a05 100644
+--- a/kod/test_d018_efatura_otomasyon.py
++++ b/kod/test_d018_efatura_otomasyon.py
+@@ -1,5 +1,5 @@
+ # -*- coding: utf-8 -*-
+-"""D018 — Akıllı e-Fatura Okuyucu & Otomatik Entegrasyon (v1.49.0) e2e testi.
++"""D018 — Akıllı e-Fatura Okuyucu & Otomatik Entegrasyon (v1.50.0) e2e testi.
+ 
+ 11 kontrol. Sunucu 8080'de çalışırken:
+     python3 test_d018_efatura_otomasyon.py
+diff --git a/kod/test_f6_cila.py b/kod/test_f6_cila.py
+index dab1fff..955da0a 100644
+--- a/kod/test_f6_cila.py
++++ b/kod/test_f6_cila.py
+@@ -166,7 +166,7 @@ check("13. test_saglik", r.status_code == 200 and '"durum":"ok"' in r.text,
+ # 14) test_api_saglik ----------------------------------------------------------
+ d = admin.get(BASE + "/api/saglik").json()
+ check("14. test_api_saglik",
+-      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.49.0",
++      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.50.0",
+       f"surum={d.get('surum')}, db={d.get('db')}")
+ 
+ # 15) test_f5c_korundu ---------------------------------------------------------

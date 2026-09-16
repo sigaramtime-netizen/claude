@@ -1,0 +1,23 @@
+BÖLÜM KURULUM
+BÖLÜM H4/H5 — Dövizli Gösterim
+  ✅ 1. USD detayda döviz $ ile, TL karşılığı ₺ ile  → sembol denetimi
+  ✅ 2. USD detayda çift kolon, TRY'de tek  → yan yana TL sütunları
+  ✅ 3. USD irsaliye detayda $ + çift kolon  → no=IRS-2026-003
+BÖLÜM H9 — Kalan
+  ✅ 4. kalan döviz bazlı + TL parantez (500 $ ≈ 24.225 ₺)  → ödeme çevrimi OK
+BÖLÜM H7/H6 — Ekstre
+  ✅ 5. Bakiye (TL) + satır döviz detayı + alt toplam etiketi  → TL bazlı bakiye + H6 formatı
+  ✅ 6. ekstre yazdır + CSV + butonlar  → yazdir=200, csv=200
+BÖLÜM H3 — Yazdırmada No'lar
+  ✅ 7. FATURA NO + Tedarikçi Belge No + yazdırda çift kolon  → alis=AF-2026-002
+BÖLÜM H1/H2 — Aktarım Cilası
+  ✅ 8. CARI- kod + il/ilçe ayrışımı  → kod=CARI-5550001111, il=Istanbul
+  ✅ 9. ekranda None yok (form + ekstre)  → H2 temizlik
+BÖLÜM H8 — Red Fişi
+  ✅ 10. red: Reddedildi + cari sıfır + storno + stok tersi + audit + buton  → cari_net=0.0, storno=True
+  ✅ 11. bağlı tahsilat varken red engellenir  → kilit çalışıyor
+BÖLÜM F — Temizlik
+  ✅ 12. FK bütünlüğü 0 + kalıntı yok  → fk=0, kalıntı=0
+
+=== SONUÇ: 12 başarılı / 0 başarısız (toplam 12) ===
+TÜM D019 TESTLERİ GEÇTİ ✅
