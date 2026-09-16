@@ -21,6 +21,7 @@
 | D015  | Toplu İçe/Dışa Aktarma Birliği + Yardım Merkezi + Sistem Bilgi Paneli | ONAYLANDI | GM2 denetledi ve ONAYLADI (v1.46.0 MÜHÜR — Prod Adayı). 12/12 yeni test, 30 dosya / 645 kontrol bağımsız teyit edildi. |
 | D016  | Final Kabul, Prod Checklist & Dokümantasyon Dondurma | ONAYLANDI | GM2 denetledi ve ONAYLADI (v1.47.0 PROD FİNAL MÜHÜR) 🏁. 68 tablo, 30 test dosyası / 645 kontrol 0 hata. |
 | D017  | Gerçek Ticari Akış & Akınsoft Standardı | ONAYLANDI | Köprü test etti: 6 hane küsürat, çift döviz grid, belge_no, 3'lü kalem, ekstre linkleri, tediye menüsü. 12/12 test, 31 dosya / 657 kontrol 0 hata (v1.48.0 MÜHÜR). |
-| D018  | Akıllı PDF / e-Fatura Okuyucu & Otomatik Cari/Stok/Fatura Entegrasyonu | KODLANIYOR | Direktif verildi (v1.49.0). PDF yükleme ile cariyi otomatik açma/eşleştirme, faturadaki stok kartlarını otomatik oluşturma, fatura başlık ve küsüratlı kalemleri tek tıkla doldurma. Coder'a iletildi |
+| D018  | Akıllı PDF / e-Fatura Okuyucu & Otomatik Cari/Stok/Fatura Entegrasyonu | ONAYLANDI | pypdf entegrasyonu, herzEFATURA tam uyumlu, otomatik cari/stok/fatura doldurma. 11/11 test, 32 dosya / 668 kontrol 0 hata (v1.49.0 MÜHÜR). |
+| D019  | Dövizli Gösterim, Ekstre Raporlama & e-Fatura Aktarım Cilası (H1-H9) | KODLANIYOR | Analist 05 raporu direktife dönüştürüldü (v1.50.0). Para filtresi döviz desteği, Fatura/İrsaliye yan yana USD+TL kolonları, Ekstre TL bazlı bakiye ve Yazdır/CSV desteği, Cari kod/il/ilçe otomasyonu, None temizliği, Red fişi. Coder'a iletildi |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
