@@ -1,0 +1,51 @@
+ M kod/config.py
+ M kod/core.py
+ M kod/db.py
+ M kod/fatura.py
+ M kod/irsaliye.py
+ M kod/muhasebe.py
+ M kod/regresyon_runner.py
+ M kod/templates/fatura/detay.html
+ M kod/templates/fatura/liste.html
+ M kod/templates/irsaliye/detay.html
+ M kod/templates/irsaliye/liste.html
+ M kod/templates/yazdir/belge.html
+ M kod/test_d010_yedekleme.py
+ M kod/test_d011_tanimlar_barkod.py
+ M kod/test_d012_kdv_doviz_master.py
+ M kod/test_d013_cari_tahsilat_odeme.py
+ M kod/test_d014_yazdirma_tanimlar.py
+ M kod/test_d015_toplu_yardim_sistem.py
+ M kod/test_d017_akinsoft_ticari_akis.py
+ M kod/test_d018_efatura_otomasyon.py
+ M kod/test_d019_cift_doviz_gosterim.py
+ M kod/test_f6_cila.py
+?? kanitlar/v1.51.0/
+?? kod/templates/fatura/iade_form.html
+?? kod/templates/fatura/iade_sec.html
+?? kod/templates/irsaliye/iade_form.html
+?? kod/templates/irsaliye/iade_sec.html
+?? kod/test_d020_iade_ailesi.py
+ kod/config.py                         |   2 +-
+ kod/core.py                           |  11 +-
+ kod/db.py                             | 117 ++++++++++++-
+ kod/fatura.py                         | 297 ++++++++++++++++++++++++++++----
+ kod/irsaliye.py                       | 316 ++++++++++++++++++++++++++++++++--
+ kod/muhasebe.py                       |  22 ++-
+ kod/regresyon_runner.py               |   4 +-
+ kod/templates/fatura/detay.html       |  39 ++++-
+ kod/templates/fatura/liste.html       |   5 +-
+ kod/templates/irsaliye/detay.html     |  46 ++++-
+ kod/templates/irsaliye/liste.html     |   8 +-
+ kod/templates/yazdir/belge.html       |   1 +
+ kod/test_d010_yedekleme.py            |   4 +-
+ kod/test_d011_tanimlar_barkod.py      |   2 +-
+ kod/test_d012_kdv_doviz_master.py     |   2 +-
+ kod/test_d013_cari_tahsilat_odeme.py  |   2 +-
+ kod/test_d014_yazdirma_tanimlar.py    |   2 +-
+ kod/test_d015_toplu_yardim_sistem.py  |   6 +-
+ kod/test_d017_akinsoft_ticari_akis.py |   2 +-
+ kod/test_d018_efatura_otomasyon.py    |   2 +-
+ kod/test_d019_cift_doviz_gosterim.py  |   2 +-
+ kod/test_f6_cila.py                   |   2 +-
+ 22 files changed, 802 insertions(+), 92 deletions(-)

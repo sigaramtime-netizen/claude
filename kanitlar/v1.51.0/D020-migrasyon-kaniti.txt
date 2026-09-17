@@ -1,0 +1,39 @@
+=== D020 MİGRASYON KANITI (v1.50.0 → v1.51.0) — 2026-09-16T15:55:29Z ===
+
+--- ADIM 1: v1.50.0 kodu + taze DB (eski şema) + örnek veri ---
+fatura CHECK iade içeriyor mu: False (beklenen: False)
+irsaliye CHECK iade içeriyor mu: False (beklenen: False)
+irsaliye CHECK Reddedildi: False (beklenen: False)
+fatura kaynak kolonu: ['kaynak_irsaliye_id']
+fatura_kalem kaynak kolonu: YOK (beklenen)
+irsaliye kaynak kolonu: YOK (beklenen)
+irsaliye_kalem kaynak kolonu: YOK (beklenen)
+fatura satır: 8 | fatura_kalem: 9 | irsaliye: 4 | irsaliye_kalem: 5
+ornek fatura: ('SF-2026-007', 840.0)
+ornek irsaliye: ('IRS-2026-003', 600.0)
+
+--- ADIM 2: v1.51.0 kodu aynı DB ile açıldı (otomatik migrasyon) ---
+fatura CHECK iade: True (beklenen: True)
+irsaliye CHECK iade: True (beklenen: True)
+irsaliye CHECK Reddedildi: True (beklenen: True)
+fatura yeni kolonlar: ['kaynak_irsaliye_id', 'kaynak_fatura_id', 'depo_id']
+fatura_kalem yeni kolonlar: ['kaynak_kalem_id']
+irsaliye yeni kolonlar: ['depo_id', 'kaynak_irsaliye_id']
+irsaliye_kalem yeni kolonlar: ['kaynak_kalem_id']
+fatura satır: 8 (beklenen: 8 — korundu)
+fatura_kalem: 9 (beklenen: 9)
+irsaliye: 4 (beklenen: 4)
+irsaliye_kalem: 5 (beklenen: 5)
+ornek fatura: ('SF-2026-007', 840.0) (beklenen: SF-2026-007, 840.0)
+ornek irsaliye: ('IRS-2026-003', 600.0) (beklenen: IRS-2026-003, 600.0)
+trigger: 2 (beklenen: 2)
+index: 6 (beklenen: 6)
+FK ihlali: [] (beklenen: [])
+
+--- ADIM 3: migrate DB üzerinde iade akışı (fonksiyonel) ---
+iade olusturma HTTP: 200 (beklenen: 200 — redirect sonrası detay)
+iade kaydı: ('SFIAD-2026-001', 'SatisIade', 'Taslak') (beklenen: SFIAD-2026-001, SatisIade, Taslak)
+--- ADIM 4: taze kurulum (CREATE TABLE yolu, init_db) ---
+taze kurulum fatura CHECK iade: True
+taze kurulum irsaliye CHECK iade+Red: True
+taze kolonlar: True True

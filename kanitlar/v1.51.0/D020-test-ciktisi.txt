@@ -1,0 +1,27 @@
+BÖLÜM KURULUM
+BÖLÜM 1 — No Serileri
+  ✅ 1. 4 tip no serisi + UNIQUE + rozet/filtre  → SFIAD-2026-001, AFIAD-2026-001, IRSIAD-2026-001, IRAIAD-2026-001
+BÖLÜM 2/3 — Onay Mali Etkisi
+  ✅ 2. satış iadesi: alacak 480 + stok +40 + yevmiye aynası  → cari=(0,480), yev=[('120', 0.0, 480.0), ('391', 80.0, 0.0), ('600', 400.0, 0.0)]
+  ✅ 3. alış iadesi: borç 1200 + stok −50 + yevmiye aynası  → cari=(1200,0), yev=[('153', 0.0, 1000.0), ('191', 0.0, 200.0), ('320', 1200.0, 0.0)]
+BÖLÜM 4 — İade İrsaliye Yalnız Stok
+  ✅ 4. iade irsaliye: stok +40/−50, cari 0, yevmiye 0  → seviye_d=-10, cari=0, yev=0
+BÖLÜM 5/6 — Kısmi İade + Kaynak Detay
+  ✅ 5. 'İade edilebilir: 60' + 61 bloke (UI + DB)  → adet 1→1
+  ✅ 6. kaynak detayda 'İade Edilen 40/100' + iade linki  → SFIAD-2026-001
+BÖLÜM 7 — Çift Sayım (§13/§19)
+  ✅ 7. iade red'i yalnız kendi stokunu çevirir; kaynak değişmez; edilen düşer  → kaynak=[<sqlite3.Row object at 0x7fe9f734bd00>], iade_net=0
+BÖLÜM 8 — USD Kaynak
+  ✅ 8. USD devralma + yazdır çift kolon + 'İadesi:' satırı  → SFIAD-2026-002
+BÖLÜM 9 — Taslak
+  ✅ 9. taslak yan etki 0 + silinebilir  → silindi, kalan serbest
+BÖLÜM 10/11 — Kilit + Yetki
+  ✅ 10. tahsilat bağlıyken red engellenir  → Onaylandı
+  ✅ 11. satis onaylayamaz (403) ama iade formu açabilir  → durum=403, form=200
+BÖLÜM 12 — Migrasyon
+  ✅ 12. v1.50 şeması → v1.51: CHECK + kolon + veri + FK + idempotent  → veri=1/1, fk=0, trg=2
+BÖLÜM 13 — Temizlik
+  ✅ 13. FK bütünlüğü 0 + kalıntı yok  → fk=0, kalıntı=0
+
+=== SONUÇ: 13 başarılı / 0 başarısız (toplam 13) ===
+TÜM D020 TESTLERİ GEÇTİ ✅

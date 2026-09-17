@@ -23,6 +23,6 @@
 | D017  | Gerçek Ticari Akış & Akınsoft Standardı | ONAYLANDI | Köprü test etti: 6 hane küsürat, çift döviz grid, belge_no, 3'lü kalem, ekstre linkleri, tediye menüsü. 12/12 test, 31 dosya / 657 kontrol 0 hata (v1.48.0 MÜHÜR). |
 | D018  | Akıllı PDF / e-Fatura Okuyucu & Otomatik Cari/Stok/Fatura Entegrasyonu | ONAYLANDI | pypdf entegrasyonu, herzEFATURA tam uyumlu, otomatik cari/stok/fatura doldurma. 11/11 test, 32 dosya / 668 kontrol 0 hata (v1.49.0 MÜHÜR). |
 | D019  | Dövizli Gösterim, Ekstre Raporlama & e-Fatura Aktarım Cilası (H1-H9) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.50.0 MÜHÜR). 12/12 test, 33 dosya / 680 kontrol 0 hata. |
-| D020  | İade Ailesi: 4 Yeni Fiş Tipi + Kaynak Belge Dönüşümü (F1) | KODLANIYOR | Direktif verildi (v1.51.0). Satış İade / Alış İade Faturası & İrsaliyesi, kaynak belge dönüşümü, kısmi iade takibi, bağımsız stok hareketleri (çift sayım koruması), iade red fişi, eski DB migrasyonu. Coder'a iletildi |
+| D020  | İade Ailesi: 4 Yeni Fiş Tipi + Kaynak Belge Dönüşümü (F1) | KODLANDI | Coder bitirdi (v1.51.0): 4 iade tipi (SFIAD/AFIAD/IRSIAD/IRAIAD) + kaynak dönüşümü + kısmi iade (kalan agregatı) + iade faturası tam bacak (cari+yevmiye+stok) + iade irsaliyesi yalnız stok + irsaliye red fişi + eski DB migrasyon kanıtı. 13/13 yeni test, 34 dosya / 693 kontrol 0 hata. Teslim ZIP + rapor hazır, KÖPRÜ kontrolüne sunuldu |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
