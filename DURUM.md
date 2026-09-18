@@ -24,6 +24,7 @@
 | D018  | Akıllı PDF / e-Fatura Okuyucu & Otomatik Cari/Stok/Fatura Entegrasyonu | ONAYLANDI | pypdf entegrasyonu, herzEFATURA tam uyumlu, otomatik cari/stok/fatura doldurma. 11/11 test, 32 dosya / 668 kontrol 0 hata (v1.49.0 MÜHÜR). |
 | D019  | Dövizli Gösterim, Ekstre Raporlama & e-Fatura Aktarım Cilası (H1-H9) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.50.0 MÜHÜR). 12/12 test, 33 dosya / 680 kontrol 0 hata. |
 | D020  | İade Ailesi: 4 Yeni Fiş Tipi + Kaynak Belge Dönüşümü (F1) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.51.0 MÜHÜR). 13/13 test, 34 dosya / 693 kontrol 0 hata. |
-| D021  | Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı (F2, F3, F4) | KODLANDI | Coder tamamladı (v1.52.0): IKO/FKO/IKOI/FKOI + sayaçsız bakiye + `/cari/konsinye`; PF- proforma (onayda 3×COUNT 0) + Faturaya Dönüştür; sipariş İrsaliye butonu + Fatura durumu rozeti + teklif kapanışı (onayda kilit, iptalde dönüş); Kredi Kartı tek-tık tahsilat (terminal opsiyonel). 16/16 yeni test, 35 dosya / 709 kontrol 0 hata. ZIP + kanıtlar hazır, KONTROLDE'ye alınmayı bekliyor |
+| D021  | Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı (F2, F3, F4) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.52.0 MÜHÜR). 16/16 test, 35 dosya / 709 kontrol 0 hata. |
+| D022  | Fiş Tipi Motoru + Gerçek Mahsup Fişi (M1, T1) | KODLANIYOR | Direktif verildi (v1.53.0). Yevmiye tablosuna `fis_tipi` kolonu ve motoru (Açılış, Kapanış, Tahsilat, Tediye, Mahsup, Red, Otomatik, Muhtelif), ters fiş ve fiş kopyalama, çift carili gerçek mahsup fişi (MHS- serisi, 120/320 denge, cari hareketleri ve çapraz ekstre linkleri). Coder'a iletildi |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
