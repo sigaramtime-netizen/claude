@@ -1,0 +1,34 @@
+BÖLÜM 1 — Migrasyon (v1.53 şeması → _migrate_d023)
+  ✅ 1. migrasyon: hesap_esleme (13×2 seed) + teminat kolonları + backfill + idempotent + FK  → esleme=26, kolonlar=True/True
+BÖLÜM KURULUM
+BÖLÜM 2 — Eşleme değişikliği (600→602)
+  ✅ 2. satis_hasilat 600→602: yeni fatura 602 kullanır; eski fiş DOKUNMAZ; ekran + audit  → FB hesaplar=['120', '602'], audit=11
+BÖLÜM 3 — Varsayılana dön + geçersiz kod güvenliği
+  ✅ 3. varsayılana dön (600) + geçersiz kod 999 → varsayılana düşer, fiş dengeli  → FC hesaplar=['120', '600'], dengeli=True
+BÖLÜM 4 — Kasa/Banka/Çek/Amortisman eşlemeleri (4 örnek)
+  ✅ 4. kasa→103 / banka→121 / cek_alinan→102 / amortisman 632+255 uygulanır; reset temiz  → kasa=103, banka=121, cek=102, amort=['255', '632']
+BÖLÜM 5 — Hareketler listesi (filtre SQL ile birebir)
+  ✅ 5. hareketler: hesap aralığı 100-199 + tip + tarih filtresi CSV≡SQL; kaynak link; ΣTOPLAM  → satır=21/21, birebir=True, link=True, toplam=True
+BÖLÜM 6 — CSV standardı + boş sonuç
+  ✅ 6. CSV BOM + `;` + TR sayı; boş filtre 'Kayıt yok'  → CSV1=200, boş=200, CSV2=200
+BÖLÜM 7 — Hesap Durumu matrisi (3 hesap)
+  ✅ 7. hesap durumu: açılış + Σaylar = kapanış (100/120/600, SQL kanıtı) + matris + yazdır  → {'100': 51700.0, '120': -69371.18, '600': -211124.0}
+BÖLÜM 8 — Teminat oluşturma (defter dışı) + bloklar
+  ✅ 8. teminat: cari 0 + yevmiye 0 (COUNT kanıtı); bakiye aşımı + Verilen tip bloke  → cari=3→3, yev=5→5
+BÖLÜM 9 — Vade işleme (TAM mahsup)
+  ✅ 9. vade TAM: cari alacak +120 (bakiye 230), yevmiye 101/120 dengeli, durum + audit  → bakiye=230.0, fiş={'101': (120.0, 0.0), '120': (0.0, 120.0)}
+BÖLÜM 10 — Vade işleme (KISMİ mahsup)
+  ✅ 10. vade KISMİ: borç 230 < 300 → 230 mahsup + kalan 70 açıklaması, bakiye 0  → bakiye=0.0, fiş borç=230.0, kalan-notu=True
+BÖLÜM 11 — Akış kilidi + borç 0 uyarısı
+  ✅ 11. kilit: Aktif teminat 'Tahsil Edildi' olamaz (durum/teminat/yevmiye değişmez); borç 0 → uyarı, durum 'Aktif' kalır  → kilit-anı=Bekliyor/Aktif/0, işleme-sonrası=Mahsup Edildi/1, T5=Aktif/0
+BÖLÜM 12 — Erken iade
+  ✅ 12. erken iade: durum 'İade Edildi', mali etki 0 (cari/FK sabit), audit  → durum=İade Edildi, cari 3→3
+BÖLÜM 13 — Bordro + cari detay kartı
+  ✅ 13. bordro: satırlar + durum filtresi + CSV; cari detayında Teminat kartı (Aktif toplam)  → aktif=1
+BÖLÜM 14 — Yetki + şirket izolasyonu
+  ✅ 14. yetki 403 (eşleme/iade/vade-işleme; hareketler görünür) + izolasyon: yabancı kod/teminat reddedilir  → 403'ler=403/403/403, kasa=100, X2=Aktif
+BÖLÜM 15 — Temizlik
+  ✅ 15. FK 0 + kalıntı 0 + eşlemeler varsayılan + mizan dengede  → kalıntı=0, yev=0, fk=0, mizan fark=0.0
+
+=== SONUÇ: 15 başarılı / 0 başarısız (toplam 15) ===
+TÜM D023 TESTLERİ GEÇTİ ✅

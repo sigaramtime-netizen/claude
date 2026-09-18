@@ -1,0 +1,26 @@
+ DURUM.md                                           |   2 +-
+ coder-raporlari/R023-muhasebe-cekirdegi-teminat.md | 125 +++++
+ kanitlar/v1.54.0/D023-migrasyon-kaniti.txt         |  29 ++
+ kanitlar/v1.54.0/D023-tam-regresyon.txt            |  42 ++
+ kanitlar/v1.54.0/D023-test-ciktisi.txt             |  34 ++
+ kod/CHANGELOG.md                                   |  58 +++
+ kod/cari.py                                        |   8 +-
+ kod/cek_senet.py                                   | 265 +++++++++-
+ kod/config.py                                      |   2 +-
+ kod/db.py                                          | 111 ++++-
+ kod/muhasebe.py                                    | 440 +++++++++++++++--
+ kod/regresyon_runner.py                            |   4 +-
+ kod/templates/cari/detay.html                      |  12 +
+ kod/templates/cek_senet/detay.html                 |  26 +-
+ kod/templates/cek_senet/form.html                  |  53 ++
+ kod/templates/cek_senet/liste.html                 |  11 +-
+ kod/templates/cek_senet/teminat.html               |  98 ++++
+ kod/templates/muhasebe/eslemeler.html              |  63 +++
+ kod/templates/muhasebe/hareketler.html             |  84 ++++
+ kod/templates/muhasebe/hesap_durumu.html           | 100 ++++
+ kod/templates/muhasebe/liste.html                  |   3 +
+ kod/test_d010_yedekleme.py                         |   2 +-
+ kod/test_d015_toplu_yardim_sistem.py               |   2 +-
+ kod/test_d023_muhasebe_cekirdegi.py                | 539 +++++++++++++++++++++
+ kod/test_f6_cila.py                                |   2 +-
+ 25 files changed, 2046 insertions(+), 69 deletions(-)

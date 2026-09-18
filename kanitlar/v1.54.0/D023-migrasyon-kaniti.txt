@@ -1,0 +1,29 @@
+=== D023 MİGRASYON KANITI (v1.53.0 → v1.54.0) — 2026-09-18T18:34:34Z ===
+
+--- ADIM 1: v1.53.0 şeması (hesap_esleme YOK + teminat kolonları YOK) ---
+hesap_esleme tablosu var mı: False (beklenen: False)
+teminat kolonu var mı: False (beklenen: False)
+teminat_durum kolonu var mı: False (beklenen: False)
+çek/senet sayısı: 2
+
+--- ADIM 2: _migrate_d023 (2× — idempotent) ---
+idempotent (2. çağrı no-op): True (beklenen: True)
+toplam satır: 26 (beklenen: 26 = 13 anahtar × 2 şirket)
+
+--- ADIM 3: SEED + GERİ DÖNÜŞÜM (kural doğrulaması) ---
+şirket başına satır: {1: 13, 2: 13} (beklenen: {1: 13, 2: 13})
+13 varsayılan birebir: True (beklenen: True)
+teminat kolonları eklendi: True (beklenen: True)
+teminat_durum CHECK: True (beklenen: True)
+backfill (eski 2 çek): [('ESKI-CEK-1', 0, 'Yok'), ('ESKI-CEK-2', 0, 'Yok')] (beklenen: 0/'Yok')
+eşleme 602 (planda VAR) → 602 kullanılır: True (beklenen: True)
+eşleme 999 (şirkette YOK) → varsayılana düşer: True (beklenen: True)
+satırı olmayan anahtar → varsayılan: True (beklenen: True)
+FK check: [] (beklenen: [])
+
+--- ADIM 4: canlı demo DB (sunucu açılışında otomatik migrate) ---
+hesap_esleme satır (şirket 1): 13 (beklenen: 13) | hedef kodu planda olmayan: 0 (beklenen: 0)
+teminat kolonları: True | teminat_durum dağılımı: {'Yok': 6}
+canlı mizan dengesi: 0.0 (beklenen: 0.0) | FK: 0
+
+=== MİGRASYON KANITI TAMAM ✅ ===

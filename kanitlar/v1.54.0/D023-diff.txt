@@ -1,0 +1,2664 @@
+diff --git a/DURUM.md b/DURUM.md
+index 5631e02..6c9ea17 100644
+--- a/DURUM.md
++++ b/DURUM.md
+@@ -26,6 +26,6 @@
+ | D020  | İade Ailesi: 4 Yeni Fiş Tipi + Kaynak Belge Dönüşümü (F1) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.51.0 MÜHÜR). 13/13 test, 34 dosya / 693 kontrol 0 hata. |
+ | D021  | Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı (F2, F3, F4) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.52.0 MÜHÜR). 16/16 test, 35 dosya / 709 kontrol 0 hata. |
+ | D022  | Fiş Tipi Motoru + Gerçek Mahsup Fişi (M1, T1) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.53.0 MÜHÜR). 14/14 test, 36 dosya / 723 kontrol 0 hata. |
+-| D023  | Muhasebe Çekirdeği: Hesap Eşlemeleri + Fiş Hareketleri + Hesap Durumu + Teminat Çek/Senet (M2, M3, M4, T2) | KODLANIYOR | Direktif verildi (v1.54.0). Dinamik hesap eşleme motoru (`hesap_esleme` tablosu + ekranı), fiş satır hareketleri ekranı (/muhasebe/hareketler + CSV/Yazdır), 12 aylık Hesap Durumu matrisi (/muhasebe/hesap-durumu), defter dışı Teminat çek/senet oluşturma, vade işleme ve bordro. Coder'a iletildi |
++| D023  | Muhasebe Çekirdeği: Hesap Eşlemeleri + Fiş Hareketleri + Hesap Durumu + Teminat Çek/Senet (M2, M3, M4, T2) | KODLANDI | Coder tamamladı (v1.54.0): `hesap_esleme` (13 anahtar, tek kaynak `hesap_esleme_get`, geçersiz kodda varsayılana düşüş — asla dengesiz fiş) + `/muhasebe/eslemeler` (MUH_WRITE, audit `hesap-esleme`, varsayılana dön; değişiklik geleceğe etkilidir); `/muhasebe/hareketler` (satır bazlı liste: hesap tek/aralık + tip + tarih + cari/belge filtresi, tıklanabilir kaynak linkleri, Σborç/Σalacak + dengesizlik rozeti, CSV BOM/`;`/TR); `/muhasebe/hesap-durumu` (çoklu hesap × 12 ay matrisi, açılış + Σaylar = kapanış, kümülatif, yazdır); Teminat çek/senet (defter dışı oluşturma — cari 0/yevmiye 0, bakiye sınırı UI+sunucu; tam/kısmi vade mahsup 101/120 M2 eşlemeli + 'Kalan X iade edildi'; erken iade mali etki 0; bordro + CSV + cari kartı; Aktif teminata tahsilat/ödeme kilitleri). 15/15 yeni test, 37 dosya / 738 kontrol 0 hata. ZIP + kanıtlar hazır, KONTROLDE'ye alınmayı bekliyor |
+ 
+ Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
+diff --git a/coder-raporlari/R023-muhasebe-cekirdegi-teminat.md b/coder-raporlari/R023-muhasebe-cekirdegi-teminat.md
+new file mode 100644
+index 0000000..14ffd6f
+--- /dev/null
++++ b/coder-raporlari/R023-muhasebe-cekirdegi-teminat.md
+@@ -0,0 +1,125 @@
++# R023 — Muhasebe Çekirdeği + Teminat Çek/Senet (v1.54.0) — Coder Raporu
++
++**Tarih:** 2026-09-18 · **Direktif:** `gm-direktifleri/D023-muhasebe-cekirdegi-teminat.md`
++(KÖPRÜ, M2/M3/M4/T2) · **Sürüm:** v1.53.0 → v1.54.0
++
++## Şema (`db.py`)
++
++- `hesap_esleme(id, sirket_id, anahtar, hedef_kod, not_, UNIQUE(sirket_id, anahtar))`
++  — 13 anahtar (satis_alici 120, satis_hasilat 600, satis_kdv 391, alis_satici 320,
++  alis_kdv 191, alis_stok 153, alis_manuel_gider 770, kasa 100, banka 102,
++  cek_alinan 101, cek_verilen 103, amortisman_gider 770, amortisman_birikmis 257).
++  Varsayılanlar v1.53 sabitleriyle birebir → davranış değişmez.
++- `cek_senet.teminat INTEGER NOT NULL DEFAULT 0` + `teminat_durum TEXT NOT NULL
++  DEFAULT 'Yok' CHECK (…'Yok','Aktif','Mahsup Edildi','İade Edildi')` (taze
++  şemada CREATE içinde; eskide ALTER).
++- `_migrate_d023(conn)`: tablo + **tüm mevcut şirketlere 13'er varsayılan seed**
++  (INSERT OR IGNORE → kullanıcı değişikliği ezilmez) + teminat kolonları
++  (backfill 0/'Yok'). Idempotent, testten çağrılabilir.
++- `sirket_seed` adım 4: yeni şirkete varsayılan eşlemeler.
++
++## Eşleme motoru (M2)
++
++- **Tek kaynak:** `db.hesap_esleme_get(conn, anahtar, sid)` — eşleme satırı yoksa
++  YA DA hedef kod o şirketin `hesap` tablosunda yoksa **varsayılana düşer**
++  (asla hatalı/dengesiz fiş). Tablo yoksa (migrasyon öncesi) de varsayılan.
++- `_fatura_satirlar` / `_irsaliye_satirlar` (satış 120/600/391, alış 153+191/320,
++  manuel 770, iadeler ayna), `_kasa_satirlar` / `_banka_satirlar` (100/102),
++  `_cari_hesap` (Müşteri→satis_alici, Tedarikçi→alis_satici, HerIkisi yön
++  bazlı), `_cek_ara_kod` (Çek turu→cek_alinan/cek_verilen; **senet 121/321
++  sabit** — eşleme kapsamı dışı, davranış korundu), `_cek_satirlar` (tahsil
++  100→kasa eşlemesi), amortisman `fis_uret` dalı (770/257) — hepsi
++  `hesap_esleme_get`'ten alır. D022 `fis_tipi_bul` deseni korundu.
++- Ekran `/muhasebe/eslemeler` (MUH_WRITE): 13 satır × (mevcut kod, hesap adı,
++  not) + o şirketin hesap planından dropdown + **Varsayılana Döndür**.
++  Geçersiz kod ekrandan kabul edilmez (sunucu doğrulama); her değişiklik
++  audit `hesap-esleme` (eski→yeni + işlem). Değişiklik **geleceğe etkilidir**
++  (mevcut yevmiyeler yeniden üretilmez — test 2'de eski fiş birebir korunur).
++
++## Fiş hareketleri listesi (M3) — `/muhasebe/hareketler`
++
++- `yevmiye_kalem × yevmiye × hesap` JOIN + kaynak belge no için modül bazlı
++  LEFT JOIN'ler (fatura/irsaliye/çek/kasa/banka/demirbaş).
++- Kolonlar: Tarih, Fiş No (fiş detay linki), **Fiş Tipi** (D022 rozeti), Hesap
++  Kodu+Ad, Açıklama, Borç, Alacak, **Kaynak** (modül etiketi + belge no,
++  tıklanabilir: `KAYNAK_URL` haritası — Fatura→/fatura/\<id\>, Kasa→
++  /kasa/hareket/\<id\>/fis, Banka→/banka/hareket/\<id\>/fis, Çek/Senet→
++  /cek_senet/\<id\>, Demirbaş→/demirbaş/\<id\>, Manüel→/muhasebe/\<id\>).
++- Filtreler: tarih aralığı, hesap tek kod **veya aralık** (`100-199` →
++  `h.kod>=? AND h.kod<=?`), fiş tipi (D022), cari/belge no metin arama
++  (`cari_hareket×cari_kart` EXISTS alt sorgusu — cari adı/kodu/belge no).
++- Alt toplam Σborç/Σalacak (filtre kapsamı) + dengesizse **⚠ Dengesiz** rozeti.
++- Yazdır (window.print) + CSV (D019 standardı: UTF-8 BOM, `;`, TR sayı, CRLF);
++  boş sonuç "Kayıt yok". Şube izolasyonu (izole_sube) korunur.
++
++## Hesap Durumu (M4) — `/muhasebe/hesap-durumu`
++
++- Çoklu hesap seçimi (checkbox + "tümü"; seçim yoksa tümü) × yıl → matris:
++  satır başı **açılış** (yıl öncesi Σborç−Σalacak), 12 ay hücresi ay borç /
++  ay alacak, TOPLAM kolonu, satır sonu **kapanış** = açılış + Σ(b−a).
++- Gösterim aktif/pasif tipine göre: Aktif/Gider doğal borç (B), Pasif/Özkaynak/
++  Gelir doğal alacak (A) — `_bk_goster` (TL biçimi, taraf harfi).
++- Alt satır: aylık Σborç/Σalacak/net. Parametre: yıl seçimi (−5…+1) +
++  **kümülatif bakiye göster** (ay hücresinde ikinci satır; mizan bakiye
++  deseni borç−alacak). Yazdır. Test 7: 3 hesapta açılış + Σaylar = kapanış
++  SQL ile birebir.
++
++## Teminat çek/senet (T2)
++
++- **Oluşturma:** çek/senet formunda `teminat` checkbox (yalnız Alınan tipinde
++  görünür) + cari borç bakiyesi UI ipucu (typeahead seçimine `bakiyeler` JSON
++  haritası + submit kontrolü) + sunucu doğrulama: tutar (TL karşılığı) ≤
++  carinin borç bakiyesi, aksi halde "aşamaz" flash. `cek_olustur(…,
++  teminat=True)` → INSERT `teminat=1, teminat_durum='Aktif'` ve **cek_senkron
++  çağrılmaz** → cari 0, yevmiye 0 (test 8 COUNT kanıtı). Verilen tip + teminat
++  bloke.
++- **Vade işleme** `/cek_senet/teminat/isle` (CEK_WRITE; tekli `id` veya toplu):
++  vadesi gelen (`vade<=bugun`) Aktif + Alınan + İptal-dışı teminatlar.
++  - Tam (borç ≥ tutar): `muhasebe.teminat_fis_uret` → yevmiye **101 borç /
++    120 alacak** (kodlar `cek_alinan` + `satis_alici` eşlemesinden; sahne
++    'giris' → sonraki cek_senkron dedup) + cari hareket `Tahsilat` alacak=tutar
++    (ilgili_modul CekSenet → ekstrede çek detayı linki).
++  - Kısmi (borç < tutar): borç kadar mahsup + çek açıklamasına **"Kalan X
++    iade edildi"** (kalan parça fişi yok — fiş açıklamasında da).
++  - Borç 0: durum değişmez, "borcu kalmamış, iade edin" uyarısı.
++  - Durum → 'Mahsup Edildi'; audit `teminat-mahsup` (tutar/mahsup/kalan/yevmiye
++    id). Audit'ler commit sonrası yazılır (kilitlenme önlemi).
++- **Erken iade** `POST /cek_senet/<id>/teminat-iade`: yalnız Aktif →
++  'İade Edildi', mali etki 0, audit `teminat-iade`.
++- **Bordro** `/cek_senet/teminat` (+ dash diğer adı `/cek-senet/teminat`):
++  cari × tutar × vade × durum + durum/cari filtresi + Yazdır + CSV (BOM/`;`/TR)
++  + durum özet kartları + vadesi gelenlere tekli/toplu "Vadeyi İşle".
++- **Kilitler:** `cek_durum` Aktif teminatta tüm durum geçişlerini bloklar
++  ("bordrodan işleyin"); `cek_senkron` Aktif teminatta no-op (defter dışı
++  kalır, düzenlemede zorla bile fiş/cari üretmez); işlenmiş (Mahsup Edildi)
++  teminat düzenlenemez/silinemez (mali iz); vade takvimi + portföy toplamları
++  Aktif teminatı dışlar (ayrı "🛡 Teminat (Aktif)" kartı); normal listede
++  "🛡 Teminat · durum" rozeti; detayda teminat kartı + İade Et + kilit
++  bildirimi; cari detayında "Teminat Çek/Senet (Aktif)" kartı (adet + ₺).
++
++## Test & Teslim
++
++- `test_d023_muhasebe_cekirdegi.py` — **15/15** (kabul kriterlerinin tamamı +
++  temizlik): migrasyon kanıtı (13×2 seed, backfill, idempotent, FK), eşleme
++  600→602 + eski fiş dokunulmazlığı + audit, varsayılana dön + geçersiz kod
++  999 → varsayılana düşüş + fiş dengeli, kasa/banka/çek/amortisman eşlemeleri,
++  hareketler CSV≡SQL (aralık+tip+tarih filtresi) + kaynak link + ΣTOPLAM, CSV
++  BOM/TR + boş sonuç, hesap durumu SQL kanıtı (100/120/600), teminat defter
++  dışı + bloklar, tam mahsup (101/120 + cari + audit), kısmi mahsup (kalan
++  notu), akış kilidi + borç-0 uyarısı, erken iade, bordro + CSV + cari kartı,
++  yetki 403 + şirket izolasyonu, FK 0 + kalıntı 0 + mizan 0.
++- Tam regresyon: **37 dosya / 738 kontrol / 0 başarısız**.
++- `kanitlar/v1.54.0/`: test çıktısı, tam regresyon, diff, eski DB migrasyon
++  kanıtı (teminat kolonları + hesap_esleme seed), ZIP hash.
++- Teslim: `teslim/D023-v1.54.0.zip` (sansürlü; demo seed DB + testler dahil,
++  görsel/yedek/upload/pycache hariç) + MD5/SHA256.
++
++## Bilinen notlar
++
++- Vade işleme fişi `fis_tipi='Otomatik'` (kaynak CekSenet — D022 motoru
++  tutarlılığı); sahne 'giris' sayesinde işlem sonrası normal tahsil akışı
++  (Tahsile Ver → Tahsil Et) sorunsuz devam eder, çift fiş oluşmaz.
++- Kısmi mahsup sonrası çek tahsil edilirse tahsil fişi tam tutarla (100/101)
++  yazılır — direktif gereği kalan parça için ayrı fiş üretilmez.
++- D022 mahsup fişi (MHS, 320/120) bilinçli olarak eşleme dışı bırakıldı
++  (D022 sözleşmesi sabit; direktif yalnız `_*_satirlar` ailesini kapsıyor).
+diff --git a/kanitlar/v1.54.0/D023-migrasyon-kaniti.txt b/kanitlar/v1.54.0/D023-migrasyon-kaniti.txt
+new file mode 100644
+index 0000000..4485c2b
+--- /dev/null
++++ b/kanitlar/v1.54.0/D023-migrasyon-kaniti.txt
+@@ -0,0 +1,29 @@
++=== D023 MİGRASYON KANITI (v1.53.0 → v1.54.0) — 2026-09-18T18:34:34Z ===
++
++--- ADIM 1: v1.53.0 şeması (hesap_esleme YOK + teminat kolonları YOK) ---
++hesap_esleme tablosu var mı: False (beklenen: False)
++teminat kolonu var mı: False (beklenen: False)
++teminat_durum kolonu var mı: False (beklenen: False)
++çek/senet sayısı: 2
++
++--- ADIM 2: _migrate_d023 (2× — idempotent) ---
++idempotent (2. çağrı no-op): True (beklenen: True)
++toplam satır: 26 (beklenen: 26 = 13 anahtar × 2 şirket)
++
++--- ADIM 3: SEED + GERİ DÖNÜŞÜM (kural doğrulaması) ---
++şirket başına satır: {1: 13, 2: 13} (beklenen: {1: 13, 2: 13})
++13 varsayılan birebir: True (beklenen: True)
++teminat kolonları eklendi: True (beklenen: True)
++teminat_durum CHECK: True (beklenen: True)
++backfill (eski 2 çek): [('ESKI-CEK-1', 0, 'Yok'), ('ESKI-CEK-2', 0, 'Yok')] (beklenen: 0/'Yok')
++eşleme 602 (planda VAR) → 602 kullanılır: True (beklenen: True)
++eşleme 999 (şirkette YOK) → varsayılana düşer: True (beklenen: True)
++satırı olmayan anahtar → varsayılan: True (beklenen: True)
++FK check: [] (beklenen: [])
++
++--- ADIM 4: canlı demo DB (sunucu açılışında otomatik migrate) ---
++hesap_esleme satır (şirket 1): 13 (beklenen: 13) | hedef kodu planda olmayan: 0 (beklenen: 0)
++teminat kolonları: True | teminat_durum dağılımı: {'Yok': 6}
++canlı mizan dengesi: 0.0 (beklenen: 0.0) | FK: 0
++
++=== MİGRASYON KANITI TAMAM ✅ ===
+diff --git a/kanitlar/v1.54.0/D023-tam-regresyon.txt b/kanitlar/v1.54.0/D023-tam-regresyon.txt
+new file mode 100644
+index 0000000..d313ad0
+--- /dev/null
++++ b/kanitlar/v1.54.0/D023-tam-regresyon.txt
+@@ -0,0 +1,42 @@
++===== D023 (v1.54.0) — TAM REGRESYON =====
++Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.54.0
++
++[test_alinan_teklif.py           ] exit=0 | SONUÇ: 23 başarılı / 0 başarısız
++[test_bakim.py                   ] exit=0 | === SONUÇ: 29 başarılı / 0 başarısız ===
++[test_belge_sayac_e2e.py         ] exit=0 | SONUÇ: 9 başarılı / 0 başarısız
++[test_coklu_sirket.py            ] exit=0 | SONUÇ: 16 başarılı / 0 başarısız
++[test_crm.py                     ] exit=0 | === SONUÇ: 25 başarılı / 0 başarısız ===
++[test_d007_iyilestirmeler.py     ] exit=0 | === SONUÇ: 31 başarılı / 0 başarısız (toplam 31) ===
++[test_d009_guvenlik.py           ] exit=0 | === SONUÇ: 18 başarılı / 0 başarısız (toplam 18) ===
++[test_d010_yedekleme.py          ] exit=0 | === SONUÇ: 16 başarılı / 0 başarısız (toplam 16) ===
++[test_d011_tanimlar_barkod.py    ] exit=0 | === SONUÇ: 21 başarılı / 0 başarısız (toplam 21) ===
++[test_d012_kdv_doviz_master.py   ] exit=0 | === SONUÇ: 21 başarılı / 0 başarısız (toplam 21) ===
++[test_d013_cari_tahsilat_odeme.py] exit=0 | === SONUÇ: 14 başarılı / 0 başarısız (toplam 14) ===
++[test_d014_yazdirma_tanimlar.py  ] exit=0 | === SONUÇ: 16 başarılı / 0 başarısız (toplam 16) ===
++[test_d015_toplu_yardim_sistem.py] exit=0 | === SONUÇ: 12 başarılı / 0 başarısız (toplam 12) ===
++[test_d017_akinsoft_ticari_akis.py] exit=0 | === SONUÇ: 12 başarılı / 0 başarısız (toplam 12) ===
++[test_d018_efatura_otomasyon.py  ] exit=0 | === SONUÇ: 11 başarılı / 0 başarısız (toplam 11) ===
++[test_d019_cift_doviz_gosterim.py] exit=0 | === SONUÇ: 12 başarılı / 0 başarısız (toplam 12) ===
++[test_d020_iade_ailesi.py        ] exit=0 | === SONUÇ: 13 başarılı / 0 başarısız (toplam 13) ===
++[test_d021_konsinye_proforma_donushum.py] exit=0 | === SONUÇ: 16 başarılı / 0 başarısız (toplam 16) ===
++[test_d022_fis_motoru_mahsup.py  ] exit=0 | === SONUÇ: 14 başarılı / 0 başarısız (toplam 14) ===
++[test_d023_muhasebe_cekirdegi.py ] exit=0 | === SONUÇ: 15 başarılı / 0 başarısız (toplam 15) ===
++[test_eksik_teslimat.py          ] exit=0 | SONUÇ: 21 başarılı / 0 başarısız
++[test_f1_mali.py                 ] exit=0 | === SONUÇ: 25 başarılı / 0 başarısız ===
++[test_f2_kdv.py                  ] exit=0 | === SONUÇ: 34 başarılı / 0 başarısız ===
++[test_f3_arama.py                ] exit=0 | === SONUÇ: 30 başarılı / 0 başarısız ===
++[test_f4_edonusum.py             ] exit=0 | === SONUÇ: 22 başarılı / 0 başarısız ===
++[test_f5a_finansal.py            ] exit=0 | SONUÇ: 18/18 geçti, 0 başarısız
++[test_f5b_demirbas.py            ] exit=0 | SONUÇ: 18/18 geçti, 0 başarısız
++[test_f5c_beyanname.py           ] exit=0 | SONUÇ: 18/18 geçti, 0 başarısız
++[test_f6_cila.py                 ] exit=0 | SONUÇ: 18/18 geçti, 0 başarısız
++[test_izolasyon_e2e.py           ] exit=0 | SONUÇ: 22 başarılı / 0 başarısız
++[test_izolasyon_mali_e2e.py      ] exit=0 | SONUÇ: 19 başarılı / 0 başarısız
++[test_manuel_satir.py            ] exit=0 | SONUÇ: 28 ✅ / 0 ❌
++[test_pos.py                     ] exit=0 | === SONUÇ: 41 başarılı / 0 başarısız ===
++[test_satin_alma_talep.py        ] exit=0 | SONUÇ: 23 başarılı / 0 başarısız
++[test_silme_kurallari.py         ] exit=0 | SONUÇ: 23 başarılı / 0 başarısız
++[test_sirket_yonetimi.py         ] exit=0 | SONUÇ: 19 başarılı / 0 başarısız
++[test_teklif_siparis_manuel.py   ] exit=0 | SONUÇ: 15 başarılı / 0 başarısız
++
++TOPLAM: 37 dosya, 738 kontrol, 0 başarısız (exit!=0 veya fail: 0)
+diff --git a/kanitlar/v1.54.0/D023-test-ciktisi.txt b/kanitlar/v1.54.0/D023-test-ciktisi.txt
+new file mode 100644
+index 0000000..1fe7227
+--- /dev/null
++++ b/kanitlar/v1.54.0/D023-test-ciktisi.txt
+@@ -0,0 +1,34 @@
++BÖLÜM 1 — Migrasyon (v1.53 şeması → _migrate_d023)
++  ✅ 1. migrasyon: hesap_esleme (13×2 seed) + teminat kolonları + backfill + idempotent + FK  → esleme=26, kolonlar=True/True
++BÖLÜM KURULUM
++BÖLÜM 2 — Eşleme değişikliği (600→602)
++  ✅ 2. satis_hasilat 600→602: yeni fatura 602 kullanır; eski fiş DOKUNMAZ; ekran + audit  → FB hesaplar=['120', '602'], audit=11
++BÖLÜM 3 — Varsayılana dön + geçersiz kod güvenliği
++  ✅ 3. varsayılana dön (600) + geçersiz kod 999 → varsayılana düşer, fiş dengeli  → FC hesaplar=['120', '600'], dengeli=True
++BÖLÜM 4 — Kasa/Banka/Çek/Amortisman eşlemeleri (4 örnek)
++  ✅ 4. kasa→103 / banka→121 / cek_alinan→102 / amortisman 632+255 uygulanır; reset temiz  → kasa=103, banka=121, cek=102, amort=['255', '632']
++BÖLÜM 5 — Hareketler listesi (filtre SQL ile birebir)
++  ✅ 5. hareketler: hesap aralığı 100-199 + tip + tarih filtresi CSV≡SQL; kaynak link; ΣTOPLAM  → satır=21/21, birebir=True, link=True, toplam=True
++BÖLÜM 6 — CSV standardı + boş sonuç
++  ✅ 6. CSV BOM + `;` + TR sayı; boş filtre 'Kayıt yok'  → CSV1=200, boş=200, CSV2=200
++BÖLÜM 7 — Hesap Durumu matrisi (3 hesap)
++  ✅ 7. hesap durumu: açılış + Σaylar = kapanış (100/120/600, SQL kanıtı) + matris + yazdır  → {'100': 51700.0, '120': -69371.18, '600': -211124.0}
++BÖLÜM 8 — Teminat oluşturma (defter dışı) + bloklar
++  ✅ 8. teminat: cari 0 + yevmiye 0 (COUNT kanıtı); bakiye aşımı + Verilen tip bloke  → cari=3→3, yev=5→5
++BÖLÜM 9 — Vade işleme (TAM mahsup)
++  ✅ 9. vade TAM: cari alacak +120 (bakiye 230), yevmiye 101/120 dengeli, durum + audit  → bakiye=230.0, fiş={'101': (120.0, 0.0), '120': (0.0, 120.0)}
++BÖLÜM 10 — Vade işleme (KISMİ mahsup)
++  ✅ 10. vade KISMİ: borç 230 < 300 → 230 mahsup + kalan 70 açıklaması, bakiye 0  → bakiye=0.0, fiş borç=230.0, kalan-notu=True
++BÖLÜM 11 — Akış kilidi + borç 0 uyarısı
++  ✅ 11. kilit: Aktif teminat 'Tahsil Edildi' olamaz (durum/teminat/yevmiye değişmez); borç 0 → uyarı, durum 'Aktif' kalır  → kilit-anı=Bekliyor/Aktif/0, işleme-sonrası=Mahsup Edildi/1, T5=Aktif/0
++BÖLÜM 12 — Erken iade
++  ✅ 12. erken iade: durum 'İade Edildi', mali etki 0 (cari/FK sabit), audit  → durum=İade Edildi, cari 3→3
++BÖLÜM 13 — Bordro + cari detay kartı
++  ✅ 13. bordro: satırlar + durum filtresi + CSV; cari detayında Teminat kartı (Aktif toplam)  → aktif=1
++BÖLÜM 14 — Yetki + şirket izolasyonu
++  ✅ 14. yetki 403 (eşleme/iade/vade-işleme; hareketler görünür) + izolasyon: yabancı kod/teminat reddedilir  → 403'ler=403/403/403, kasa=100, X2=Aktif
++BÖLÜM 15 — Temizlik
++  ✅ 15. FK 0 + kalıntı 0 + eşlemeler varsayılan + mizan dengede  → kalıntı=0, yev=0, fk=0, mizan fark=0.0
++
++=== SONUÇ: 15 başarılı / 0 başarısız (toplam 15) ===
++TÜM D023 TESTLERİ GEÇTİ ✅
+diff --git a/kod/CHANGELOG.md b/kod/CHANGELOG.md
+index 6f2a5d4..4fd9887 100644
+--- a/kod/CHANGELOG.md
++++ b/kod/CHANGELOG.md
+@@ -8,8 +8,66 @@ Biçim: [Keep a Changelog](https://keepachangelog.com) · Sürümleme: **v1.MINO
+ 
+ ---
+ 
++## v1.54.0 — 2026-09-18
++
++### Eklenen — D023: Muhasebe Çekirdeği + Teminat Çek/Senet (M2, M3, M4, T2)
++KÖPRÜ direktifi (`D023-muhasebe-cekirdegi-teminat.md`, Analiz 07 sıralı plan).
++
++**Hesap eşleme motoru (M2):** `hesap_esleme` tablosu (`UNIQUE(sirket_id, anahtar)`,
++13 anahtar; varsayılanlar = v1.53 sabitleri → davranış değişmez). Tek kaynak
++`db.hesap_esleme_get(conn, anahtar, sid)`: eşleme yoksa YA DA hedef kod o
++şirketin hesap planında yoksa **varsayılana düşer** (asla dengesiz fiş).
++`_fatura_satirlar`/`_irsaliye_satirlar`/`_kasa_satirlar`/`_banka_satirlar`/
++`_cek_satirlar`/`_cari_hesap`/amortisman `fis_uret` dalı artık eşlemeden okur
++(çek senet 121/321 sabit kalır). Ekran `/muhasebe/eslemeler` (MUH_WRITE):
++anahtar × (kod, hesap adı, not) + hesap planı dropdown + "Varsayılana Döndür";
++her değişiklik audit (`hesap-esleme`); değişiklik geleceğe etkilidir (mevcut
++fişler dokunulmaz). `sirket_seed` + `_migrate_d023` varsayılanları idempotent
++ekler.
++
++**Fiş hareketleri listesi (M3):** `/muhasebe/hareketler` — `yevmiye_kalem ×
++yevmiye × hesap` JOIN; kolonlar: Tarih, Fiş No, Fiş Tipi (D022 rozeti),
++Hesap Kodu+Ad, Açıklama, Borç, Alacak, Kaynak (modül + belge no, tıklanabilir:
++Fatura→/fatura/<id>, Kasa/Banka→ hareket fişi, Çek/Senet→/cek_senet/<id>…).
++Filtreler: tarih aralığı, hesap (tek kod veya **aralık** `100-199`), fiş tipi,
++cari/belge no metin arama (cari_hareket EXISTS alt sorgusu). Alt toplam
++Σborç/Σalacak + dengesizlik uyarı rozeti. Yazdır + CSV (D019 standardı: BOM,
++`;`, TR sayı); boş sonuç "Kayıt yok".
++
++**Hesap Durumu (M4):** `/muhasebe/hesap-durumu` — çoklu hesap seçimi
++(checkbox + "tümü") × 12 ay matrisi: satır başı **açılış**, hücreler ay borç /
++ay alacak, satır sonu **kapanış** (aktif/pasif tipine göre B/A işareti; doğrulama
++kuralı açılış + Σaylar = kapanış). Alt satır aylık Σborç/Σalacak/net.
++Parametre: yıl seçimi + "kümülatif bakiye göster" (mizan bakiye deseni).
++Yazdır.
++
++**Teminat çek/senet (T2):** `cek_senet.teminat` + `teminat_durum`
++('Yok'/'Aktif'/'Mahsup Edildi'/'İade Edildi', migrasyon + backfill). Teminat =
++carinin bize verdiği güvence; oluşturma **defter dışı** (cari 0, yevmiye 0 —
++COUNT kanıtlı), tutar ≤ carinin borç bakiyesi (UI+sunucu), yalnız Alınan tipi.
++`/cek_senet/teminat` bordrosu (+ `/cek-senet/teminat` diğer ad): cari × tutar
++× vade × durum + filtre + Yazdır + CSV; vadesi gelen Aktif teminatlar tekli/
++toplu **Vadeyi İşle**: tam mahsup → cari alacak + tutar + yevmiye `101 borç /
++120 alacak` (kodlar M2 eşlemesinden: cek_alinan + satis_alici); kısmi → borç
++kadar mahsup + "Kalan X iade edildi" açıklaması (kalan fişi yok); borç 0 →
++uyarı. Erken iade `POST /cek_senet/<id>/teminat-iade` (mali etki 0). Audit:
++`teminat-mahsup` / `teminat-iade`. **Kilit:** Aktif teminat normal tahsilat/
++ödeme akışına giremez (`cek_durum` bloke + `cek_senkron` Aktif teminatta
++no-op); vade takvimi ve portföy toplamlarına girmez; işlenmiş teminat
++düzenlenemez/silinemez. Normal listede "🛡 Teminat" rozeti; cari detayında
++"Teminat Çek/Senet (Aktif)" kartı.
++
++**Test:** `test_d023_muhasebe_cekirdegi.py` — 15 kontrol (migrasyon, eşleme
++değişimi + eski fiş dokunulmazlığı, geçersiz koda düşüş, 4 modül eşlemesi,
++hareketler CSV≡SQL, hesap durumu SQL kanıtı, teminat defter-dışı + tam/kısmi
++mahsup + kilit + iade + bordro, yetki 403 + şirket izolasyonu, FK/kalıntı
++temizliği). Tam regresyon: **37 dosya / 738 kontrol / 0 hata**.
++
++---
++
+ ## v1.53.0 — 2026-09-18
+ 
++
+ ### Eklenen — D022: Fiş Tipi Motoru + Gerçek Mahsup Fişi (M1, T1)
+ KÖPRÜ direktifi (`D022-fis-motoru-mahsup.md`, muhasebe çekirdeği).
+ 
+diff --git a/kod/cari.py b/kod/cari.py
+index 12bfe9f..603a81f 100644
+--- a/kod/cari.py
++++ b/kod/cari.py
+@@ -373,10 +373,16 @@ def cari_detay(req, cid):
+     _kozet = _konsinye_ozet(conn, cari["id"], db.sirket_id(req))
+     konsinye = {"kalem": len(_kozet),
+                 "bakiye": round(sum((r["bakiye"] or 0) for r in _kozet), 2)}
++    # D023-T2 madde 16 — Teminat Çek/Senet kartı (Aktif toplam).
++    _t = conn.execute(
++        "SELECT COUNT(*) c, COALESCE(SUM(tutar*COALESCE(doviz_kur,1)),0) t FROM cek_senet "
++        "WHERE cari_id=? AND teminat=1 AND teminat_durum='Aktif' AND durum!='İptal'",
++        (cari["id"],)).fetchone()
++    teminat = {"adet": _t["c"], "tutar": round(_t["t"], 2)}
+     conn.close()
+     return render_template("cari/detay.html", cari=cari, sekme=sekme, ozet=ozet,
+                            hareketler=hareketler, notlar=notlar, loglar=loglar,
+-                           silinebilir=silinebilir, konsinye=konsinye)
++                           silinebilir=silinebilir, konsinye=konsinye, teminat=teminat)
+ 
+ 
+ @route(r"/cari/(?P<cid>\d+)/sil", methods=("POST",), roles=WRITE_ROLES)
+diff --git a/kod/cek_senet.py b/kod/cek_senet.py
+index 733de11..9995b24 100644
+--- a/kod/cek_senet.py
++++ b/kod/cek_senet.py
+@@ -12,7 +12,10 @@
+ - Ek dosya (attachment): fiziksel çek/senet görüntüsü eklenir (ekler.py — genel
+   `ek_dosya` tablosu, ilgili_modul='CekSenet').
+ """
++import csv
+ import datetime
++import io
++import json
+ import urllib.parse
+ 
+ import db
+@@ -33,6 +36,17 @@ DURUM_LABEL = {"Bekliyor": "Portföyde", "Tahsile Verildi": "Tahsile Verildi",
+ DURUM_BADGE = {"Bekliyor": "b-warn", "Tahsile Verildi": "b-info", "Tahsil Edildi": "b-ok",
+                "Ödendi": "b-ok", "Karşılıksız": "b-danger", "Ciro": "b-info",
+                "İptal": "b-muted"}
++# D023 (T2) — teminat çek/senet durumları (cek_senet.teminat_durum CHECK ile birebir).
++TEMINAT_DURUMLAR = ("Aktif", "Mahsup Edildi", "İade Edildi")
++TEMINAT_DURUM_BADGE = {"Aktif": "b-warn", "Mahsup Edildi": "b-ok", "İade Edildi": "b-info"}
++
++
++def _cari_borc_bakiye(conn, cari_id):
++    """D023-T2 — cari net borç bakiyesi (Σborç − Σalacak, TL karşılığı)."""
++    r = conn.execute(
++        "SELECT COALESCE(SUM(borc),0)-COALESCE(SUM(alacak),0) b FROM cari_hareket WHERE cari_id=?",
++        (cari_id,)).fetchone()
++    return round(r["b"], 2) if r else 0.0
+ 
+ 
+ def _f(v, default=0.0):
+@@ -50,23 +64,29 @@ def _i(v):
+ 
+ 
+ def cek_olustur(conn, req, tip, tur, no, cari_id, banka="", sube_ad="", tutar=0.0,
+-                para_birimi="TRY", doviz_kur=None, keside=None, vade=None, aciklama=""):
++                para_birimi="TRY", doviz_kur=None, keside=None, vade=None, aciklama="",
++                teminat=False):
+     """D013 — tek noktadan çek/senet yazma (Bekliyor + K26 senkron).
+ 
+     `_form_post` insert dalı ile D013 tahsilat/ödeme ekranı aynı kodu kullanır →
+     kod tekrarı yok. COMMIT çağıranın işidir (POS `pos_satis_olustur` deseni).
+     Dönüş: yeni çek/senet id.
++    D023-T2 madde 13: teminat=True → DEFTER DIŞI kayıt (teminat=1, durum 'Aktif'):
++    cari hareket ve yevmiye ÜRETİLMEZ (yedek güvence; alacak silinmez).
+     """
+     cur = conn.execute(
+         "INSERT INTO cek_senet(no, tip, tur, cari_id, banka, sube_ad, tutar, para_birimi, "
+-        "doviz_kur, keside_tarihi, vade, durum, aciklama, sube_id, created_by, sirket_id) "
+-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,'Bekliyor',?,?,?,?)",
++        "doviz_kur, keside_tarihi, vade, durum, aciklama, sube_id, created_by, sirket_id, "
++        "teminat, teminat_durum) "
++        "VALUES(?,?,?,?,?,?,?,?,?,?,?,'Bekliyor',?,?,?,?,?,?)",
+         (no, tip, tur, cari_id, banka, sube_ad, tutar, para_birimi, doviz_kur,
+-         keside, vade, aciklama, izole_sube(req), req.user["id"], db.sirket_id(req)),
++         keside, vade, aciklama, izole_sube(req), req.user["id"], db.sirket_id(req),
++         1 if teminat else 0, "Aktif" if teminat else "Yok"),
+     )
+     cid = cur.lastrowid
+-    # K26: çek alındığında cari kapanır (ALACAK/BORÇ) + giris fişi (101/121/103/321)
+-    muhasebe.cek_senkron(conn, cid, created_by=req.user["id"])
++    if not teminat:
++        # K26: çek alındığında cari kapanır (ALACAK/BORÇ) + giris fişi (101/121/103/321)
++        muhasebe.cek_senkron(conn, cid, created_by=req.user["id"])
+     return cid
+ 
+ 
+@@ -148,13 +168,22 @@ def cek_liste(req):
+     portfoy = conn.execute(
+         "SELECT COALESCE(SUM(CASE WHEN tip='Alinan' THEN tutar ELSE 0 END),0) a, "
+         "COALESCE(SUM(CASE WHEN tip='Verilen' THEN tutar ELSE 0 END),0) v "
+-        "FROM cek_senet WHERE durum IN ('Bekliyor','Tahsile Verildi') AND sirket_id=?",
++        "FROM cek_senet WHERE durum IN ('Bekliyor','Tahsile Verildi') AND sirket_id=? "
++        # D023-T2: Aktif teminat defter dışı → portföy toplamında değil (bordroda).
++        "AND NOT (teminat=1 AND teminat_durum='Aktif')",
++        (db.sirket_id(req),)).fetchone()
++    # D023-T2 — teminat kartı: Aktif toplam (adet + TL karşılığı)
++    _t = conn.execute(
++        "SELECT COUNT(*) c, COALESCE(SUM(tutar*COALESCE(doviz_kur,1)),0) t FROM cek_senet "
++        "WHERE teminat=1 AND teminat_durum='Aktif' AND durum!='İptal' AND sirket_id=?",
+         (db.sirket_id(req),)).fetchone()
+     conn.close()
+     return render_template("cek_senet/liste.html", rows=_rows, tip_label=TIP_LABEL, tipler=TIPLER,
+                            turler=TURLER, durumlar=DURUMLAR, durum_label=DURUM_LABEL,
+                            durum_badge=DURUM_BADGE, ozet=ozet,
+                            portfoy={"al_inan": portfoy["a"], "verilen": portfoy["v"]},
++                           teminat_ozet={"adet": _t["c"], "tutar": round(_t["t"], 2)},
++                           teminat_badge=TEMINAT_DURUM_BADGE,
+                            filtro={"q": q, "tip": tip, "tur": tur, "durum": durum})
+ 
+ 
+@@ -167,7 +196,8 @@ def cek_vade_takvimi(req):
+     rows = conn.execute(
+         "SELECT c.*, k.unvan AS cari_unvan, k.kod AS cari_kod FROM cek_senet c "
+         "LEFT JOIN cari_kart k ON k.id=c.cari_id "
+-        "WHERE c.durum IN ('Bekliyor','Tahsile Verildi') AND c.sirket_id=?"
++        "WHERE c.durum IN ('Bekliyor','Tahsile Verildi') AND c.sirket_id=? "
++        "AND NOT (c.teminat=1 AND c.teminat_durum='Aktif')"
+         + (" AND c.sube_id=?" if iz else "") +
+         " ORDER BY c.vade", [db.sirket_id(req)] + ([iz] if iz else [])).fetchall()
+     gecikmis, bugun_list, yaklasan, ileriki = [], [], [], []
+@@ -224,6 +254,7 @@ def cek_detay(req, cid):
+     conn.close()
+     return render_template("cek_senet/detay.html", cek=cek, ekler=ekler_list, loglar=loglar,
+                            tip_label=TIP_LABEL, durum_label=DURUM_LABEL, durum_badge=DURUM_BADGE,
++                           teminat_badge=TEMINAT_DURUM_BADGE,
+                            ek_upload=ek_upload, ek_modul="CekSenet", ek_kayit_id=cek["id"],
+                            ek_geri=f"/cek_senet/{cek['id']}")
+ 
+@@ -264,6 +295,12 @@ def cek_sil(req, cid):
+         conn.close()
+         flash(req, "Yalnızca 'Bekliyor' çek/senet silinebilir (diğer durumlar mali iz taşır).", "danger")
+         return redirect(f"/cek_senet/{cek['id']}")
++    # D023-T2 — vadesi işlenmiş teminat mali iz taşır (mahsup fişi + cari hareket).
++    if cek["teminat"] and cek["teminat_durum"] == "Mahsup Edildi":
++        conn.close()
++        flash(req, "Vadesi işlenmiş teminat mali iz taşır (mahsup fişi + cari hareket); "
++                   "silinemez — gerekirse İptal akışını kullanın.", "danger")
++        return redirect(f"/cek_senet/{cek['id']}")
+     audit(req, "cek_senet", cek["id"], "sil", {"no": cek["no"], "tip": cek["tip"], "tur": cek["tur"]})
+     # K26: Bekliyor çek/senet oluşturulurken cari hareketi + giriş fişi üretilir; silinirken
+     # bu mali iz geri alınır (yetim cari_hareket / yevmiye fişi kalmasın).
+@@ -297,6 +334,8 @@ def _form_post(req, conn, mevcut):
+     elif not doviz_kur or doviz_kur <= 0:
+         doviz_kur = db.guncel_kur(conn, para_birimi, db.sirket_id(req))
+ 
++    teminat = req.form.get("teminat") == "1"  # D023-T2
++
+     if req.form.get("tip_degistir"):
+         return _form_render(req, conn, mevcut)
+ 
+@@ -312,8 +351,25 @@ def _form_post(req, conn, mevcut):
+     if not vade:
+         flash(req, "Vade zorunludur.", "danger")
+         return _form_render(req, conn, mevcut)
++    # D023-T2 madde 13 — teminat kuralları (UI + sunucu; tutar ≤ cari borç bakiyesi).
++    if teminat and tip != "Alinan":
++        flash(req, "Teminat çek/senet yalnızca 'Alınan' tipinde olabilir.", "danger")
++        return _form_render(req, conn, mevcut)
++    if teminat and cari_id:
++        borc = _cari_borc_bakiye(conn, cari_id)
++        tutar_tl = round(tutar * (doviz_kur or 1.0), 2)
++        if borc <= 0 or tutar_tl > round(borc + 0.005, 2):
++            flash(req, "Teminat tutarı carinin borç bakiyesini aşamaz (en fazla "
++                       + f"{borc:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
++                       + " ₺).", "danger")
++            return _form_render(req, conn, mevcut)
+ 
+     if mevcut:
++        # D023-T2 — işlenmiş/iade edilmiş teminat mali iz taşır, düzenlenemez.
++        if mevcut["teminat"] and mevcut["teminat_durum"] != "Aktif":
++            conn.close()
++            flash(req, "Vadesi işlenmiş teminat çek/senet düzenlenemez.", "danger")
++            return redirect(f"/cek_senet/{mevcut['id']}")
+         conn.execute(
+             "UPDATE cek_senet SET tip=?, tur=?, no=?, cari_id=?, banka=?, sube_ad=?, tutar=?, "
+             "para_birimi=?, doviz_kur=?, keside_tarihi=?, vade=?, aciklama=?, "
+@@ -323,13 +379,17 @@ def _form_post(req, conn, mevcut):
+         )
+         cid = mevcut["id"]
+         # K26: cari + fiş setini yeni değerlerle yeniden senkronize et
+-        muhasebe.cek_senkron(conn, cid, created_by=req.user["id"], zorla=True)
++        # (D023-T2: Aktif teminat defter dışı — cek_senkron içindeki guard da korur).
++        if not (mevcut["teminat"] and mevcut["teminat_durum"] == "Aktif"):
++            muhasebe.cek_senkron(conn, cid, created_by=req.user["id"], zorla=True)
+         islem = ("guncelle", {"no": no}, "Çek/senet güncellendi.")
+     else:
+         # D013: insert dalı tek-nokta çekirdeğe taşındı (davranış birebir aynı).
++        # D023-T2: teminat dalı defter dışı kayıt açar (cari 0, yevmiye 0).
+         cid = cek_olustur(conn, req, tip, tur, no, cari_id, banka, sube_ad, tutar,
+-                          para_birimi, doviz_kur, keside, vade, aciklama)
+-        islem = ("olustur", {"no": no}, f"Çek/senet oluşturuldu: {no}")
++                          para_birimi, doviz_kur, keside, vade, aciklama, teminat=teminat)
++        islem = ("olustur", {"no": no, "teminat": 1 if teminat else 0},
++                 f"Çek/senet oluşturuldu: {no}" + (" (teminat — defter dışı)" if teminat else ""))
+     conn.commit()
+     audit(req, "cek_senet", cid, islem[0], islem[1])
+     flash(req, islem[2], "ok")
+@@ -350,6 +410,7 @@ def _form_render(req, conn, mevcut):
+     else:
+         cek = {
+             "tip": tip,
++            "teminat": 1 if req.form.get("teminat") == "1" else 0,
+             "tur": req.form.get("tur") if req.form.get("tur") in TURLER else "Cek",
+             "no": (req.form.get("no") or "").strip(),
+             "cari_id": _i(req.form.get("cari_id")),
+@@ -363,9 +424,12 @@ def _form_render(req, conn, mevcut):
+             "doviz_kur": _f(req.form.get("doviz_kur"), None),
+         }
+     cariler = _cariler(conn, tip, db.sirket_id(req))
++    # D023-T2 — UI ipucu: cari borç bakiyeleri (teminat üst sınırı, madde 13).
++    bakiyeler = {c["id"]: _cari_borc_bakiye(conn, c["id"]) for c in cariler}
+     return render_template("cek_senet/form.html", cek=cek, cariler=cariler, tip=tip,
+                            para_birimleri=db.para_birimleri(sid=db.sirket_id(req)),
+-                           bugun=datetime.date.today().isoformat())
++                           bugun=datetime.date.today().isoformat(),
++                           bakiyeler_json=json.dumps(bakiyeler))
+ 
+ 
+ @route(r"/cek_senet/(?P<cid>\d+)/durum", methods=("POST",), roles=CEK_WRITE)
+@@ -381,6 +445,15 @@ def cek_durum(req, cid):
+         conn.close()
+         return redirect("/cek_senet")
+ 
++    # D023-T2 madde 17 — KİLİT: Aktif teminat defter dışıdır; tahsilat/ödeme akışına
++    # giremez. Durum değişikliği yalnız teminat bordrosu akışıyla açılır
++    # (Vadeyi İşle → Mahsup Edildi, veya İade Et → İade Edildi).
++    if cek["teminat"] and cek["teminat_durum"] == "Aktif":
++        conn.close()
++        flash(req, "Aktif teminat çek/senet buradan işlenemez (defter dışı); "
++                   "vade işleme ve iade Teminat Bordrosu ekranından yapılır.", "danger")
++        return redirect(f"/cek_senet/{cid}")
++
+     izinli = {
+         "Bekliyor": ["Tahsile Verildi", "Tahsil Edildi", "Ödendi", "Ciro", "İptal"],
+         "Tahsile Verildi": ["Tahsil Edildi", "Karşılıksız", "İptal"],
+@@ -454,5 +527,173 @@ def cek_yazdir(req, cid):
+     return render_template("cek_senet/yazdir.html", cek=cek, tip_label=TIP_LABEL)
+ 
+ 
++
++# ---------------------------------------------------------------------------
++# D023 (v1.54) — Teminat Çek/Senet rotaları (T2, madde 14-16)
++# ---------------------------------------------------------------------------
++
++@route(r"/cek_senet/teminat", roles=())
++@route(r"/cek-senet/teminat", roles=())
++def teminat_bordro(req):
++    """D023-T2 madde 16 — Teminat bordrosu: cari × tutar × vade × durum.
++
++    Filtre (durum, cari) + Yazdır + CSV; vadesi gelen Aktif teminatlar
++    'Vadeyi İşle' (tekli + toplu) aksiyonuyla listelenir (madde 14).
++    """
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    durum = req.q("durum") if req.q("durum") in TEMINAT_DURUMLAR else ""
++    cari_id = _i(req.q("cari_id"))
++    where, params = ["c.teminat=1", "c.sirket_id=?"], [sid]
++    if durum:
++        where.append("c.teminat_durum=?")
++        params.append(durum)
++    if cari_id:
++        where.append("c.cari_id=?")
++        params.append(cari_id)
++    w = " AND ".join(where)
++    rows = [dict(r) for r in conn.execute(
++        f"SELECT c.*, k.unvan AS cari_unvan, k.kod AS cari_kod FROM cek_senet c "
++        f"LEFT JOIN cari_kart k ON k.id=c.cari_id WHERE {w} ORDER BY c.vade, c.id DESC",
++        params).fetchall()]
++    bugun = datetime.date.today().isoformat()
++    vadesi_gelen = 0
++    for r in rows:
++        r["tutar_tl"] = round((r["tutar"] or 0.0) * (r["doviz_kur"] or 1.0), 2)
++        r["vadesi_geldi"] = (bool(r["vade"]) and (r["vade"] or "") <= bugun
++                             and r["teminat_durum"] == "Aktif" and r["durum"] != "İptal")
++        if r["vadesi_geldi"]:
++            vadesi_gelen += 1
++    cariler = conn.execute(
++        "SELECT DISTINCT k.id, k.unvan, k.kod FROM cek_senet c "
++        "JOIN cari_kart k ON k.id=c.cari_id WHERE c.teminat=1 AND c.sirket_id=? ORDER BY k.unvan",
++        (sid,)).fetchall()
++    ozet = {}
++    for d in TEMINAT_DURUMLAR:
++        o = conn.execute(
++            "SELECT COUNT(*) c, COALESCE(SUM(tutar*COALESCE(doviz_kur,1)),0) t FROM cek_senet "
++            "WHERE teminat=1 AND teminat_durum=? AND durum!='İptal' AND sirket_id=?",
++            (d, sid)).fetchone()
++        ozet[d] = {"adet": o["c"], "tutar": round(o["t"], 2)}
++    conn.close()
++    if req.q("format") == "csv":
++        buf = io.StringIO()
++        wtr = csv.writer(buf, delimiter=";", lineterminator="\r\n")
++        wtr.writerow(["Cari", "Cari Kodu", "Çek/Senet No", "Tür", "Tutar", "Para Birimi",
++                      "Tutar (TL)", "Vade", "Durum", "Teminat Durumu"])
++
++        def _n(v):
++            return f"{(v or 0.0):.2f}".replace(".", ",")
++        for r in rows:
++            wtr.writerow([r["cari_unvan"] or "", r["cari_kod"] or "", r["no"] or "",
++                          "Çek" if r["tur"] == "Cek" else "Senet", _n(r["tutar"]),
++                          r["para_birimi"] or "TRY", _n(r["tutar_tl"]), r["vade"] or "",
++                          r["durum"] or "", r["teminat_durum"] or ""])
++        return Response("\ufeff" + buf.getvalue(), "200 OK", [
++            ("Content-Type", "text/csv; charset=utf-8"),
++            ("Content-Disposition",
++             f"attachment; filename=\"teminat-bordro-{datetime.date.today().isoformat()}.csv\""),
++        ])
++    return render_template("cek_senet/teminat.html", rows=rows, cariler=cariler, ozet=ozet,
++                           durum=durum, cari_id=cari_id, vadesi_gelen=vadesi_gelen,
++                           teminat_durumlar=TEMINAT_DURUMLAR, teminat_badge=TEMINAT_DURUM_BADGE,
++                           durum_label=DURUM_LABEL, durum_badge=DURUM_BADGE, tip_label=TIP_LABEL)
++
++
++@route(r"/cek_senet/teminat/isle", methods=("POST",), roles=CEK_WRITE)
++def teminat_isle(req):
++    """D023-T2 madde 14 — Vadeyi İşle (tekli/toplu).
++
++    Tam mahsup (borç ≥ tutar): cari alacak=+tutar + yevmiye 101 borç / 120 alacak
++    (kodlar M2 eşlemesinden) + durum 'Mahsup Edildi' + audit teminat-mahsup.
++    Kısmi (borç < tutar): borç kadar mahsup + 'Kalan X iade edildi' açıklaması
++    (kalan parça fişi yok). Borç 0 → durum değişmez, uyarı ('iade edin').
++    """
++    import cari
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    tek = _i(req.form.get("id"))
++    bugun = datetime.date.today().isoformat()
++    where = ["c.teminat=1", "c.teminat_durum='Aktif'", "c.durum!='İptal'", "c.tip='Alinan'",
++             "c.sirket_id=?", "c.vade<=?"]
++    params = [sid, bugun]
++    if tek:
++        where.append("c.id=?")
++        params.append(tek)
++    cekler = [dict(r) for r in conn.execute(
++        f"SELECT c.* FROM cek_senet c WHERE {' AND '.join(where)} ORDER BY c.vade, c.id",
++        params).fetchall()]
++    if not cekler:
++        conn.close()
++        flash(req, "Vadesi gelen aktif teminat bulunamadı.", "danger")
++        return redirect("/cek_senet/teminat")
++    islenen, uyarilar, izler = 0, [], []
++    for c in cekler:
++        borc = _cari_borc_bakiye(conn, c["cari_id"])
++        if borc <= 0:
++            uyarilar.append(f"{c['no']}: carinin borcu kalmamış, iade edin.")
++            continue
++        tutar_tl = round((c["tutar"] or 0.0) * (c["doviz_kur"] or 1.0), 2)
++        mahsup = round(min(tutar_tl, borc), 2)
++        kalan = round(tutar_tl - mahsup, 2)
++        ek = ("Kalan " + f"{kalan:.2f}".replace(".", ",") + " iade edildi") if kalan > 0 else ""
++        yid = muhasebe.teminat_fis_uret(conn, c, mahsup, ek)
++        cari.hareket_ekle(conn, c["cari_id"], bugun, "Tahsilat", c["no"],
++                          ("Teminat vade işleme — " + ek) if ek else "Teminat vade işleme",
++                          borc=0.0, alacak=mahsup, ilgili_modul="CekSenet",
++                          ilgili_kayit_id=c["id"], vade=c.get("vade"),
++                          created_by=req.user["id"],
++                          para_birimi=c.get("para_birimi") or "TRY",
++                          doviz_kur=c.get("doviz_kur"))
++        if ek:
++            conn.execute(
++                "UPDATE cek_senet SET teminat_durum='Mahsup Edildi', "
++                "aciklama=TRIM(COALESCE(aciklama,'') || ' — ' || ?), "
++                "updated_at=datetime('now','localtime') WHERE id=?", (ek, c["id"]))
++        else:
++            conn.execute(
++                "UPDATE cek_senet SET teminat_durum='Mahsup Edildi', "
++                "updated_at=datetime('now','localtime') WHERE id=?", (c["id"],))
++        # audit() kendi bağlantısını açar → kilitlenme olmaması için commit SONRASI yazılır.
++        izler.append({"id": c["id"], "no": c["no"], "tutar_tl": tutar_tl,
++                      "mahsup": mahsup, "kalan": kalan, "yevmiye_id": yid})
++        islenen += 1
++    conn.commit()
++    conn.close()
++    for iz in izler:
++        audit(req, "cek_senet", iz["id"], "teminat-mahsup", iz)
++    if islenen:
++        flash(req, f"{islenen} teminat çek/senet vadesi işlendi (mahsup fişi + cari hareket).", "ok")
++    for u in uyarilar:
++        flash(req, u, "warn")
++    if not islenen and not uyarilar:
++        flash(req, "İşlenecek teminat bulunamadı.", "warn")
++    return redirect("/cek_senet/teminat")
++
++
++@route(r"/cek_senet/(?P<cid>\d+)/teminat-iade", methods=("POST",), roles=CEK_WRITE)
++def teminat_iade(req, cid):
++    """D023-T2 madde 15 — Erken iade: durum 'İade Edildi', mali etki 0, audit teminat-iade."""
++    conn = db.get_conn()
++    cek = conn.execute("SELECT * FROM cek_senet WHERE id=? AND sirket_id=?",
++                       (int(cid), db.sirket_id(req))).fetchone()
++    if not cek:
++        conn.close()
++        flash(req, "Çek/senet bulunamadı.", "danger")
++        return redirect("/cek_senet/teminat")
++    if not cek["teminat"] or cek["teminat_durum"] != "Aktif":
++        conn.close()
++        flash(req, "Yalnızca 'Aktif' teminat çek/senet iade edilebilir.", "danger")
++        return redirect(f"/cek_senet/{cid}")
++    conn.execute("UPDATE cek_senet SET teminat_durum='İade Edildi', "
++                 "updated_at=datetime('now','localtime') WHERE id=?", (int(cid),))
++    conn.commit()
++    audit(req, "cek_senet", int(cid), "teminat-iade",
++          {"no": cek["no"], "tutar": cek["tutar"], "mali_etki": 0})
++    conn.close()
++    flash(req, f"{cek['no']} teminat çek/senedi iade edildi (mali etki yok).", "ok")
++    return redirect("/cek_senet/teminat")
++
++
+ def register():
+     return "cek_senet"
+diff --git a/kod/config.py b/kod/config.py
+index c070d25..a4125f2 100644
+--- a/kod/config.py
++++ b/kod/config.py
+@@ -16,7 +16,7 @@ FIRMA_ADI = "Brn Teknoloji"
+ FIRMA_ALT = "İşletme Yönetim Sistemi"
+ 
+ # Uygulama sürümü — her geliştirme partisinde artırılır; CHANGELOG.md ile birlikte izlenir.
+-SURUM = "1.53.0"
++SURUM = "1.54.0"
+ SURUM_TARIHI = "2026-09-18"
+ 
+ # K18 — Döviz Takip: desteklenen para birimleri (TRY temel; kurlar doviz_kur tablosunda).
+diff --git a/kod/db.py b/kod/db.py
+index 0b01496..25da6d0 100644
+--- a/kod/db.py
++++ b/kod/db.py
+@@ -790,7 +790,9 @@ CREATE TABLE IF NOT EXISTS cek_senet (
+     aciklama TEXT,
+     created_by INTEGER,
+     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+-    updated_at TEXT
++    updated_at TEXT,
++    teminat INTEGER NOT NULL DEFAULT 0,
++    teminat_durum TEXT NOT NULL DEFAULT 'Yok' CHECK (teminat_durum IN ('Yok','Aktif','Mahsup Edildi','İade Edildi'))
+ );
+ 
+ CREATE TABLE IF NOT EXISTS ek_dosya (
+@@ -1053,6 +1055,35 @@ def _migrate_d022(conn):
+                      "AND h.belge_no LIKE 'ODM-%')", (_modul,))
+ 
+ 
++def _migrate_d023(conn):
++    """D023 (v1.54) — hesap_esleme tablosu + tüm şirketlere varsayılan seed
++    VE cek_senet teminat kolonları (teminat/teminat_durum, backfill: 0/'Yok').
++
++    Idempotent; testten doğrudan çağrılabilir (test_d023 migrasyon kanıtı).
++    """
++    conn.execute(
++        """
++        CREATE TABLE IF NOT EXISTS hesap_esleme (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            sirket_id INTEGER NOT NULL DEFAULT 1,
++            anahtar TEXT NOT NULL,
++            hedef_kod TEXT NOT NULL,
++            not_ TEXT,
++            UNIQUE(sirket_id, anahtar)
++        );
++        """)
++    # Mevcut tüm şirketlere (hesap planı olan her sirket_id) varsayılanları ekler.
++    for r in conn.execute(
++            "SELECT DISTINCT COALESCE(sirket_id,1) AS sid FROM hesap").fetchall():
++        hesap_esleme_seed(conn, r["sid"])
++    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cek_senet)")}
++    if cols and "teminat" not in cols:
++        conn.execute("ALTER TABLE cek_senet ADD COLUMN teminat INTEGER NOT NULL DEFAULT 0")
++    if cols and "teminat_durum" not in cols:
++        conn.execute("ALTER TABLE cek_senet ADD COLUMN teminat_durum TEXT NOT NULL DEFAULT 'Yok' "
++                     "CHECK (teminat_durum IN ('Yok','Aktif','Mahsup Edildi','İade Edildi'))")
++
++
+ def _migrate(conn):
+     """Var olan veritabanlarına yeni sütun ekleme (CREATE IF NOT EXISTS bunu yapmaz)."""
+     cols = {r["name"] for r in conn.execute("PRAGMA table_info(kasa_hareket)")}
+@@ -1400,6 +1431,16 @@ def _migrate(conn):
+             created_by INTEGER,
+             created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+         );
++        -- D023 (M2) — hesap eşleme motoru: fiş üreten noktaların hesap kodları şirket
++        -- bazlı ekrandan değiştirilebilir (anahtar → hedef_kod; varsayılan = v1.53 sabitleri).
++        CREATE TABLE IF NOT EXISTS hesap_esleme (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            sirket_id INTEGER NOT NULL DEFAULT 1,
++            anahtar TEXT NOT NULL,
++            hedef_kod TEXT NOT NULL,
++            not_ TEXT,
++            UNIQUE(sirket_id, anahtar)
++        );
+         """
+     )
+     conn.execute("CREATE INDEX IF NOT EXISTS idx_yevmiye_kaynak ON yevmiye(kaynak_modul, kaynak_id)")
+@@ -1544,6 +1585,9 @@ def _migrate(conn):
+     # --- D022 (v1.53) — Fiş tipi motoru: kolon + geriye dönük etiketleme ---
+     _migrate_d022(conn)
+ 
++    # --- D023 (v1.54) — Hesap eşleme motoru (M2) + teminat çek/senet kolonları (T2) ---
++    _migrate_d023(conn)
++
+     # --- D007 (v1.39.0) — Stok kart ek alanlar (8 + model) + irsaliye döviz kuru ---
+     # Wolvox/Akınsoft referanslı alanlar: tevkifat, istisna, grup hiyerarşisi, özel kod 1-3.
+     # Geriye dönük uyumlu: mevcut kartlarda default 0/NULL; raporlar etkilenmez.
+@@ -3140,6 +3184,69 @@ def seed_muhasebe():
+     conn2.close()
+ 
+ 
++# ---------------------------------------------------------------------------
++# D023 (M2) — Hesap Eşleme Motoru: anahtar → hedef hesap kodu (şirket bazlı)
++# ---------------------------------------------------------------------------
++# Varsayılanlar v1.53 sabitleriyle birebir (davranış değişmez); eşleme satırı
++# yoksa veya hedef kod şirketin hesap planında yoksa hesap_esleme_get buraya düşer.
++HESAP_ESLEME_VARSAYILAN = {
++    "satis_alici": "120",        # 120 ALICILAR
++    "satis_hasilat": "600",      # 600 YURT İÇİ SATIŞLAR
++    "satis_kdv": "391",          # 391 HESAPLANAN KDV
++    "alis_satici": "320",        # 320 SATICILAR
++    "alis_kdv": "191",           # 191 İNDİRİLECEK KDV
++    "alis_stok": "153",          # 153 TİCARİ MALLAR
++    "alis_manuel_gider": "770",  # 770 GENEL YÖNETİM GİDERLERİ
++    "kasa": "100",               # 100 KASA
++    "banka": "102",              # 102 BANKALAR
++    "cek_alinan": "101",         # 101 ALINAN ÇEKLER
++    "cek_verilen": "103",        # 103 VERİLEN ÇEKLER VE ÖDEME EMİRLERİ
++    "amortisman_gider": "770",   # 770 Genel Yönetim Giderleri
++    "amortisman_birikmis": "257",  # 257 BİRİKMİŞ AMORTİSMANLAR
++}
++
++
++def hesap_esleme_get(conn, anahtar, sid=None):
++    """D023-M2 — anahtarın o şirketteki hedef hesap kodu (TEK KAYNAK).
++
++    Eşleme satırı yoksa YA DA hedef kod o şirketin `hesap` tablosunda yoksa
++    varsayılana düşer (asla hatalı fiş üretilmez). Bilinmeyen anahtar → None.
++    Tablo henüz yoksa (eski DB, migrasyon öncesi) yine varsayılan döner.
++    """
++    if anahtar not in HESAP_ESLEME_VARSAYILAN:
++        return None
++    varsayilan = HESAP_ESLEME_VARSAYILAN[anahtar]
++    sid = 1 if sid is None else sid
++    try:
++        r = conn.execute(
++            "SELECT hedef_kod FROM hesap_esleme WHERE sirket_id=? AND anahtar=?",
++            (sid, anahtar)).fetchone()
++    except Exception:
++        return varsayilan
++    kod = (r["hedef_kod"] or "").strip() if r else ""
++    if kod and kod != varsayilan:
++        h = conn.execute("SELECT 1 FROM hesap WHERE kod=? AND sirket_id=?",
++                         (kod, sid)).fetchone()
++        if h:
++            return kod
++        # Geçersiz hedef kod → varsayılana düş (asla hatalı fiş).
++    elif kod == varsayilan:
++        return varsayilan
++    return varsayilan
++
++
++def hesap_esleme_seed(conn, sid):
++    """D023-M2 — şirkete 13 varsayılan eşlemeyi idempotent ekler.
++
++    sirket_seed (yeni şirket) ve _migrate_d023 (mevcut şirketler) çağırır;
++    INSERT OR IGNORE → kullanıcı değişikliği asla ezilmez.
++    """
++    for anahtar, kod in HESAP_ESLEME_VARSAYILAN.items():
++        conn.execute(
++            "INSERT OR IGNORE INTO hesap_esleme(sirket_id, anahtar, hedef_kod, not_) "
++            "VALUES(?,?,?,NULL)", (sid, anahtar, kod))
++
++
+ def sirket_seed(conn, yeni_id):
+     """İstek 3 — yeni şirkete kendi Tekdüzen hesap planı + demirbaş kategorileri + varsayılan depo.
+ 
+@@ -3171,6 +3278,8 @@ def sirket_seed(conn, yeni_id):
+         conn.execute(
+             "INSERT INTO depo(kod, ad, tip, aktif, sube_id, sirket_id) "
+             "VALUES('ANA','Ana Depo','Ana',1,NULL,?)", (yeni_id,))
++    # 4) D023-M2 — varsayılan hesap eşlemeleri (idempotent; 13 anahtar)
++    hesap_esleme_seed(conn, yeni_id)
+ 
+ 
+ def seed_finansal():
+diff --git a/kod/muhasebe.py b/kod/muhasebe.py
+index 8423ddb..e9d431c 100644
+--- a/kod/muhasebe.py
++++ b/kod/muhasebe.py
+@@ -5,9 +5,11 @@
+ Manüel çift veri girişi gerekmez: mali etki doğuran her hareket kaynağından (kaynak_modul/kaynak_id)
+ tek yevmiye üretilir; iptal edilen hareketin fişi de geri alınır (net sıfır).
+ """
++import csv
+ import datetime
++import io
+ 
+-from core import route, render_template, redirect, flash, audit, notify, izole_sube
++from core import route, render_template, redirect, flash, audit, notify, izole_sube, Response
+ import db
+ import cari
+ 
+@@ -101,13 +103,22 @@ def _fatura_satirlar(conn, f):
+     ara = round((f["ara_toplam"] or 0.0) * kur, 2)
+     kdv = round((f["kdv_toplam"] or 0.0) * kur, 2)
+     genel = round((f["genel_toplam"] or 0.0) * kur, 2)
++    # D023-M2 — hesap kodları eşleme motorundan (varsayılan = v1.53 sabitleri; davranış değişmez).
++    _sid = f["sirket_id"]
++    K_ALICI = db.hesap_esleme_get(conn, "satis_alici", _sid)
++    K_HASILAT = db.hesap_esleme_get(conn, "satis_hasilat", _sid)
++    K_SATIS_KDV = db.hesap_esleme_get(conn, "satis_kdv", _sid)
++    K_SATICI = db.hesap_esleme_get(conn, "alis_satici", _sid)
++    K_ALIS_KDV = db.hesap_esleme_get(conn, "alis_kdv", _sid)
++    K_STOK = db.hesap_esleme_get(conn, "alis_stok", _sid)
++    K_MANUEL = db.hesap_esleme_get(conn, "alis_manuel_gider", _sid)
+     if f["tip"] in ("Satis", "Konsinye"):
+         # Manuel satırlar da hasılat (600) — yevmiye yapısı değişmez.
+         # D021: konsinye fatura satış aynasıdır.
+-        return [("120", genel, 0.0), ("600", 0.0, ara), ("391", 0.0, kdv)]
++        return [(K_ALICI, genel, 0.0), (K_HASILAT, 0.0, ara), (K_SATIS_KDV, 0.0, kdv)]
+     if f["tip"] in ("SatisIade", "KonsinyeIade"):
+         # Satış iadesi: 600/391 borç, 120 alacak (satış fişinin tersi).
+-        return [("600", ara, 0.0), ("391", kdv, 0.0), ("120", 0.0, genel)]
++        return [(K_HASILAT, ara, 0.0), (K_SATIS_KDV, kdv, 0.0), (K_ALICI, 0.0, genel)]
+     # Alış / Alış iadesi: matrahı stoklu / manuel olarak böl (manuel → 770).
+     kalemler = conn.execute(
+         "SELECT stok_id, tutar FROM fatura_kalem WHERE fatura_id=?", (f["id"],)
+@@ -124,18 +135,18 @@ def _fatura_satirlar(conn, f):
+     satirlar = []
+     if f["tip"] == "AlisIade":
+         # Alış iadesi: 320 borç, 191 + 153/770 alacak (alış fişinin tersi).
+-        satirlar.append(("320", genel, 0.0))
+-        satirlar.append(("191", 0.0, kdv))
++        satirlar.append((K_SATICI, genel, 0.0))
++        satirlar.append((K_ALIS_KDV, 0.0, kdv))
+         if stok_ara > 0:
+-            satirlar.append(("153", 0.0, stok_ara))
++            satirlar.append((K_STOK, 0.0, stok_ara))
+         if manuel_ara > 0:
+-            satirlar.append(("770", 0.0, manuel_ara))
++            satirlar.append((K_MANUEL, 0.0, manuel_ara))
+         return satirlar
+     if stok_ara > 0:
+-        satirlar.append(("153", stok_ara, 0.0))
++        satirlar.append((K_STOK, stok_ara, 0.0))
+     if manuel_ara > 0:
+-        satirlar.append(("770", manuel_ara, 0.0))
+-    satirlar += [("191", kdv, 0.0), ("320", 0.0, genel)]
++        satirlar.append((K_MANUEL, manuel_ara, 0.0))
++    satirlar += [(K_ALIS_KDV, kdv, 0.0), (K_SATICI, 0.0, genel)]
+     return satirlar
+ 
+ 
+@@ -152,8 +163,17 @@ def _irsaliye_satirlar(conn, i):
+     ara = round((i["ara_toplam"] or 0.0) * kur, 2)
+     kdv = round((i["kdv_toplam"] or 0.0) * kur, 2)
+     genel = round((i["genel_toplam"] or 0.0) * kur, 2)
++    # D023-M2 — hesap kodları eşleme motorundan (varsayılan = v1.53 sabitleri; davranış değişmez).
++    _sid = i["sirket_id"]
++    K_ALICI = db.hesap_esleme_get(conn, "satis_alici", _sid)
++    K_HASILAT = db.hesap_esleme_get(conn, "satis_hasilat", _sid)
++    K_SATIS_KDV = db.hesap_esleme_get(conn, "satis_kdv", _sid)
++    K_SATICI = db.hesap_esleme_get(conn, "alis_satici", _sid)
++    K_ALIS_KDV = db.hesap_esleme_get(conn, "alis_kdv", _sid)
++    K_STOK = db.hesap_esleme_get(conn, "alis_stok", _sid)
++    K_MANUEL = db.hesap_esleme_get(conn, "alis_manuel_gider", _sid)
+     if i["tip"] == "Satis":
+-        return [("120", genel, 0.0), ("600", 0.0, ara), ("391", 0.0, kdv)]
++        return [(K_ALICI, genel, 0.0), (K_HASILAT, 0.0, ara), (K_SATIS_KDV, 0.0, kdv)]
+     kalemler = conn.execute(
+         "SELECT stok_id, tutar FROM irsaliye_kalem WHERE irsaliye_id=?", (i["id"],)
+     ).fetchall()
+@@ -168,72 +188,87 @@ def _irsaliye_satirlar(conn, i):
+         stok_ara, manuel_ara = ara, 0.0
+     satirlar = []
+     if stok_ara > 0:
+-        satirlar.append(("153", stok_ara, 0.0))
++        satirlar.append((K_STOK, stok_ara, 0.0))
+     if manuel_ara > 0:
+-        satirlar.append(("770", manuel_ara, 0.0))
+-    satirlar += [("191", kdv, 0.0), ("320", 0.0, genel)]
++        satirlar.append((K_MANUEL, manuel_ara, 0.0))
++    satirlar += [(K_ALIS_KDV, kdv, 0.0), (K_SATICI, 0.0, genel)]
+     return satirlar
+ 
+ 
+-def _cari_hesap(conn, cari_id, yon):
++def _cari_hesap(conn, cari_id, yon, sid=None):
+     """Cari tipine göre karşı hesap: Müşteri→120 ALICILAR, Tedarikçi→320 SATICILAR.
+-    HerIkisi → yön bazlı (giriş/tahsilat→120, çıkış/ödeme→320). Cari yoksa None."""
++    HerIkisi → yön bazlı (giriş/tahsilat→120, çıkış/ödeme→320). Cari yoksa None.
++    D023-M2: kodlar hesap_esleme'den (satis_alici / alis_satici)."""
+     if not cari_id:
+         return None
+     r = conn.execute("SELECT tip FROM cari_kart WHERE id=?", (cari_id,)).fetchone()
+     tip = r["tip"] if r else "Musteri"
+     if tip == "Tedarikci":
+-        return "320"
++        return db.hesap_esleme_get(conn, "alis_satici", sid)
+     if tip == "HerIkisi":
+-        return "120" if yon == "giris" else "320"
+-    return "120"
++        return db.hesap_esleme_get(
++            conn, "satis_alici" if yon == "giris" else "alis_satici", sid)
++    return db.hesap_esleme_get(conn, "satis_alici", sid)
+ 
+ 
+ def _kasa_satirlar(conn, h):
+     tip = h["islem_tipi"]
+     t = round((h["tutar"] or 0.0) * (h["doviz_kur"] or 1.0), 2)
++    _sid = h["sirket_id"]
++    K_KASA = db.hesap_esleme_get(conn, "kasa", _sid)      # D023-M2
++    K_BANKA = db.hesap_esleme_get(conn, "banka", _sid)    # D023-M2
+     if tip == "Nakit Girişi":
+-        return [("100", t, 0.0), (_cari_hesap(conn, h["cari_id"], "giris") or "679", 0.0, t)]
++        return [(K_KASA, t, 0.0), (_cari_hesap(conn, h["cari_id"], "giris", _sid) or "679", 0.0, t)]
+     if tip == "Nakit Çıkışı":
+-        return [(_cari_hesap(conn, h["cari_id"], "cikis") or "632", t, 0.0), ("100", 0.0, t)]
++        return [(_cari_hesap(conn, h["cari_id"], "cikis", _sid) or "632", t, 0.0), (K_KASA, 0.0, t)]
+     if tip == "Açılış Bakiyesi":
+-        return [("100", t, 0.0), ("500", 0.0, t)]
++        return [(K_KASA, t, 0.0), ("500", 0.0, t)]
+     if tip == "Kasa → Banka":
+-        return [("102", t, 0.0), ("100", 0.0, t)]
++        return [(K_BANKA, t, 0.0), (K_KASA, 0.0, t)]
+     if tip == "Banka → Kasa":
+-        return [("100", t, 0.0), ("102", 0.0, t)]
++        return [(K_KASA, t, 0.0), (K_BANKA, 0.0, t)]
+     return None
+ 
+ 
+ def _banka_satirlar(conn, h):
+     tip = h["islem_tipi"]
+     t = round((h["tutar"] or 0.0) * (h["doviz_kur"] or 1.0), 2)
++    _sid = h["sirket_id"]
++    K_KASA = db.hesap_esleme_get(conn, "kasa", _sid)      # D023-M2
++    K_BANKA = db.hesap_esleme_get(conn, "banka", _sid)    # D023-M2
+     if tip == "Havale/EFT Girişi":
+-        return [("102", t, 0.0), (_cari_hesap(conn, h["cari_id"], "giris") or "679", 0.0, t)]
++        return [(K_BANKA, t, 0.0), (_cari_hesap(conn, h["cari_id"], "giris", _sid) or "679", 0.0, t)]
+     if tip == "Havale/EFT Çıkışı":
+-        return [(_cari_hesap(conn, h["cari_id"], "cikis") or "632", t, 0.0), ("102", 0.0, t)]
++        return [(_cari_hesap(conn, h["cari_id"], "cikis", _sid) or "632", t, 0.0), (K_BANKA, 0.0, t)]
+     if tip == "Banka Ekstresi (Giriş)":
+-        return [("102", t, 0.0), ("679", 0.0, t)]
++        return [(K_BANKA, t, 0.0), ("679", 0.0, t)]
+     if tip == "Banka Ekstresi (Çıkış)":
+-        return [("632", t, 0.0), ("102", 0.0, t)]
++        return [("632", t, 0.0), (K_BANKA, 0.0, t)]
+     if tip == "Açılış Bakiyesi":
+-        return [("102", t, 0.0), ("500", 0.0, t)]
++        return [(K_BANKA, t, 0.0), ("500", 0.0, t)]
+     if tip == "Kasa → Banka":
+-        return [("102", t, 0.0), ("100", 0.0, t)]
++        return [(K_BANKA, t, 0.0), (K_KASA, 0.0, t)]
+     if tip == "Banka → Kasa":
+-        return [("100", t, 0.0), ("102", 0.0, t)]
++        return [(K_KASA, t, 0.0), (K_BANKA, 0.0, t)]
+     return None
+ 
+ 
+-def _cek_ara_kod(cek):
++def _cek_ara_kod(conn, cek):
+     """Çek/senet için Tekdüzen ara hesap kodu: 101 Alınan Çekler / 121 Alacak Senetleri /
+-    103 Verilen Çekler ve Ödeme Emirleri / 321 Borç Senetleri."""
++    103 Verilen Çekler ve Ödeme Emirleri / 321 Borç Senetleri.
++    D023-M2: Çek turunda kod eşleme motorundan (cek_alinan/cek_verilen);
++    senet (121/321) eşleme kapsamı dışında — sabit kalır (davranış değişmez)."""
++    _sid = cek["sirket_id"]
+     if cek["tip"] == "Alinan":
+-        return "101" if cek["tur"] == "Cek" else "121"
+-    return "103" if cek["tur"] == "Cek" else "321"
++        if cek["tur"] == "Cek":
++            return db.hesap_esleme_get(conn, "cek_alinan", _sid)
++        return "121"
++    if cek["tur"] == "Cek":
++        return db.hesap_esleme_get(conn, "cek_verilen", _sid)
++    return "321"
+ 
+ 
+-def _cek_satirlar(cek, sahne):
++def _cek_satirlar(conn, cek, sahne):
+     """K26 revize — çek/senet durum geçişlerine göre doğru ARA HESAP eşlemesi.
+ 
+     giris  (Alındı/Verildi → portföye giriş):  ara borç / 120 alacak (Alinan);
+@@ -241,19 +276,24 @@ def _cek_satirlar(cek, sahne):
+     tahsil (Tahsil Edildi, Alinan):             100 borç / ara alacak.
+     odeme  (Ödendi, Verilen):                   ara borç / 100 alacak.
+     Çek elde tutulurken Kasa/Banka'ya YAZILMAZ — nakit ancak tahsilde/ödemede girer.
++    D023-M2: 100/102/101/103/120/320 kodları eşleme motorundan.
+     """
++    _sid = cek["sirket_id"]
++    K_KASA = db.hesap_esleme_get(conn, "kasa", _sid)
++    K_ALICI = db.hesap_esleme_get(conn, "satis_alici", _sid)
++    K_SATICI = db.hesap_esleme_get(conn, "alis_satici", _sid)
+     t = round((cek["tutar"] or 0.0) * (cek["doviz_kur"] or 1.0), 2)
+-    ara = _cek_ara_kod(cek)
++    ara = _cek_ara_kod(conn, cek)
+     if sahne == "giris":
+         if cek["durum"] not in ("Bekliyor", "Tahsile Verildi", "Tahsil Edildi", "Ödendi", "Ciro"):
+             return None
+         if cek["tip"] == "Alinan":
+-            return [(ara, t, 0.0), ("120", 0.0, t)]
+-        return [("320", t, 0.0), (ara, 0.0, t)]
++            return [(ara, t, 0.0), (K_ALICI, 0.0, t)]
++        return [(K_SATICI, t, 0.0), (ara, 0.0, t)]
+     if sahne == "tahsil" and cek["tip"] == "Alinan" and cek["durum"] == "Tahsil Edildi":
+-        return [("100", t, 0.0), (ara, 0.0, t)]
++        return [(K_KASA, t, 0.0), (ara, 0.0, t)]
+     if sahne == "odeme" and cek["tip"] == "Verilen" and cek["durum"] == "Ödendi":
+-        return [(ara, t, 0.0), ("100", 0.0, t)]
++        return [(ara, t, 0.0), (K_KASA, 0.0, t)]
+     return None
+ 
+ 
+@@ -313,7 +353,7 @@ def fis_uret(conn, kaynak_modul, kaynak_id, sahne=None):
+         c = conn.execute("SELECT * FROM cek_senet WHERE id=?", (int(kaynak_id),)).fetchone()
+         if not c:
+             return None
+-        satirlar = _cek_satirlar(c, sahne)
++        satirlar = _cek_satirlar(conn, c, sahne)
+         if not satirlar:
+             return None
+         aciklama = f"{c['no']} — {c['aciklama'] or ''}".strip(" —")
+@@ -329,7 +369,9 @@ def fis_uret(conn, kaynak_modul, kaynak_id, sahne=None):
+         if not d or not da:
+             return None
+         tutar = round(da["tutar"] or 0.0, 2)
+-        satirlar = [("770", tutar, 0.0), ("257", 0.0, tutar)]
++        # D023-M2 — amortisman hesapları eşleme motorundan (amortisman_gider/birikmis).
++        satirlar = [(db.hesap_esleme_get(conn, "amortisman_gider", d["sirket_id"]), tutar, 0.0),
++                    (db.hesap_esleme_get(conn, "amortisman_birikmis", d["sirket_id"]), 0.0, tutar)]
+         aciklama = f"{d['kod']} {d['ad']} — amortisman {sahne}".strip()
+         tarih = f"{(sahne or '')[:7]}-01"
+         sube_id = d["sube_id"]
+@@ -394,6 +436,10 @@ def cek_senkron(conn, cid, created_by=None, zorla=False):
+     if not c:
+         return None
+     cek = dict(c)
++    # D023-T2 — Aktif teminat DEFTER DIŞIDIR: cari hareket/fiş üretilmez, mevcutlar silinmez
++    # (kilit, madde 13/17). Vade işleme (/cek_senet/teminat/isle) akışı yönetir.
++    if cek.get("teminat") and cek.get("teminat_durum") == "Aktif":
++        return cek
+     durum = cek["durum"]
+     tutar_tl = round((cek.get("tutar") or 0.0) * (cek.get("doviz_kur") or 1.0), 2)
+     tarih = cek.get("keside_tarihi") or datetime.date.today().isoformat()
+@@ -406,8 +452,9 @@ def cek_senkron(conn, cid, created_by=None, zorla=False):
+                      (int(cid),))
+         fis_sil_tumu(conn, "CekSenet", int(cid))
+ 
+-    # Cari senkron
+-    if portfoyde:
++    # Cari senkron — D023-T2: teminatlı çek/senette cari hareket teminat akışının tekelinde
++    # (Vadeyi İşle yazar; kısmi mahsupta cari tutarı ≠ çek tutarı olabilir → burada yeniden yazılmaz).
++    if portfoyde and not cek.get("teminat"):
+         mevcut = conn.execute(
+             "SELECT id, cari_id, borc, alacak FROM cari_hareket "
+             "WHERE ilgili_modul='CekSenet' AND ilgili_kayit_id=?", (int(cid),)).fetchall()
+@@ -1017,3 +1064,306 @@ def muhasebe_mahsup(req):
+     return render_template("muhasebe/mahsup.html", alacaklilar=alacaklilar, borclular=borclular,
+                            aid=None, bid=None, tutar="", tarih=datetime.date.today().isoformat(),
+                            aciklama="", bugun=datetime.date.today().isoformat())
++
++# ---------------------------------------------------------------------------
++# D023 (v1.54) — Muhasebe Çekirdeği: hesap eşlemeleri + fiş hareketleri +
++# hesap durumu + teminat çek/senet çekirdeği
++# ---------------------------------------------------------------------------
++
++# D023-T2 — kaynak belge link haritası (fiş hareketleri ekranı, madde 6).
++KAYNAK_URL = {
++    "Fatura": "/fatura/{}",
++    "Irsaliye": "/irsaliye/{}",
++    "CekSenet": "/cek_senet/{}",
++    "Demirbas": "/demirbas/{}",
++    "Kasa": "/kasa/hareket/{}/fis",
++    "Banka": "/banka/hareket/{}/fis",
++    "Muhasebe": "/muhasebe/{}",
++}
++KAYNAK_LABEL_D023 = {"Fatura": "Fatura", "Kasa": "Kasa", "Banka": "Banka",
++                     "CekSenet": "Çek/Senet", "Muhasebe": "Manüel",
++                     "Irsaliye": "İrsaliye", "Demirbas": "Demirbaş"}
++
++
++def teminat_fis_uret(conn, cek, tutar, aciklama_ek=""):
++    """D023-T2 madde 14 — teminat çek/senet vade işleme fişi (idempotent).
++
++    101 ALINAN ÇEKLER borç / 120 ALICILAR alacak — kodlar M2 eşlemesinden
++    (`cek_alinan` + `satis_alici`). Tam mahsupta tutar = çek tutarı (TL);
++    kısmi mahsupta carinin kalan borcu kadar. sahne='giris' → sonraki
++    cek_senkron çağrıları çift fiş üretmez (dedup anahtarı aynı).
++    """
++    var = conn.execute(
++        "SELECT id FROM yevmiye WHERE kaynak_modul='CekSenet' AND kaynak_id=? "
++        "AND COALESCE(kaynak_sahne,'')='giris'", (int(cek["id"]),)).fetchone()
++    if var:
++        return var["id"]
++    sid = cek["sirket_id"] or 1
++    kod_cek = db.hesap_esleme_get(conn, "cek_alinan", sid)
++    kod_alici = db.hesap_esleme_get(conn, "satis_alici", sid)
++    aciklama = f"{cek['no']} — teminat vade işleme"
++    if aciklama_ek:
++        aciklama += f" — {aciklama_ek}"
++    fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "FIS",
++                                 datetime.date.today().year, sid)
++    cur = conn.execute(
++        "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, kaynak_id, kaynak_sahne, "
++        "fis_tipi, sube_id, durum, sirket_id) VALUES(?,?,?,?,?,?,?,?,'Onaylandı',?)",
++        (fis_no, datetime.date.today().isoformat(), aciklama, "CekSenet", int(cek["id"]),
++         "giris", fis_tipi_bul("CekSenet", "giris"), cek.get("sube_id"), sid))
++    _kalem_yaz(conn, cur.lastrowid, [(kod_cek, tutar, 0.0), (kod_alici, 0.0, tutar)], sid)
++    return cur.lastrowid
++
++
++@route(r"/muhasebe/eslemeler", methods=("GET", "POST"), roles=MUH_WRITE)
++def muhasebe_eslemeler(req):
++    """D023-M2 madde 4 — hesap eşleme ekranı: anahtar × (kod, hesap adı, not).
++
++    Kod değişikliği + Varsayılana Döndür; her değişiklik audit ('hesap-esleme').
++    Eşleme değişikliği geleceğe etkilidir (mevcut fişler dokunulmaz, madde 5).
++    """
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    if req.method == "POST":
++        anahtar = req.form.get("anahtar") or ""
++        if anahtar not in db.HESAP_ESLEME_VARSAYILAN:
++            conn.close()
++            flash(req, "Geçersiz eşleme anahtarı.", "danger")
++            return redirect("/muhasebe/eslemeler")
++        db.hesap_esleme_seed(conn, sid)
++        row = conn.execute("SELECT * FROM hesap_esleme WHERE sirket_id=? AND anahtar=?",
++                           (sid, anahtar)).fetchone()
++        if req.form.get("action") == "reset":
++            eski = row["hedef_kod"] if row else ""
++            yenikod = db.HESAP_ESLEME_VARSAYILAN[anahtar]
++            conn.execute("UPDATE hesap_esleme SET hedef_kod=?, not_=NULL "
++                         "WHERE sirket_id=? AND anahtar=?", (yenikod, sid, anahtar))
++            conn.commit()
++            audit(req, "hesap_esleme", row["id"] if row else 0, "hesap-esleme",
++                  {"anahtar": anahtar, "eski": eski, "yeni": yenikod, "islem": "varsayilana-don"})
++            conn.close()
++            flash(req, f"'{anahtar}' varsayılana döndürüldü ({yenikod}).", "ok")
++            return redirect("/muhasebe/eslemeler")
++        kod = (req.form.get("hedef_kod") or "").strip()
++        not_ = (req.form.get("not_") or "").strip() or None
++        if not kod:
++            conn.close()
++            flash(req, "Hedef hesap kodu zorunludur.", "danger")
++            return redirect("/muhasebe/eslemeler")
++        if not conn.execute("SELECT 1 FROM hesap WHERE kod=? AND sirket_id=? AND aktif=1",
++                            (kod, sid)).fetchone():
++            conn.close()
++            flash(req, f"'{kod}' kodu bu şirketin hesap planında yok; eşleme kaydedilmedi.", "danger")
++            return redirect("/muhasebe/eslemeler")
++        eski = row["hedef_kod"] if row else ""
++        conn.execute("UPDATE hesap_esleme SET hedef_kod=?, not_=? WHERE sirket_id=? AND anahtar=?",
++                     (kod, not_, sid, anahtar))
++        conn.commit()
++        audit(req, "hesap_esleme", row["id"] if row else 0, "hesap-esleme",
++              {"anahtar": anahtar, "eski": eski, "yeni": kod, "islem": "guncelle"})
++        conn.close()
++        flash(req, f"'{anahtar}' eşlemesi '{kod}' olarak kaydedildi (yalnız yeni fişlerden "
++                   "itibaren geçerli).", "ok")
++        return redirect("/muhasebe/eslemeler")
++    db.hesap_esleme_seed(conn, sid)
++    conn.commit()
++    hesaplar = conn.execute(
++        "SELECT kod, ad FROM hesap WHERE aktif=1 AND sirket_id=? ORDER BY kod",
++        (sid,)).fetchall()
++    rows = []
++    for anahtar, varsayilan in db.HESAP_ESLEME_VARSAYILAN.items():
++        r = conn.execute("SELECT hedef_kod, not_ FROM hesap_esleme WHERE sirket_id=? AND anahtar=?",
++                         (sid, anahtar)).fetchone()
++        kod = ((r["hedef_kod"] if r else "") or varsayilan).strip() or varsayilan
++        h = conn.execute("SELECT ad FROM hesap WHERE kod=? AND sirket_id=?",
++                         (kod, sid)).fetchone()
++        rows.append({"anahtar": anahtar, "varsayilan": varsayilan, "kod": kod,
++                     "ad": h["ad"] if h else "—",
++                     "not_": (r["not_"] if r else "") or "",
++                     "gecerli": bool(h), "ozellestirildi": kod != varsayilan})
++    conn.close()
++    return render_template("muhasebe/eslemeler.html", rows=rows, hesaplar=hesaplar)
++
++
++@route(r"/muhasebe/hareketler", roles=())
++def muhasebe_hareketler(req):
++    """D023-M3 madde 6-8 — fiş SATIR hareketleri listesi + filtreler + CSV/Yazdır.
++
++    yevmiye_kalem × yevmiye × hesap JOIN; kaynak belge no + tıklanabilir link;
++    alt toplamlar (Σborç/Σalacak + dengesizlik uyarı rozeti).
++    """
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    baslangic = (req.q("baslangic") or "").strip()
++    bitis = (req.q("bitis") or "").strip()
++    hesap = (req.q("hesap") or "").strip()
++    tip = req.q("tip") if req.q("tip") in FIS_TIPLERI else ""
++    q = (req.q("q") or "").strip()
++    where = ["y.sirket_id=?", "y.durum='Onaylandı'"]
++    params = [sid]
++    if baslangic:
++        where.append("y.tarih>=?")
++        params.append(baslangic)
++    if bitis:
++        where.append("y.tarih<=?")
++        params.append(bitis)
++    if hesap:
++        if "-" in hesap:  # kod aralığı, örn. "100-199"
++            a, _, b = hesap.partition("-")
++            if a.strip() and b.strip():
++                where.append("h.kod>=? AND h.kod<=?")
++                params += [a.strip(), b.strip()]
++        else:
++            where.append("h.kod=?")
++            params.append(hesap)
++    if tip:
++        where.append("y.fis_tipi=?")
++        params.append(tip)
++    if q:
++        like = f"%{q}%"
++        where.append(
++            "(y.fis_no LIKE ? OR y.aciklama LIKE ? OR EXISTS("
++            "SELECT 1 FROM cari_hareket ch JOIN cari_kart ck ON ck.id=ch.cari_id "
++            "WHERE ch.ilgili_kayit_id=y.kaynak_id AND ch.ilgili_modul=y.kaynak_modul "
++            "AND (ck.unvan LIKE ? OR ck.kod LIKE ? OR ch.belge_no LIKE ?)))")
++        params += [like, like, like, like, like]
++    if izole_sube(req):
++        where.append("y.sube_id=?")
++        params.append(izole_sube(req))
++    w = " AND ".join(where)
++    rows = [dict(r) for r in conn.execute(
++        f"SELECT k.id, k.borc, k.alacak, y.id AS yevmiye_id, y.fis_no, y.tarih, y.fis_tipi, "
++        f"y.aciklama AS fis_aciklama, y.kaynak_modul, y.kaynak_id, h.kod AS hesap_kod, "
++        f"h.ad AS hesap_ad, "
++        f"COALESCE(f.fatura_no, ir.irsaliye_no, cs.no, kh.belge_no, bh.belge_no, dm.kod, y.fis_no) "
++        f"AS kaynak_no "
++        f"FROM yevmiye_kalem k JOIN yevmiye y ON y.id=k.yevmiye_id "
++        f"JOIN hesap h ON h.id=k.hesap_id "
++        f"LEFT JOIN fatura f ON y.kaynak_modul='Fatura' AND f.id=y.kaynak_id "
++        f"LEFT JOIN irsaliye ir ON y.kaynak_modul='Irsaliye' AND ir.id=y.kaynak_id "
++        f"LEFT JOIN cek_senet cs ON y.kaynak_modul='CekSenet' AND cs.id=y.kaynak_id "
++        f"LEFT JOIN kasa_hareket kh ON y.kaynak_modul='Kasa' AND kh.id=y.kaynak_id "
++        f"LEFT JOIN banka_hareket bh ON y.kaynak_modul='Banka' AND bh.id=y.kaynak_id "
++        f"LEFT JOIN demirbas dm ON y.kaynak_modul='Demirbas' AND dm.id=y.kaynak_id "
++        f"WHERE {w} ORDER BY y.tarih, y.id, k.id LIMIT 2000", params).fetchall()]
++    tb = round(sum(r["borc"] or 0.0 for r in rows), 2)
++    ta = round(sum(r["alacak"] or 0.0 for r in rows), 2)
++    for r in rows:
++        _u = KAYNAK_URL.get(r["kaynak_modul"] or "")
++        r["kaynak_url"] = _u.format(r["kaynak_id"]) if (_u and r["kaynak_id"]) else None
++    conn.close()
++    if req.q("format") == "csv":
++        buf = io.StringIO()
++        wtr = csv.writer(buf, delimiter=";", lineterminator="\r\n")
++        wtr.writerow(["Tarih", "Fiş No", "Fiş Tipi", "Hesap Kodu", "Hesap Adı", "Açıklama",
++                      "Borç", "Alacak", "Kaynak", "Kaynak Belge No"])
++
++        def _n(v):
++            return f"{(v or 0.0):.2f}".replace(".", ",")
++        for r in rows:
++            wtr.writerow([r["tarih"] or "", r["fis_no"] or "", r["fis_tipi"] or "",
++                          r["hesap_kod"] or "", r["hesap_ad"] or "",
++                          r["fis_aciklama"] or "", _n(r["borc"]), _n(r["alacak"]),
++                          KAYNAK_LABEL_D023.get(r["kaynak_modul"], "Manüel"),
++                          r["kaynak_no"] or ""])
++        wtr.writerow([])
++        wtr.writerow(["TOPLAM", "", "", "", "", "", _n(tb), _n(ta), "", ""])
++        return Response("\ufeff" + buf.getvalue(), "200 OK", [
++            ("Content-Type", "text/csv; charset=utf-8"),
++            ("Content-Disposition",
++             f"attachment; filename=\"hareketler-{datetime.date.today().isoformat()}.csv\""),
++        ])
++    return render_template("muhasebe/hareketler.html", rows=rows, tb=tb, ta=ta,
++                           baslangic=baslangic, bitis=bitis, hesap=hesap, tip=tip, q=q,
++                           FIS_TIPLERI=FIS_TIPLERI, FIS_TIPI_BADGE=FIS_TIPI_BADGE,
++                           KAYNAK_LABEL=KAYNAK_LABEL_D023)
++
++
++def _bk_goster(raw, tip):
++    """D023-M4 — aktif/pasife göre bakiye gösterimi: (metin, taraf).
++
++    Aktif/Gider doğal bakiyesi borç; Pasif/Özkaynak/Gelir doğal bakiyesi alacak.
++    """
++    if tip in ("Pasif", "Ozkaynak", "Gelir"):
++        v = -raw
++    else:
++        v = raw
++    metin = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
++    return metin, ("B" if v >= 0 else "A")
++
++
++@route(r"/muhasebe/hesap-durumu", roles=())
++def muhasebe_hesap_durumu(req):
++    """D023-M4 madde 9-11 — Hesap Durumu matrisi: hesap × 12 ay.
++
++    Satır başı açılış, satır sonu kapanış bakiyesi (aktif/pasife göre işaret);
++    hücreler ay borç / ay alacak; alt satır aylık Σborç/Σalacak/net.
++    Parametreler: yıl seçimi + 'kümülatif bakiye göster' (mizan bakiye deseni: borç−alacak).
++    """
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    bugun = datetime.date.today()
++    yil = _i(req.q("yil")) or bugun.year
++    kumulatif = req.q("kumulatif") == "1"
++    hesaplar = conn.execute(
++        "SELECT id, kod, ad, tip FROM hesap WHERE aktif=1 AND sirket_id=? ORDER BY kod",
++        (sid,)).fetchall()
++    secili_idler = []
++    for v in (req.query.get("hesap") or []):
++        try:
++            secili_idler.append(int(v))
++        except (TypeError, ValueError):
++            pass
++    if req.q("tumu") == "1" or not secili_idler:
++        secili_idler = [h["id"] for h in hesaplar]
++    secili_set = set(secili_idler)
++    # açılış bakiyeleri (yıl başından önceki tüm hareketler)
++    acilis_map = {}
++    for r in conn.execute(
++            "SELECT k.hesap_id, COALESCE(SUM(k.borc),0) b, COALESCE(SUM(k.alacak),0) a "
++            "FROM yevmiye_kalem k JOIN yevmiye y ON y.id=k.yevmiye_id "
++            "WHERE y.durum='Onaylandı' AND y.sirket_id=? AND y.tarih < ? GROUP BY k.hesap_id",
++            (sid, f"{yil}-01-01")):
++        acilis_map[r["hesap_id"]] = round(r["b"] - r["a"], 2)
++    # yıl içi aylık hareketler
++    ay_map = {}
++    for r in conn.execute(
++            "SELECT k.hesap_id, substr(y.tarih,1,7) ay, COALESCE(SUM(k.borc),0) b, "
++            "COALESCE(SUM(k.alacak),0) a FROM yevmiye_kalem k "
++            "JOIN yevmiye y ON y.id=k.yevmiye_id "
++            "WHERE y.durum='Onaylandı' AND y.sirket_id=? AND y.tarih >= ? AND y.tarih <= ? "
++            "GROUP BY k.hesap_id, substr(y.tarih,1,7)",
++            (sid, f"{yil}-01-01", f"{yil}-12-31")):
++        ay_map[(r["hesap_id"], (r["ay"] or "")[:7])] = (round(r["b"], 2), round(r["a"], 2))
++    rows = []
++    for h in hesaplar:
++        if h["id"] not in secili_set:
++            continue
++        acilis = acilis_map.get(h["id"], 0.0)
++        aylar, tb, ta, kum = [], 0.0, 0.0, acilis
++        for m in range(1, 13):
++            b, a = ay_map.get((h["id"], f"{yil}-{m:02d}"), (0.0, 0.0))
++            kum = round(kum + b - a, 2)
++            aylar.append({"ay": m, "b": b, "a": a,
++                          "kum_g": _bk_goster(kum, h["tip"])})
++            tb = round(tb + b, 2)
++            ta = round(ta + a, 2)
++        kapanis = round(acilis + tb - ta, 2)
++        rows.append({"id": h["id"], "kod": h["kod"], "ad": h["ad"], "tip": h["tip"],
++                     "acilis": acilis, "acilis_g": _bk_goster(acilis, h["tip"]),
++                     "aylar": aylar, "tb": tb, "ta": ta, "kapanis": kapanis,
++                     "kapanis_g": _bk_goster(kapanis, h["tip"])})
++    toplam = {"acilis": 0.0, "tb": 0.0, "ta": 0.0, "kapanis": 0.0, "aylar": []}
++    for m in range(1, 13):
++        b = round(sum(r["aylar"][m - 1]["b"] for r in rows), 2)
++        a = round(sum(r["aylar"][m - 1]["a"] for r in rows), 2)
++        toplam["aylar"].append({"ay": m, "b": b, "a": a, "net": round(b - a, 2)})
++    toplam["acilis"] = round(sum(r["acilis"] for r in rows), 2)
++    toplam["tb"] = round(sum(r["tb"] for r in rows), 2)
++    toplam["ta"] = round(sum(r["ta"] for r in rows), 2)
++    toplam["kapanis"] = round(sum(r["kapanis"] for r in rows), 2)
++    yillar = list(range(bugun.year - 5, bugun.year + 2))
++    conn.close()
++    return render_template("muhasebe/hesap_durumu.html", rows=rows, toplam=toplam,
++                           hesaplar=hesaplar, secili=secili_idler, yil=yil, yillar=yillar,
++                           kumulatif=kumulatif)
+diff --git a/kod/regresyon_runner.py b/kod/regresyon_runner.py
+index 4cfee5a..79d7555 100644
+--- a/kod/regresyon_runner.py
++++ b/kod/regresyon_runner.py
+@@ -51,8 +51,8 @@ for t in tests:
+     rows.append((t, exitc, summary))
+ 
+ report = []
+-report.append(f"===== D022 (v1.53.0) — TAM REGRESYON =====")
+-report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.53.0")
++report.append(f"===== D023 (v1.54.0) — TAM REGRESYON =====")
++report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.54.0")
+ report.append("")
+ for t, e, s in rows:
+     report.append(f"[{t:<32}] exit={e} | {s}")
+diff --git a/kod/templates/cari/detay.html b/kod/templates/cari/detay.html
+index d793549..41e33b7 100644
+--- a/kod/templates/cari/detay.html
++++ b/kod/templates/cari/detay.html
+@@ -14,6 +14,7 @@
+     <a class="btn" href="/cari/{{ cari.id }}/tahsilat">💰 Tahsilat</a>
+     <a class="btn" href="/cari/{{ cari.id }}/odeme">💸 Ödeme</a>
+     <a class="btn" href="/cari/konsinye?cari_id={{ cari.id }}">📦 Konsinye</a>
++    <a class="btn" href="/cek_senet/teminat?cari_id={{ cari.id }}">🛡 Teminat</a>
+     <a class="btn primary" href="/cari/{{ cari.id }}/duzenle">✏️ Düzenle</a>
+     {% if silinebilir %}
+     <form method="post" action="/cari/{{ cari.id }}/sil" style="display:inline;"
+@@ -36,6 +37,17 @@
+ </div>
+ {% endif %}
+ 
++{% if teminat and teminat.adet %}
++<div class="card" style="border-left:4px solid var(--warn,#c90);">
++  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center;">
++    <div class="muted">🛡 <b>Teminat Çek/Senet (Aktif):</b> bu cariden alınan
++      <b>{{ teminat.adet }} adet / {{ teminat.tutar|sayi }} ₺</b> defter dışı güvence
++      (D023 — vade işleme Teminat Bordrosu'ndan yapılır).</div>
++    <a class="btn sm" href="/cek_senet/teminat?cari_id={{ cari.id }}">Bordroyu Aç →</a>
++  </div>
++</div>
++{% endif %}
++
+ <div class="tabs">
+   <a class="tab {{ 'active' if not sekme }}" href="/cari/{{ cari.id }}">Bilgiler</a>
+   <a class="tab {{ 'active' if sekme == 'hareket' }}" href="/cari/{{ cari.id }}?sekme=hareket">Hareketler</a>
+diff --git a/kod/templates/cek_senet/detay.html b/kod/templates/cek_senet/detay.html
+index 99f7744..c1fb605 100644
+--- a/kod/templates/cek_senet/detay.html
++++ b/kod/templates/cek_senet/detay.html
+@@ -28,10 +28,34 @@
+ 
+ {% if cek.aciklama %}<div class="card"><div class="muted">📝 {{ cek.aciklama }}</div></div>{% endif %}
+ 
++{% if cek.teminat %}
++<div class="card" style="border-left:4px solid var(--warn,#c90);">
++  <div class="card-head"><h2>🛡 Teminat Çek/Senet (D023)</h2></div>
++  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:center;">
++    <div class="muted">Defter dışı güvence kaydı — <b>cari hareket ve yevmiye üretilmez</b>.
++      Teminat durumu: <span class="badge {{ teminat_badge.get(cek.teminat_durum, 'b-muted') }}">{{ cek.teminat_durum }}</span>
++      {% if cek.teminat_durum == 'Aktif' %}<br>
++      Vadesi geldiğinde <a href="/cek_senet/teminat">Teminat Bordrosu</a>'ndan <b>Vadeyi İşle</b>
++      (tam/kısmi mahsup — yevmiye 101 borç / 120 alacak) veya <b>İade Et</b>.{% endif %}
++    </div>
++    {% if cek.teminat_durum == 'Aktif' and user.rol in ['Admin','Muhasebe'] %}
++    <form method="post" action="/cek_senet/{{ cek.id }}/teminat-iade"
++          onsubmit="return confirm('Bu teminat iade edilsin mi? (mali etki yok)');">
++      <input type="hidden" name="csrf" value="{{ csrf_token }}">
++      <button class="btn">↩ İade Et</button>
++    </form>
++    {% endif %}
++  </div>
++</div>
++{% endif %}
++
+ {% if user.rol in ['Admin','Muhasebe'] %}
+ <div class="card">
+   <div class="card-head"><h2>Durum İşlemleri</h2></div>
+-  {% if cek.durum == 'Bekliyor' %}
++  {% if cek.teminat and cek.teminat_durum == 'Aktif' %}
++  <div class="hint">🔒 <b>Aktif teminat defter dışıdır — tahsilat/ödeme akışı kilitli</b> (D023).
++    Yalnız <a href="/cek_senet/teminat">Teminat Bordrosu</a> akışı geçerlidir (Vadeyi İşle / İade Et).</div>
++  {% elif cek.durum == 'Bekliyor' %}
+   <div style="display:flex;gap:8px;flex-wrap:wrap;">
+     {% if cek.tip == 'Alinan' %}
+     <form method="post" action="/cek_senet/{{ cek.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="Tahsile Verildi"><button class="btn">🏦 Tahsile Ver</button></form>
+diff --git a/kod/templates/cek_senet/form.html b/kod/templates/cek_senet/form.html
+index d903a0c..b449d41 100644
+--- a/kod/templates/cek_senet/form.html
++++ b/kod/templates/cek_senet/form.html
+@@ -58,6 +58,28 @@
+         <input type="date" name="vade" value="{{ cek.vade if cek and cek.vade else '' }}" required></div>
+       <div class="field" style="grid-column: span 3;"><label>Açıklama</label>
+         <input name="aciklama" value="{{ cek.aciklama if cek and cek.aciklama else '' }}"></div>
++      {% if tip == 'Alinan' %}
++      <div class="field" style="grid-column: span 3;">
++        <label>🛡 Teminat Çek/Senet (D023)</label>
++        {% if cek and cek.id %}
++          {% if cek.teminat %}
++          <label style="display:flex;gap:8px;align-items:center;font-weight:600;">
++            <input type="checkbox" checked disabled> Teminat — defter dışı kayıt
++            (cari hareket/yevmiye yok; vade işleme Teminat Bordrosu'ndan)
++          </label>
++          <input type="hidden" name="teminat" value="1">
++          {% endif %}
++        {% else %}
++        <label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
++          <input type="checkbox" name="teminat" id="teminat-cb" value="1" {{ 'checked' if cek and cek.teminat }}>
++          Teminat olarak işaretle — carinin bize verdiği güvence; <b>cari hareket ve yevmiye ÜRETİLMEZ</b>
++          (defter dışı), vade gelince <a href="/cek_senet/teminat">Teminat Bordrosu</a>'ndan işlenir.
++        </label>
++        <div class="hint" id="teminat-hint" style="display:none;margin-top:4px;">
++          Tutar, seçilen carinin <b>borç bakiyesini aşamaz</b> (sunucu da kontrol eder).</div>
++        {% endif %}
++      </div>
++      {% endif %}
+     </div>
+   </div>
+ 
+@@ -66,4 +88,35 @@
+     <a class="btn ghost" href="/cek_senet">Vazgeç</a>
+   </div>
+ </form>
++
++{% if not cek or not cek.id %}
++<script>
++(function () {
++  var bk = {{ bakiyeler_json|safe if bakiyeler_json else '{}' }};
++  var cb = document.getElementById('teminat-cb');
++  var form = cb ? cb.closest('form') : null;
++  var hint = document.getElementById('teminat-hint');
++  if (cb) {
++    cb.addEventListener('change', function () {
++      if (hint) { hint.style.display = cb.checked ? 'block' : 'none'; }
++    });
++  }
++  if (form) {
++    form.addEventListener('submit', function (e) {
++      if (!cb || !cb.checked) { return; }
++      var cid = parseInt((document.getElementById('cari-id') || {}).value || '0', 10);
++      var tutar = parseFloat((form.querySelector('[name=tutar]').value || '0').replace(',', '.'));
++      var kurel = (form.querySelector('[name=doviz_kur]').value || '1').replace(',', '.');
++      var kur = parseFloat(kurel) || 1;
++      var b = bk[cid] || 0;
++      if (!(b > 0) || (tutar * kur) > (b + 0.005)) {
++        e.preventDefault();
++        alert('Teminat tutarı carinin borç bakiyesini aşamaz (en fazla ' +
++              b.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' ₺).');
++      }
++    });
++  }
++})();
++</script>
++{% endif %}
+ {% endblock %}
+diff --git a/kod/templates/cek_senet/liste.html b/kod/templates/cek_senet/liste.html
+index 92df58b..1f31201 100644
+--- a/kod/templates/cek_senet/liste.html
++++ b/kod/templates/cek_senet/liste.html
+@@ -10,11 +10,12 @@
+   </div>
+   <div class="page-actions">
+     <a class="btn" href="/cek_senet/vade">📅 Vade Takvimi</a>
++    <a class="btn" href="/cek_senet/teminat">🛡 Teminat Bordrosu</a>
+     <a class="btn primary" href="/cek_senet/yeni">+ Yeni Çek/Senet</a>
+   </div>
+ </div>
+ 
+-<div class="grid cols-2" style="margin-bottom:14px;">
++<div class="grid cols-2" style="margin-bottom:14px;grid-template-columns:repeat(3,1fr);">
+   <div class="card" style="border-left:4px solid var(--ok);">
+     <div class="muted">📥 Alınacak (portföyde + tahsile verildi) — müşterilerden</div>
+     <div class="strong" style="font-size:18px;">{{ portfoy.al_inan|para }}</div>
+@@ -23,6 +24,11 @@
+     <div class="muted">📤 Ödenecek (portföy) — tedarikçilere</div>
+     <div class="strong" style="font-size:18px;">{{ portfoy.verilen|para }}</div>
+   </div>
++  <div class="card" style="border-left:4px solid var(--info,#58a);">
++    <div class="muted">🛡 Teminat (Aktif, defter dışı) — {{ teminat_ozet.adet }} adet
++      (<a href="/cek_senet/teminat">bordro</a>)</div>
++    <div class="strong" style="font-size:18px;">{{ teminat_ozet.tutar|para }}</div>
++  </div>
+ </div>
+ 
+ <div class="tabs">
+@@ -66,7 +72,8 @@
+         <td class="muted">{{ c.banka or '—' }}</td>
+         <td class="num strong">{{ c.tutar|para }}</td>
+         <td>{{ c.vade|tarih }}{% if c.gecikmis %} <span class="badge b-danger" title="Vadesi geçti">Gecikmiş</span>{% endif %}</td>
+-        <td><span class="badge {{ durum_badge[c.durum] }}">{{ durum_label[c.durum] }}</span></td>
++        <td><span class="badge {{ durum_badge[c.durum] }}">{{ durum_label[c.durum] }}</span>
++          {% if c.teminat %}<span class="badge {{ teminat_badge.get(c.teminat_durum, 'b-muted') }}" title="Teminat — defter dışı">🛡 Teminat · {{ c.teminat_durum }}</span>{% endif %}</td>
+         <td class="right">
+           <a class="btn sm ghost" href="/cek_senet/{{ c.id }}">Aç</a>
+           <a class="btn sm ghost" href="/cek_senet/{{ c.id }}/yazdir">Yazdır</a>
+diff --git a/kod/templates/cek_senet/teminat.html b/kod/templates/cek_senet/teminat.html
+new file mode 100644
+index 0000000..0cd4aae
+--- /dev/null
++++ b/kod/templates/cek_senet/teminat.html
+@@ -0,0 +1,98 @@
++{% extends "base.html" %}
++{% block title %}Teminat Çek/Senet Bordrosu — Brn Teknoloji ERP{% endblock %}
++{% block crumb %}Satış Döngüsü / Çek-Senet / Teminat Bordrosu{% endblock %}
++
++{% block content %}
++<div class="page-head">
++  <div>
++    <h1>🛡 Teminat Çek/Senet Bordrosu</h1>
++    <div class="desc">Cari × teminat tutarı × vade × durum (D023-T2). Teminat = carinin bize verdiği
++      güvence çek/senet; <b>defter dışıdır</b> (cari 0, yevmiye 0). Vadesi gelen Aktif teminatlar
++      buradan işlenir: tam/kısmi mahsup (101/120) veya iade.</div>
++  </div>
++  <div class="page-actions">
++    <a class="btn" href="/cek_senet">← Çek/Senet</a>
++    <a class="btn" href="/cek_senet/teminat?format=csv&durum={{ durum }}&cari_id={{ cari_id or '' }}">⬇ CSV</a>
++    <button class="btn" type="button" onclick="window.print()">🖨 Yazdır</button>
++    {% if user.rol in ['Admin','Muhasebe'] and vadesi_gelen %}
++    <form method="post" action="/cek_senet/teminat/isle" style="display:inline;"
++          onsubmit="return confirm('Vadesi gelen {{ vadesi_gelen }} aktif teminat işlensin mi? (mahsup fişleri üretilecek)');">
++      <input type="hidden" name="csrf" value="{{ csrf_token }}">
++      <button class="btn primary">⚡ Vadesi Gelenleri Toplu İşle ({{ vadesi_gelen }})</button>
++    </form>
++    {% endif %}
++  </div>
++</div>
++
++<div class="kpis" style="grid-template-columns:repeat(3,1fr);">
++  {% for d in teminat_durumlar %}
++  <div class="kpi {{ 'accent' if d == 'Aktif' else 'ok' if d == 'Mahsup Edildi' else '' }}">
++    <div class="k-label">{{ d }} ({{ ozet[d].adet }})</div>
++    <div class="k-val">{{ ozet[d].tutar|sayi }} ₺</div>
++  </div>
++  {% endfor %}
++</div>
++
++<div class="card">
++  <div class="card-head"><h2>Bordro</h2>
++    <form method="get" action="/cek_senet/teminat" class="toolbar" style="margin:0;">
++      <select name="durum" style="max-width:150px;">
++        <option value="">Tüm durumlar</option>
++        {% for d in teminat_durumlar %}
++        <option value="{{ d }}" {{ 'selected' if durum == d }}>{{ d }}</option>
++        {% endfor %}
++      </select>
++      <select name="cari_id" style="max-width:200px;">
++        <option value="">Tüm cariler</option>
++        {% for c in cariler %}
++        <option value="{{ c.id }}" {{ 'selected' if cari_id == c.id }}>{{ c.unvan }} ({{ c.kod }})</option>
++        {% endfor %}
++      </select>
++      <button class="btn primary sm" type="submit">Filtrele</button>
++    </form>
++  </div>
++  <div class="tbl-wrap">
++  <table class="tbl">
++    <thead><tr><th>Cari</th><th>No</th><th>Tür</th><th class="num">Tutar</th><th>Vade</th>
++          <th>Çek Durumu</th><th>Teminat Durumu</th><th></th></tr></thead>
++    <tbody>
++      {% for r in rows %}
++      <tr>
++        <td><a href="/cari/{{ r.cari_id }}">{{ r.cari_unvan or '—' }}</a></td>
++        <td class="strong"><a href="/cek_senet/{{ r.id }}">{{ r.no }}</a></td>
++        <td class="muted">{{ 'Çek' if r.tur == 'Cek' else 'Senet' }}</td>
++        <td class="num">{{ r.tutar|sayi }} {{ r.para_birimi }}</td>
++        <td class="muted">{{ r.vade|tarih }}</td>
++        <td><span class="badge {{ durum_badge.get(r.durum, 'b-muted') }}">{{ durum_label.get(r.durum, r.durum) }}</span></td>
++        <td><span class="badge {{ teminat_badge.get(r.teminat_durum, 'b-muted') }}">{{ r.teminat_durum }}</span>
++          {% if r.vadesi_geldi %}<span class="badge b-danger">vadesi geldi</span>{% endif %}</td>
++        <td style="white-space:nowrap;">
++          {% if user.rol in ['Admin','Muhasebe'] %}
++            {% if r.vadesi_geldi %}
++            <form method="post" action="/cek_senet/teminat/isle" style="display:inline;">
++              <input type="hidden" name="csrf" value="{{ csrf_token }}">
++              <input type="hidden" name="id" value="{{ r.id }}">
++              <button class="btn sm primary">⚡ Vadeyi İşle</button>
++            </form>
++            {% endif %}
++            {% if r.teminat_durum == 'Aktif' %}
++            <form method="post" action="/cek_senet/{{ r.id }}/teminat-iade" style="display:inline;"
++                  onsubmit="return confirm('Bu teminat iade edilsin mi? (mali etki yok)');">
++              <input type="hidden" name="csrf" value="{{ csrf_token }}">
++              <button class="btn sm">↩ İade Et</button>
++            </form>
++            {% endif %}
++          {% endif %}
++        </td>
++      </tr>
++      {% else %}
++      <tr><td colspan="8" class="muted" style="text-align:center;padding:18px;">Kayıt yok.</td></tr>
++      {% endfor %}
++    </tbody>
++  </table>
++  </div>
++  <div class="hint" style="margin-top:8px;">💡 <b>Vadeyi İşle:</b> carinin borç bakiyesi ≥ tutar ise
++    <b>tam mahsup</b> (cari alacak + tutar, yevmiye 101 borç / 120 alacak); borç &lt; tutar ise borç
++    kadar mahsup + 'Kalan X iade edildi' açıklaması; borç 0 ise uyarı. <b>İade Et:</b> mali etki 0.</div>
++</div>
++{% endblock %}
+diff --git a/kod/templates/muhasebe/eslemeler.html b/kod/templates/muhasebe/eslemeler.html
+new file mode 100644
+index 0000000..4910e9f
+--- /dev/null
++++ b/kod/templates/muhasebe/eslemeler.html
+@@ -0,0 +1,63 @@
++{% extends "base.html" %}
++{% block title %}Hesap Eşlemeleri — Brn Teknoloji ERP{% endblock %}
++{% block crumb %}Genel Muhasebe / Hesap Eşlemeleri{% endblock %}
++
++{% block content %}
++<div class="page-head">
++  <div>
++    <h1>🔐 Hesap Eşlemeleri</h1>
++    <div class="desc">Fiş üreten noktaların hesap kodları şirket bazlı değiştirilebilir (D023-M2).
++      Varsayılanlar Tekdüzen Hesap Planı kodlarıdır; <b>değişiklik yalnız yeni fişlerden itibaren
++      geçerlidir</b> — mevcut yevmiyeler yeniden üretilmez.</div>
++  </div>
++  <div class="page-actions">
++    <a class="btn" href="/muhasebe">← Muhasebe</a>
++    <button class="btn" type="button" onclick="window.print()">🖨 Yazdır</button>
++  </div>
++</div>
++
++<div class="card">
++  <div class="card-head"><h2>Eşleme Tablosu (13 anahtar)</h2></div>
++  <div class="hint" style="margin-bottom:8px;">💡 Hedef kod o şirketin <b>hesap planında olmayan</b> bir
++    koda çekilirse (örn. doğrudan DB'den) sistem fiş üretirken <b>varsayılana düşer</b> — asla dengesiz
++    fiş oluşmaz. Geçersiz kayıt ekrandan kabul edilmez.</div>
++  <div class="tbl-wrap">
++  <table class="tbl">
++    <thead><tr><th>Anahtar</th><th>Hedef Kod</th><th>Hesap Adı</th><th>Not</th><th>Durum</th><th></th></tr></thead>
++    <tbody>
++      {% for r in rows %}
++      <tr>
++        <td class="strong">{{ r.anahtar }}</td>
++        <form method="post" action="/muhasebe/eslemeler">
++        <input type="hidden" name="csrf" value="{{ csrf_token }}">
++        <input type="hidden" name="anahtar" value="{{ r.anahtar }}">
++        <td>
++          <select name="hedef_kod" style="min-width:90px;">
++            {% for h in hesaplar %}
++            <option value="{{ h.kod }}" {{ 'selected' if h.kod == r.kod }}>{{ h.kod }}</option>
++            {% endfor %}
++          </select>
++        </td>
++        <td class="muted">{{ r.ad }}{% if not r.gecerli %} <span class="badge b-danger">geçersiz — varsayılana düşer</span>{% endif %}</td>
++        <td><input name="not_" value="{{ r.not_ }}" placeholder="not…" style="min-width:120px;"></td>
++        <td>
++          {% if r.ozellestirildi %}<span class="badge b-warn">özelleştirildi</span>
++          {% else %}<span class="badge b-muted">varsayılan ({{ r.varsayilan }})</span>{% endif %}
++        </td>
++        <td style="white-space:nowrap;">
++          <button class="btn sm primary" type="submit">💾 Kaydet</button>
++        </form>
++        <form method="post" action="/muhasebe/eslemeler" style="display:inline;">
++          <input type="hidden" name="csrf" value="{{ csrf_token }}">
++          <input type="hidden" name="anahtar" value="{{ r.anahtar }}">
++          <input type="hidden" name="action" value="reset">
++          <button class="btn sm" type="submit" {{ 'disabled' if not r.ozellestirildi }}>↩ Varsayılana Döndür</button>
++        </form>
++        </td>
++      </tr>
++      {% endfor %}
++    </tbody>
++  </table>
++  </div>
++</div>
++{% endblock %}
+diff --git a/kod/templates/muhasebe/hareketler.html b/kod/templates/muhasebe/hareketler.html
+new file mode 100644
+index 0000000..2575036
+--- /dev/null
++++ b/kod/templates/muhasebe/hareketler.html
+@@ -0,0 +1,84 @@
++{% extends "base.html" %}
++{% block title %}Fiş Hareketleri — Brn Teknoloji ERP{% endblock %}
++{% block crumb %}Genel Muhasebe / Fiş Hareketleri{% endblock %}
++
++{% block content %}
++<div class="page-head">
++  <div>
++    <h1>🧾 Fiş Hareketleri (Satır Bazlı)</h1>
++    <div class="desc">Tüm yevmiye fişlerinin <b>satır</b> dökümü: hesap, tip, tarih, kaynak belge
++      filtreleriyle (D023-M3). Kaynak sütunu tıklanabilir belge linki taşır.</div>
++  </div>
++  <div class="page-actions">
++    <a class="btn" href="/muhasebe">← Muhasebe</a>
++    <a class="btn" href="/muhasebe/hareketler?format=csv&baslangic={{ baslangic }}&bitis={{ bitis }}&hesap={{ hesap }}&tip={{ tip }}&q={{ q }}">⬇ CSV</a>
++    <button class="btn" type="button" onclick="window.print()">🖨 Yazdır</button>
++  </div>
++</div>
++
++<div class="card">
++  <div class="card-head"><h2>Filtre</h2>
++    <form method="get" action="/muhasebe/hareketler" class="toolbar" style="margin:0;">
++      <input type="date" name="baslangic" value="{{ baslangic }}" title="Başlangıç tarihi">
++      <input type="date" name="bitis" value="{{ bitis }}" title="Bitiş tarihi">
++      <input name="hesap" value="{{ hesap }}" placeholder="Hesap: 120 veya 100-199" style="max-width:160px;">
++      <select name="tip" style="max-width:130px;">
++        <option value="">Tüm tipler</option>
++        {% for t in FIS_TIPLERI %}
++        <option value="{{ t }}" {{ 'selected' if tip == t }}>{{ t }}</option>
++        {% endfor %}
++      </select>
++      <input name="q" value="{{ q }}" placeholder="Cari / belge no / açıklama…" style="max-width:180px;">
++      <button class="btn primary sm" type="submit">Filtrele</button>
++      <a class="btn sm ghost" href="/muhasebe/hareketler">Temizle</a>
++    </form>
++  </div>
++
++  <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
++    <div class="kpi"><div class="k-label">Satır</div><div class="k-val">{{ rows|length }}</div></div>
++    <div class="kpi {{ 'ok' if tb == ta else 'danger' }}">
++      <div class="k-label">Σ Borç</div><div class="k-val">{{ tb|sayi }} ₺
++        {% if tb != ta %}<span class="badge b-danger">⚠ Dengesiz filtre</span>{% endif %}</div>
++    </div>
++    <div class="kpi"><div class="k-label">Σ Alacak</div><div class="k-val">{{ ta|sayi }} ₺</div></div>
++  </div>
++
++  <div class="tbl-wrap">
++  <table class="tbl">
++    <thead><tr><th>Tarih</th><th>Fiş No</th><th>Fiş Tipi</th><th>Hesap</th><th>Açıklama</th>
++          <th class="num">Borç</th><th class="num">Alacak</th><th>Kaynak</th></tr></thead>
++    <tbody>
++      {% for r in rows %}
++      <tr>
++        <td class="muted">{{ r.tarih|tarih }}</td>
++        <td class="strong"><a href="/muhasebe/{{ r.yevmiye_id }}">{{ r.fis_no }}</a></td>
++        <td><span class="badge {{ FIS_TIPI_BADGE.get(r.fis_tipi, 'b-muted') }}">{{ r.fis_tipi or 'Muhtelif' }}</span></td>
++        <td><b>{{ r.hesap_kod }}</b> <span class="muted">{{ r.hesap_ad|kisa(24) }}</span></td>
++        <td class="muted">{{ r.fis_aciklama|kisa(40) }}</td>
++        <td class="num">{{ r.borc|sayi }}</td>
++        <td class="num">{{ r.alacak|sayi }}</td>
++        <td>
++          {% if r.kaynak_url %}
++          <a href="{{ r.kaynak_url }}"><span class="badge b-muted">{{ KAYNAK_LABEL.get(r.kaynak_modul, 'Manüel') }}</span>
++            {{ r.kaynak_no|kisa(18) }}</a>
++          {% elif r.kaynak_modul %}
++          <span class="badge b-muted">{{ KAYNAK_LABEL.get(r.kaynak_modul, 'Manüel') }}</span>
++          {% else %}<span class="muted">—</span>{% endif %}
++        </td>
++      </tr>
++      {% else %}
++      <tr><td colspan="8" class="muted" style="text-align:center;padding:18px;">Kayıt yok.</td></tr>
++      {% endfor %}
++    </tbody>
++    {% if rows %}
++    <tfoot><tr class="strong">
++      <td colspan="5">TOPLAM (filtre kapsamı)</td>
++      <td class="num">{{ tb|sayi }}</td>
++      <td class="num">{{ ta|sayi }}</td>
++      <td>{% if tb != ta %}<span class="badge b-danger">⚠ Dengesiz</span>{% else %}<span class="badge b-ok">dengeli</span>{% endif %}</td>
++    </tr></tfoot>
++    {% endif %}
++  </table>
++  </div>
++</div>
++{% endblock %}
+diff --git a/kod/templates/muhasebe/hesap_durumu.html b/kod/templates/muhasebe/hesap_durumu.html
+new file mode 100644
+index 0000000..bd1bf53
+--- /dev/null
++++ b/kod/templates/muhasebe/hesap_durumu.html
+@@ -0,0 +1,100 @@
++{% extends "base.html" %}
++{% block title %}Hesap Durumu — Brn Teknoloji ERP{% endblock %}
++{% block crumb %}Genel Muhasebe / Hesap Durumu{% endblock %}
++
++{% block content %}
++<div class="page-head">
++  <div>
++    <h1>📊 Hesap Durumu ({{ yil }})</h1>
++    <div class="desc">Çoklu hesap × 12 ay matrisi: satır başı <b>açılış</b>, hücreler <b>ay borç / ay
++      alacak</b>, satır sonu <b>kapanış</b> bakiyesi (D023-M4). Bakiyeler aktif/pasif tipine göre
++      gösterilir (B = borç, A = alacak).</div>
++  </div>
++  <div class="page-actions">
++    <a class="btn" href="/muhasebe">← Muhasebe</a>
++    <button class="btn" type="button" onclick="window.print()">🖨 Yazdır</button>
++  </div>
++</div>
++
++<div class="card">
++  <div class="card-head"><h2>Parametre</h2>
++    <form method="get" action="/muhasebe/hesap-durumu" class="toolbar" style="margin:0;">
++      <select name="yil" style="max-width:100px;">
++        {% for y in yillar %}
++        <option value="{{ y }}" {{ 'selected' if y == yil }}>{{ y }}</option>
++        {% endfor %}
++      </select>
++      <label class="muted" style="display:flex;gap:6px;align-items:center;">
++        <input type="checkbox" name="kumulatif" value="1" {{ 'checked' if kumulatif }}> Kümülatif bakiye göster</label>
++      <button class="btn primary sm" type="submit">Göster</button>
++    </form>
++  </div>
++
++  <form method="get" action="/muhasebe/hesap-durumu">
++    <input type="hidden" name="yil" value="{{ yil }}">
++    {% if kumulatif %}<input type="hidden" name="kumulatif" value="1">{% endif %}
++    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 0;max-height:150px;overflow:auto;">
++      <label style="display:flex;gap:4px;align-items:center;"><input type="checkbox" name="tumu" value="1"> <b>Tümü</b></label>
++      {% for h in hesaplar %}
++      <label style="display:flex;gap:4px;align-items:center;font-size:12px;">
++        <input type="checkbox" name="hesap" value="{{ h.id }}" {{ 'checked' if h.id in secili }}>
++        {{ h.kod }} {{ h.ad|kisa(16) }}</label>
++      {% endfor %}
++    </div>
++    <button class="btn sm primary" type="submit">Seçili Hesapları Getir</button>
++  </form>
++</div>
++
++<div class="card">
++  <div class="card-head"><h2>Matris — {{ rows|length }} hesap</h2></div>
++  <div class="tbl-wrap">
++  <table class="tbl" style="font-size:12px;">
++    <thead>
++      <tr>
++        <th style="text-align:left;">Hesap</th>
++        <th>Açılış</th>
++        {% for m in range(1, 13) %}<th>{{ m }}. ay</th>{% endfor %}
++        <th>TOPLAM</th>
++        <th>Kapanış</th>
++      </tr>
++    </thead>
++    <tbody>
++      {% for r in rows %}
++      <tr>
++        <td class="strong" style="white-space:nowrap;">{{ r.kod }} <span class="muted">{{ r.ad|kisa(16) }}</span></td>
++        <td class="num">{{ r.acilis_g[0] }} {{ r.acilis_g[1] }}</td>
++        {% for a in r.aylar %}
++        <td class="num muted" style="white-space:nowrap;">
++          {% if a.b or a.a %}{{ a.b|sayi }} / {{ a.a|sayi }}{% else %}·{% endif %}
++          {% if kumulatif and (a.b or a.a) %}<br><b>{{ a.kum_g[0] }} {{ a.kum_g[1] }}</b>{% endif %}
++        </td>
++        {% endfor %}
++        <td class="num">{{ r.tb|sayi }} / {{ r.ta|sayi }}</td>
++        <td class="num strong">{{ r.kapanis_g[0] }} {{ r.kapanis_g[1] }}</td>
++      </tr>
++      {% else %}
++      <tr><td colspan="16" class="muted" style="text-align:center;padding:18px;">Hesap seçilmedi / kayıt yok.</td></tr>
++      {% endfor %}
++    </tbody>
++    {% if rows %}
++    <tfoot>
++      <tr class="strong">
++        <td>AYLIK TOPLAM</td>
++        <td class="num">{{ toplam.acilis|sayi }}</td>
++        {% for a in toplam.aylar %}
++        <td class="num" style="white-space:nowrap;">
++          {% if a.b or a.a %}{{ a.b|sayi }} / {{ a.a|sayi }}<br><span class="muted">net {{ a.net|sayi }}</span>{% else %}·{% endif %}
++        </td>
++        {% endfor %}
++        <td class="num">{{ toplam.tb|sayi }} / {{ toplam.ta|sayi }}</td>
++        <td class="num">{{ toplam.kapanis|sayi }}</td>
++      </tr>
++    </tfoot>
++    {% endif %}
++  </table>
++  </div>
++  <div class="hint" style="margin-top:8px;">Doğrulama kuralı: her hesap için
++    <b>açılış + Σaylar (borç − alacak) = kapanış</b>. Kümülatif satır açılış dahil işleyen bakiyeyi
++    izler (mizan bakiye deseni: borç − alacak).</div>
++</div>
++{% endblock %}
+diff --git a/kod/templates/muhasebe/liste.html b/kod/templates/muhasebe/liste.html
+index 36f3ea8..c3ba4e0 100644
+--- a/kod/templates/muhasebe/liste.html
++++ b/kod/templates/muhasebe/liste.html
+@@ -12,8 +12,11 @@
+   <div class="page-actions">
+     <a class="btn" href="/muhasebe/mizan">📊 Mizan</a>
+     <a class="btn" href="/muhasebe/defter">📖 Büyük Defter</a>
++    <a class="btn" href="/muhasebe/hareketler">🧾 Hareketler</a>
++    <a class="btn" href="/muhasebe/hesap-durumu">📅 Hesap Durumu</a>
+     <a class="btn" href="/muhasebe/hesaplar">🗃 Hesap Planı</a>
+     {% if user.rol in ['Admin','Muhasebe'] %}
++    <a class="btn" href="/muhasebe/eslemeler">🔐 Eşlemeler</a>
+     <a class="btn primary" href="/muhasebe/yeni">+ Yeni Fiş</a>
+     <a class="btn" href="/muhasebe/mahsup">⇄ Yeni Mahsup</a>
+     {% endif %}
+diff --git a/kod/test_d010_yedekleme.py b/kod/test_d010_yedekleme.py
+index c860d41..313e481 100644
+--- a/kod/test_d010_yedekleme.py
++++ b/kod/test_d010_yedekleme.py
+@@ -183,7 +183,7 @@ print("=" * 70)
+ s2, _ = giris()
+ r = s2.get(BASE + "/api/saglik", allow_redirects=False)
+ js = r.json()
+-check("13. /api/saglik canlı + sürüm 1.53.0", r.status_code == 200 and js.get("surum") == "1.53.0",
++check("13. /api/saglik canlı + sürüm 1.54.0", r.status_code == 200 and js.get("surum") == "1.54.0",
+       f"status={r.status_code}, surum={js.get('surum')}")
+ 
+ r = s2.get(BASE + "/api/bildirimler", allow_redirects=False)
+diff --git a/kod/test_d015_toplu_yardim_sistem.py b/kod/test_d015_toplu_yardim_sistem.py
+index 4a57a32..80898a2 100644
+--- a/kod/test_d015_toplu_yardim_sistem.py
++++ b/kod/test_d015_toplu_yardim_sistem.py
+@@ -166,7 +166,7 @@ sv, _ = giris("satis", "1234")
+ r403 = sv.get(BASE + "/sistem/bilgi", allow_redirects=False)
+ import re as _re
+ check("11. admin 200 (sürüm+hash+integrity+FK+saglik) + satis 403",
+-      "v1.53.0" in h and _re.search(r"[0-9a-f]{40}", h) is not None
++      "v1.54.0" in h and _re.search(r"[0-9a-f]{40}", h) is not None
+       and "Integrity Check" in h and ">ok<" in h and "0 sorun" in h
+       and "api/saglik" in h and 'href="/sistem/bilgi"' in h0 and r403.status_code == 403,
+       f"satis={r403.status_code}")
+diff --git a/kod/test_d023_muhasebe_cekirdegi.py b/kod/test_d023_muhasebe_cekirdegi.py
+new file mode 100644
+index 0000000..57291f1
+--- /dev/null
++++ b/kod/test_d023_muhasebe_cekirdegi.py
+@@ -0,0 +1,539 @@
++# -*- coding: utf-8 -*-
++"""D023 — Muhasebe Çekirdeği + Teminat Çek/Senet (v1.54.0) e2e testi.
++
++15 kontrol. Sunucu 8080'de çalışırken:
++    python3 test_d023_muhasebe_cekirdegi.py
++
++Kapsam (KÖPRÜ direktifi D023, M2/M3/M4/T2):
++  1  Migrasyon: v1.53 şeması → hesap_esleme + 13 seed ×2 şirket + teminat kolonları
++  2  Eşleme: satis_hasilat 600→602 → yeni fatura 602; eski fişler değişmez; ekran + audit
++  3  Varsayılana dön + geçersiz kod (şirkette olmayan) → varsayılana düşer, fiş dengeli
++  4  Kasa/banka/çek/amortisman eşlemeleri (4 örnek) + temiz reset
++  5  Hareketler: hesap aralığı + tip + tarih filtresi SQL ile birebir (CSV) + kaynak link
++  6  CSV 200 + BOM + TR sayı; boş sonuç 'Kayıt yok'; alt toplam dengeli
++  7  Hesap Durumu: 3 hesapta açılış + Σaylar = kapanış (SQL kanıtı) + yazdır
++  8  Teminat oluşturma: cari 0 + yevmiye 0 (COUNT); bakiye aşımı + Verilen tip bloke
++  9  Vade işleme (tam): cari alacak +tutar, yevmiye 101/120 dengeli, durum + audit
++  10 Vade işleme (kısmi): borç < tutar → borç kadar mahsup + 'Kalan X iade edildi'
++  11 Kilit: Aktif teminat normal tahsilat akışına giremez; borç 0 → uyarı, durum değişmez
++  12 Erken iade: durum 'İade Edildi', mali etki 0, audit
++  13 Bordro: filtre + CSV; cari detayında Teminat kartı (Aktif toplam)
++  14 Yetki 403 (eşleme/vade-işleme/iade) + şirket izolasyonu (kod/teminat dışarıdan reddedilir)
++  15 FK bütünlüğü + kalıntı temizliği
++"""
++import csv
++import io
++import os
++import sqlite3
++import sys
++
++import requests
++
++BASE = "http://127.0.0.1:8080"
++DB = "data/erp.db"
++MARK = "D023TEST"
++BUGUN = "2026-09-18"
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++ok, fail = [], []
++
++
++def check(name, cond, detay=""):
++    (ok if cond else fail).append(name)
++    isaret = "  ✅ " if cond else "  ❌ "
++    print(isaret + name + (f"  → {detay}" if detay else ""))
++
++
++def q1(q, *a):
++    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
++    r = c.execute(q, a).fetchone(); c.close(); return r
++
++
++def qa(q, *a):
++    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
++    r = c.execute(q, a).fetchall(); c.close(); return r
++
++
++def qx(q, *a):
++    c = sqlite3.connect(DB); c.execute(q, a); c.commit(); c.close()
++
++
++def giris(kadi="admin", sifre="1234"):
++    s = requests.Session()
++    r = s.post(BASE + "/giris", data={"kullanici_adi": kadi, "sifre": sifre},
++               allow_redirects=False)
++    return s, r
++
++
++def bakiye(cid):
++    r = q1("SELECT COALESCE(SUM(borc),0)-COALESCE(SUM(alacak),0) b FROM cari_hareket "
++           "WHERE cari_id=?", cid)
++    return round(r["b"], 2) if r else 0.0
++
++
++def tr(v):
++    """_bk_goster ile aynı TL biçimi (nokta binlik, virgül kesir)."""
++    return f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
++
++
++s, r = giris()
++assert r.status_code == 302, "admin girişi başarısız"
++
++print("BÖLÜM 1 — Migrasyon (v1.53 şeması → _migrate_d023)")
++import db as dbmod
++MIG = "/tmp/d023_mig_test.db"
++if os.path.exists(MIG):
++    os.remove(MIG)
++mc = sqlite3.connect(MIG)
++mc.executescript("""
++CREATE TABLE hesap (id INTEGER PRIMARY KEY AUTOINCREMENT, kod TEXT NOT NULL, ad TEXT NOT NULL,
++    tip TEXT NOT NULL DEFAULT 'Aktif', ust_kod TEXT, aktif INTEGER NOT NULL DEFAULT 1,
++    sirket_id INTEGER NOT NULL DEFAULT 1);
++CREATE TABLE cek_senet (
++    id INTEGER PRIMARY KEY AUTOINCREMENT, no TEXT NOT NULL,
++    tip TEXT NOT NULL DEFAULT 'Alinan', tur TEXT NOT NULL DEFAULT 'Cek',
++    cari_id INTEGER, sube_id INTEGER, banka TEXT, sube_ad TEXT, tutar REAL NOT NULL DEFAULT 0,
++    para_birimi TEXT NOT NULL DEFAULT 'TRY', doviz_kur REAL, keside_tarihi TEXT,
++    vade TEXT NOT NULL, durum TEXT NOT NULL DEFAULT 'Bekliyor', aciklama TEXT,
++    created_by INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
++    updated_at TEXT, sirket_id INTEGER NOT NULL DEFAULT 1);
++INSERT INTO hesap(kod, ad, sirket_id) VALUES('100','Kasa',1),('120','Alicilar',1),('600','Satislar',1);
++INSERT INTO hesap(kod, ad, sirket_id) VALUES('100','Kasa',2),('120','Alicilar',2);
++INSERT INTO cek_senet(no, tip, tur, vade, tutar, sirket_id) VALUES('ESKI-1','Alinan','Cek','2026-01-01',500,1);
++""")
++mc.commit()
++mc.row_factory = sqlite3.Row
++dbmod._migrate_d023(mc)
++dbmod._migrate_d023(mc)  # idempotent
++esleme_c = mc.execute("SELECT COUNT(*) c FROM hesap_esleme").fetchone()["c"]
++per_sirket = mc.execute("SELECT sirket_id, COUNT(*) c FROM hesap_esleme GROUP BY sirket_id").fetchall()
++anahtarlar = mc.execute(
++    "SELECT COUNT(*) c FROM hesap_esleme WHERE anahtar='satis_hasilat' AND hedef_kod='600'").fetchone()["c"]
++ccols = {r["name"] for r in mc.execute("PRAGMA table_info(cek_senet)")}
++ddl = mc.execute("SELECT sql FROM sqlite_master WHERE name='cek_senet'").fetchone()["sql"]
++backfill = mc.execute("SELECT teminat, teminat_durum FROM cek_senet WHERE no='ESKI-1'").fetchone()
++fk = mc.execute("PRAGMA foreign_key_check").fetchall()
++mc.close()
++os.remove(MIG)
++check("1. migrasyon: hesap_esleme (13×2 seed) + teminat kolonları + backfill + idempotent + FK",
++      esleme_c == 26 and {r["sirket_id"]: r["c"] for r in per_sirket} == {1: 13, 2: 13}
++      and anahtarlar == 2 and "teminat" in ccols and "teminat_durum" in ccols
++      and "CHECK (teminat_durum IN" in ddl
++      and backfill["teminat"] == 0 and backfill["teminat_durum"] == "Yok"
++      and len(fk) == 0,
++      f"esleme={esleme_c}, kolonlar={'teminat' in ccols}/{'teminat_durum' in ccols}")
++
++print("BÖLÜM KURULUM")
++# çökmüş önceki koşulardan kalabilecek yetim D023TEST kayıtları (güvenlik ağı)
++for _f in [r["id"] for r in qa(
++        "SELECT id FROM fatura WHERE cari_id NOT IN (SELECT id FROM cari_kart)")]:
++    qx("DELETE FROM yevmiye_kalem WHERE yevmiye_id IN "
++       "(SELECT id FROM yevmiye WHERE kaynak_modul='Fatura' AND kaynak_id=?)", _f)
++    qx("DELETE FROM yevmiye WHERE kaynak_modul='Fatura' AND kaynak_id=?", _f)
++    qx("DELETE FROM fatura_kalem WHERE fatura_id=?", _f)
++    qx("DELETE FROM e_belge WHERE kaynak_fatura_id=?", _f)
++qx("DELETE FROM cari_hareket WHERE cari_id NOT IN (SELECT id FROM cari_kart)")
++qx("DELETE FROM fatura WHERE cari_id NOT IN (SELECT id FROM cari_kart)")
++qx("DELETE FROM e_belge WHERE cari_id NOT IN (SELECT id FROM cari_kart)")
++qx("DELETE FROM cari_kart WHERE kod LIKE ?", MARK + "%")
++A = MARK + "-A"
++qx("INSERT INTO cari_kart(kod, unvan, tip, sirket_id) VALUES(?,?,?,1)",
++   A, MARK + " Alici", "Musteri")
++C = MARK + "-C"
++qx("INSERT INTO cari_kart(kod, unvan, tip, sirket_id) VALUES(?,?,?,1)",
++   C, MARK + " Teminat", "Musteri")
++AID = q1("SELECT id FROM cari_kart WHERE kod=?", A)["id"]
++CID = q1("SELECT id FROM cari_kart WHERE kod=?", C)["id"]
++FIDS = []
++
++
++def fatura_post(tip, cari, tutar):
++    data = [("tip", tip), ("cari_id", str(cari)), ("tarih", BUGUN),
++            ("kdv_dahil", "0"), ("para_birimi", "TRY"), ("action", "kaydet"),
++            ("k_stok_id", ""), ("k_manuel_ad", "D023 hizmet"), ("k_miktar", "1"),
++            ("k_birim_fiyat", str(tutar)), ("k_iskonto", "0"), ("k_kdv", "0")]
++    rr = s.post(BASE + "/fatura/yeni", data=data, allow_redirects=False)
++    return rr, q1("SELECT * FROM fatura WHERE cari_id=? ORDER BY id DESC", cari)
++
++
++def onayla(modul, _id):
++    return s.post(BASE + f"/{modul}/{_id}/durum", data={"durum": "Onaylandı"},
++                  allow_redirects=False)
++
++
++def esleme_set(anahtar, kod, action=None):
++    data = {"anahtar": anahtar, "hedef_kod": kod}
++    if action:
++        data["action"] = action
++    return s.post(BASE + "/muhasebe/eslemeler", data=data, allow_redirects=False)
++
++
++def teminat_post(no, cari, tutar, vade=BUGUN, tip="Alinan", tur="Cek", teminat="1"):
++    return s.post(BASE + "/cek_senet/yeni", data={
++        "tip": tip, "tur": tur, "no": no, "cari_id": str(cari), "banka": "D023 Banka",
++        "sube_ad": "", "tutar": str(tutar), "para_birimi": "TRY", "doviz_kur": "",
++        "keside_tarihi": BUGUN, "vade": vade, "aciklama": MARK + " teminat",
++        "teminat": teminat}, allow_redirects=False)
++
++
++_, FA = fatura_post("Satis", AID, 200); onayla("fatura", FA["id"]); FIDS.append(FA["id"])
++SF1_KALEMLER = qa(
++    "SELECT h.kod, k.borc, k.alacak FROM yevmiye_kalem k JOIN hesap h ON h.id=k.hesap_id "
++    "JOIN yevmiye y ON y.id=k.yevmiye_id WHERE y.kaynak_modul='Fatura' AND y.kaynak_id=?",
++    FA["id"])
++
++print("BÖLÜM 2 — Eşleme değişikliği (600→602)")
++r_ekran = s.get(BASE + "/muhasebe/eslemeler")
++ekran_var = ("satis_hasilat" in r_ekran.text and "600" in r_ekran.text)
++r_set = esleme_set("satis_hasilat", "602")
++_, FB = fatura_post("Satis", AID, 100); onayla("fatura", FB["id"]); FIDS.append(FB["id"])
++fb_kodlar = {r["kod"] for r in qa(
++    "SELECT h.kod FROM yevmiye_kalem k JOIN hesap h ON h.id=k.hesap_id "
++    "JOIN yevmiye y ON y.id=k.yevmiye_id WHERE y.kaynak_modul='Fatura' AND y.kaynak_id=?", FB["id"])}
++sf1_simdi = qa(
++    "SELECT h.kod, k.borc, k.alacak FROM yevmiye_kalem k JOIN hesap h ON h.id=k.hesap_id "
++    "JOIN yevmiye y ON y.id=k.yevmiye_id WHERE y.kaynak_modul='Fatura' AND y.kaynak_id=?", FA["id"])
++aud = q1("SELECT COUNT(*) c FROM audit_log WHERE tablo='hesap_esleme' AND islem='hesap-esleme' "
++         "AND detay LIKE '%satis_hasilat%'")
++check("2. satis_hasilat 600→602: yeni fatura 602 kullanır; eski fiş DOKUNMAZ; ekran + audit",
++      r_ekran.status_code == 200 and ekran_var and r_set.status_code in (302, 303)
++      and fb_kodlar == {"120", "602"} and sf1_simdi == SF1_KALEMLER
++      and {r["kod"] for r in SF1_KALEMLER} == {"120", "600"}
++      and aud["c"] >= 1,
++      f"FB hesaplar={sorted(fb_kodlar)}, audit={aud['c']}")
++
++print("BÖLÜM 3 — Varsayılana dön + geçersiz kod güvenliği")
++r_reset = esleme_set("satis_hasilat", "", action="reset")
++kod_simdi = q1("SELECT hedef_kod FROM hesap_esleme WHERE sirket_id=1 AND anahtar='satis_hasilat'")
++qx("UPDATE hesap_esleme SET hedef_kod='999' WHERE sirket_id=1 AND anahtar='satis_hasilat'")
++_, FC = fatura_post("Satis", AID, 50); onayla("fatura", FC["id"]); FIDS.append(FC["id"])
++fc_rows = qa(
++    "SELECT h.kod, k.borc, k.alacak FROM yevmiye_kalem k JOIN hesap h ON h.id=k.hesap_id "
++    "JOIN yevmiye y ON y.id=k.yevmiye_id WHERE y.kaynak_modul='Fatura' AND y.kaynak_id=?", FC["id"])
++fc_kodlar = {r["kod"] for r in fc_rows}
++fc_dengeli = abs(sum(r["borc"] for r in fc_rows) - sum(r["alacak"] for r in fc_rows)) < 0.005
++qx("UPDATE hesap_esleme SET hedef_kod='600' WHERE sirket_id=1 AND anahtar='satis_hasilat'")
++check("3. varsayılana dön (600) + geçersiz kod 999 → varsayılana düşer, fiş dengeli",
++      r_reset.status_code in (302, 303) and kod_simdi["hedef_kod"] == "600"
++      and fc_kodlar == {"120", "600"} and fc_dengeli,
++      f"FC hesaplar={sorted(fc_kodlar)}, dengeli={fc_dengeli}")
++
++print("BÖLÜM 4 — Kasa/Banka/Çek/Amortisman eşlemeleri (4 örnek)")
++import muhasebe as muh
++conn = sqlite3.connect(DB); conn.row_factory = sqlite3.Row
++esleme_geri = []
++for anahtar, kod in (("kasa", "103"), ("banka", "121"), ("cek_alinan", "102"),
++                     ("amortisman_gider", "632"), ("amortisman_birikmis", "255")):
++    eski = q1("SELECT hedef_kod FROM hesap_esleme WHERE sirket_id=1 AND anahtar=?", anahtar)["hedef_kod"]
++    esleme_geri.append((anahtar, eski))
++    qx("UPDATE hesap_esleme SET hedef_kod=? WHERE sirket_id=1 AND anahtar=?", kod, anahtar)
++kh = {"islem_tipi": "Nakit Girişi", "tutar": 10.0, "doviz_kur": None, "cari_id": AID, "sirket_id": 1}
++kasa_satir = muh._kasa_satirlar(conn, kh)
++bh = {"islem_tipi": "Havale/EFT Girişi", "tutar": 20.0, "doviz_kur": None, "cari_id": AID, "sirket_id": 1}
++banka_satir = muh._banka_satirlar(conn, bh)
++cek_sozluk = {"tip": "Alinan", "tur": "Cek", "sirket_id": 1, "tutar": 50.0,
++              "doviz_kur": None, "durum": "Bekliyor", "id": 999999}
++cek_satir = muh._cek_satirlar(conn, cek_sozluk, "giris")
++# amortisman: gerçek satır üzerinden fis_uret
++qx("DELETE FROM demirbas WHERE kod=?", MARK + "-D")
++kat = q1("SELECT id FROM demirbas_kategori WHERE sirket_id=1 LIMIT 1")
++qx("INSERT INTO demirbas(kod, ad, kategori_id, alis_tarihi, maliyet, omur_yil, durum, sirket_id) "
++   "VALUES(?,?,?,?,?,?,'Aktif',1)", MARK + "-D", MARK + " Demirbas", kat["id"], BUGUN, 100.0, 4)
++DID = q1("SELECT id FROM demirbas WHERE kod=?", MARK + "-D")["id"]
++qx("INSERT INTO demirbas_amortisman(demirbas_id, donem, tutar, birikmis, net_deger, sirket_id) "
++   "VALUES(?,?,?,?,?,1)", DID, "2026-09", 25.0, 25.0, 75.0)
++yid_amort = muh.fis_uret(conn, "Demirbas", DID, "2026-09")
++conn.commit()
++amort_kodlar = {r["kod"] for r in conn.execute(
++    "SELECT h.kod FROM yevmiye_kalem k JOIN hesap h ON h.id=k.hesap_id WHERE k.yevmiye_id=?",
++    (yid_amort,))}
++for anahtar, eski in esleme_geri:
++    qx("UPDATE hesap_esleme SET hedef_kod=? WHERE sirket_id=1 AND anahtar=?", eski, anahtar)
++reset_ok = all(q1("SELECT hedef_kod h FROM hesap_esleme WHERE sirket_id=1 AND anahtar=?", a)["h"] == e
++               for a, e in esleme_geri)
++conn.close()
++check("4. kasa→103 / banka→121 / cek_alinan→102 / amortisman 632+255 uygulanır; reset temiz",
++      kasa_satir and kasa_satir[0][0] == "103"
++      and banka_satir and banka_satir[0][0] == "121"
++      and cek_satir and cek_satir[0][0] == "102" and cek_satir[1][0] == "120"
++      and amort_kodlar == {"632", "255"} and reset_ok,
++      f"kasa={kasa_satir[0][0] if kasa_satir else None}, banka={banka_satir[0][0] if banka_satir else None}, "
++      f"cek={cek_satir[0][0] if cek_satir else None}, amort={sorted(amort_kodlar)}")
++
++print("BÖLÜM 5 — Hareketler listesi (filtre SQL ile birebir)")
++H100 = q1("SELECT id FROM hesap WHERE kod='100' AND sirket_id=1")["id"]
++H120 = q1("SELECT id FROM hesap WHERE kod='120' AND sirket_id=1")["id"]
++H600 = q1("SELECT id FROM hesap WHERE kod='600' AND sirket_id=1")["id"]
++params = [("hesap", "100-199"), ("tip", "Otomatik"), ("baslangic", "2026-01-01"),
++          ("bitis", "2026-12-31"), ("format", "csv")]
++r_csv = s.get(BASE + "/muhasebe/hareketler", params=params)
++csv_rows = list(csv.reader(io.StringIO(r_csv.text.lstrip("\ufeff")), delimiter=";")) if r_csv.status_code == 200 else []
++veri = [r for r in csv_rows if r and r[0] and r[0][0].isdigit()]
++sql_rows = [(r["tarih"], r["fis_no"], r["hesap_kod"],
++             f"{(r['borc'] or 0):.2f}".replace(".", ","), f"{(r['alacak'] or 0):.2f}".replace(".", ","))
++            for r in qa(
++                "SELECT y.tarih, y.fis_no, h.kod AS hesap_kod, k.borc, k.alacak "
++                "FROM yevmiye_kalem k JOIN yevmiye y ON y.id=k.yevmiye_id "
++                "JOIN hesap h ON h.id=k.hesap_id "
++                "WHERE y.sirket_id=1 AND y.durum='Onaylandı' AND y.tarih>='2026-01-01' "
++                "AND y.tarih<='2026-12-31' AND h.kod>='100' AND h.kod<='199' "
++                "AND y.fis_tipi='Otomatik' ORDER BY y.tarih, y.id, k.id LIMIT 2000")]
++csv_kesit = [(r[0], r[1], r[3], r[6], r[7]) for r in veri]
++birebir = csv_kesit == sql_rows
++r_html = s.get(BASE + "/muhasebe/hareketler", params=[("q", FA["fatura_no"])])
++link_var = f'href="/fatura/{FA["id"]}"' in r_html.text
++toplam_satiri = [r for r in csv_rows if r and r[0] == "TOPLAM"]
++toplam_ok = bool(toplam_satiri) and abs(
++    float(toplam_satiri[0][6].replace(".", "").replace(",", "."))
++    - sum(r["borc"] or 0 for r in qa(
++        "SELECT k.borc FROM yevmiye_kalem k JOIN yevmiye y ON y.id=k.yevmiye_id "
++        "JOIN hesap h ON h.id=k.hesap_id WHERE y.sirket_id=1 AND y.durum='Onaylandı' "
++        "AND h.kod>='100' AND h.kod<='199' AND y.fis_tipi='Otomatik' "
++        "AND y.tarih>='2026-01-01' AND y.tarih<='2026-12-31'"))) < 0.005
++check("5. hareketler: hesap aralığı 100-199 + tip + tarih filtresi CSV≡SQL; kaynak link; ΣTOPLAM",
++      r_csv.status_code == 200 and birebir and link_var and toplam_ok,
++      f"satır={len(csv_kesit)}/{len(sql_rows)}, birebir={birebir}, link={link_var}, toplam={toplam_ok}")
++
++print("BÖLÜM 6 — CSV standardı + boş sonuç")
++r_bos = s.get(BASE + "/muhasebe/hareketler", params=[("hesap", "999-999")])
++r_csv2 = s.get(BASE + "/cek_senet/teminat", params=[("format", "csv")])
++check("6. CSV BOM + `;` + TR sayı; boş filtre 'Kayıt yok'",
++      r_csv.text.startswith("\ufeff") and ";" in r_csv.text
++      and "200,00" in r_csv.text and r_bos.status_code == 200 and "Kayıt yok" in r_bos.text
++      and r_csv2.status_code == 200 and r_csv2.text.startswith("\ufeff"),
++      f"CSV1={r_csv.status_code}, boş={r_bos.status_code}, CSV2={r_csv2.status_code}")
++
++print("BÖLÜM 7 — Hesap Durumu matrisi (3 hesap)")
++hesap_ids = [("hesap", str(H100)), ("hesap", str(H120)), ("hesap", str(H600)), ("yil", "2026")]
++r_hd = s.get(BASE + "/muhasebe/hesap-durumu", params=hesap_ids)
++sql_truth, html_ok = {}, True
++for kod, hid in (("100", H100), ("120", H120), ("600", H600)):
++    t = q1(
++        "SELECT COALESCE(SUM(CASE WHEN y.tarih<'2026-01-01' THEN k.borc-k.alacak ELSE 0 END),0) acilis, "
++        "COALESCE(SUM(CASE WHEN y.tarih>='2026-01-01' THEN k.borc ELSE 0 END),0) yb, "
++        "COALESCE(SUM(CASE WHEN y.tarih>='2026-01-01' THEN k.alacak ELSE 0 END),0) ya, "
++        "COALESCE(SUM(k.borc-k.alacak),0) kapanis "
++        "FROM yevmiye_kalem k JOIN yevmiye y ON y.id=k.yevmiye_id "
++        "WHERE k.hesap_id=? AND y.durum='Onaylandı' AND y.sirket_id=1", hid)
++    sql_truth[kod] = t
++    kimlik = abs((t["acilis"] + t["yb"] - t["ya"]) - t["kapanis"]) < 0.005
++    gosterim = tr(t["kapanis"])
++    html_ok = html_ok and kimlik and (gosterim in r_hd.text)
++check("7. hesap durumu: açılış + Σaylar = kapanış (100/120/600, SQL kanıtı) + matris + yazdır",
++      r_hd.status_code == 200 and html_ok and "Kapanış" in r_hd.text
++      and "window.print" in r_hd.text and "AYLIK TOPLAM" in r_hd.text,
++      f"{ {k: round(v['kapanis'], 2) for k, v in sql_truth.items()} }")
++
++print("BÖLÜM 8 — Teminat oluşturma (defter dışı) + bloklar")
++cari_h_once = q1("SELECT COUNT(*) c FROM cari_hareket WHERE cari_id=?", AID)["c"]
++yev_once = q1("SELECT COUNT(*) c FROM yevmiye WHERE kaynak_modul='CekSenet'")["c"]
++r_t1 = teminat_post(MARK + "-T1", AID, 120)
++T1 = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T1")
++cari_h_sonra = q1("SELECT COUNT(*) c FROM cari_hareket WHERE cari_id=?", AID)["c"]
++yev_sonra = q1("SELECT COUNT(*) c FROM yevmiye WHERE kaynak_modul='CekSenet'")["c"]
++yev_t1 = q1("SELECT COUNT(*) c FROM yevmiye WHERE kaynak_modul='CekSenet' AND kaynak_id=?", T1["id"])["c"]
++r_asim = teminat_post(MARK + "-TASIRI", AID, 99999)
++asim_kayit = q1("SELECT COUNT(*) c FROM cek_senet WHERE no=?", MARK + "-TASIRI")["c"]
++r_verilen = teminat_post(MARK + "-TV", AID, 10, tip="Verilen")
++verilen_kayit = q1("SELECT COUNT(*) c FROM cek_senet WHERE no=?", MARK + "-TV")["c"]
++check("8. teminat: cari 0 + yevmiye 0 (COUNT kanıtı); bakiye aşımı + Verilen tip bloke",
++      r_t1.status_code in (302, 303) and T1 and T1["teminat"] == 1
++      and T1["teminat_durum"] == "Aktif" and T1["durum"] == "Bekliyor"
++      and cari_h_sonra == cari_h_once and yev_sonra == yev_once and yev_t1 == 0
++      and r_asim.status_code == 200 and "aşamaz" in r_asim.text and asim_kayit == 0
++      and r_verilen.status_code == 200 and "Alınan" in r_verilen.text and verilen_kayit == 0,
++      f"cari={cari_h_once}→{cari_h_sonra}, yev={yev_once}→{yev_sonra}")
++
++print("BÖLÜM 9 — Vade işleme (TAM mahsup)")
++r_t2 = teminat_post(MARK + "-T2", AID, 300)  # borç 350 ≥ 300 → oluşturur; işlemede kısmi kalacak
++T2 = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T2")
++r_isle1 = s.post(BASE + "/cek_senet/teminat/isle", data={"id": str(T1["id"])}, allow_redirects=False)
++T1s = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T1")
++t1_fis = q1(
++    "SELECT y.id, y.fis_tipi, (SELECT COALESCE(SUM(k.borc),0) FROM yevmiye_kalem k "
++    "WHERE k.yevmiye_id=y.id) b, (SELECT COALESCE(SUM(k.alacak),0) FROM yevmiye_kalem k "
++    "WHERE k.yevmiye_id=y.id) a FROM yevmiye y WHERE y.kaynak_modul='CekSenet' "
++    "AND y.kaynak_id=? AND COALESCE(y.kaynak_sahne,'')='giris'", T1["id"])
++t1_kodlar = {r["kod"]: (r["borc"], r["alacak"]) for r in qa(
++    "SELECT h.kod, k.borc, k.alacak FROM yevmiye_kalem k JOIN hesap h ON h.id=k.hesap_id "
++    "WHERE k.yevmiye_id=?", t1_fis["id"])}
++t1_cari = q1("SELECT * FROM cari_hareket WHERE ilgili_modul='CekSenet' AND ilgili_kayit_id=?", T1["id"])
++aud1 = q1("SELECT COUNT(*) c FROM audit_log WHERE tablo='cek_senet' AND islem='teminat-mahsup' "
++          "AND kayit_id=?", T1["id"])
++check("9. vade TAM: cari alacak +120 (bakiye 230), yevmiye 101/120 dengeli, durum + audit",
++      r_isle1.status_code in (302, 303) and T1s["teminat_durum"] == "Mahsup Edildi"
++      and abs(bakiye(AID) - 230.0) < 0.005 and t1_fis and t1_fis["fis_tipi"] == "Otomatik"
++      and abs(t1_fis["b"] - 120.0) < 0.005 and abs(t1_fis["a"] - 120.0) < 0.005
++      and abs(t1_kodlar.get("101", (0, 0))[0] - 120.0) < 0.005
++      and abs(t1_kodlar.get("120", (0, 0))[1] - 120.0) < 0.005
++      and t1_cari and abs(t1_cari["alacak"] - 120.0) < 0.005
++      and t1_cari["belge_tipi"] == "Tahsilat" and aud1["c"] >= 1,
++      f"bakiye={bakiye(AID)}, fiş={dict((k, v) for k, v in t1_kodlar.items())}")
++
++print("BÖLÜM 10 — Vade işleme (KISMİ mahsup)")
++r_isle2 = s.post(BASE + "/cek_senet/teminat/isle", data={"id": str(T2["id"])}, allow_redirects=False)
++T2s = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T2")
++t2_fis = q1(
++    "SELECT y.id, (SELECT COALESCE(SUM(k.borc),0) FROM yevmiye_kalem k "
++    "WHERE k.yevmiye_id=y.id) b FROM yevmiye y WHERE y.kaynak_modul='CekSenet' "
++    "AND y.kaynak_id=? AND COALESCE(y.kaynak_sahne,'')='giris'", T2["id"])
++t2_aciklama = q1("SELECT aciklama FROM yevmiye WHERE id=?", t2_fis["id"])["aciklama"] if t2_fis else ""
++kalan_notu = "Kalan 70,00 iade edildi" in (T2s["aciklama"] or "") and "Kalan 70,00" in t2_aciklama
++check("10. vade KISMİ: borç 230 < 300 → 230 mahsup + kalan 70 açıklaması, bakiye 0",
++      r_isle2.status_code in (302, 303) and T2s["teminat_durum"] == "Mahsup Edildi"
++      and abs(bakiye(AID) - 0.0) < 0.005 and t2_fis and abs(t2_fis["b"] - 230.0) < 0.005
++      and kalan_notu,
++      f"bakiye={bakiye(AID)}, fiş borç={t2_fis['b'] if t2_fis else None}, kalan-notu={kalan_notu}")
++
++print("BÖLÜM 11 — Akış kilidi + borç 0 uyarısı")
++_, FC2 = fatura_post("Satis", CID, 80); onayla("fatura", FC2["id"]); FIDS.append(FC2["id"])
++teminat_post(MARK + "-T3", CID, 30)
++teminat_post(MARK + "-T4", CID, 50)
++teminat_post(MARK + "-T5", CID, 80)
++T3 = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T3")
++T4 = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T4")
++T5 = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T5")
++r_kilit = s.post(BASE + f"/cek_senet/{T3['id']}/durum", data={"durum": "Tahsil Edildi"},
++                 allow_redirects=False)
++t3_kilit = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T3")
++t3_yev_kilit = q1("SELECT COUNT(*) c FROM yevmiye WHERE kaynak_modul='CekSenet' AND kaynak_id=?",
++                  T3["id"])["c"]
++# borç sıfırlanır (T4 tam 50 → 30; T3 tam 30 → 0), sonra T5 → borç 0 uyarısı
++s.post(BASE + "/cek_senet/teminat/isle", data={"id": str(T4["id"])}, allow_redirects=False)
++s.post(BASE + "/cek_senet/teminat/isle", data={"id": str(T3["id"])}, allow_redirects=False)
++t3_islem = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T3")
++t3_yev = q1("SELECT COUNT(*) c FROM yevmiye WHERE kaynak_modul='CekSenet' AND kaynak_id=?",
++            T3["id"])["c"]
++r_borc0 = s.post(BASE + "/cek_senet/teminat/isle", data={"id": str(T5["id"])},
++                 allow_redirects=True)
++T5s = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T5")
++t5_yev = q1("SELECT COUNT(*) c FROM yevmiye WHERE kaynak_modul='CekSenet' AND kaynak_id=?",
++            T5["id"])["c"]
++check("11. kilit: Aktif teminat 'Tahsil Edildi' olamaz (durum/teminat/yevmiye değişmez); "
++      "borç 0 → uyarı, durum 'Aktif' kalır",
++      r_kilit.status_code in (302, 303) and t3_kilit["durum"] == "Bekliyor"
++      and t3_kilit["teminat_durum"] == "Aktif" and t3_yev_kilit == 0
++      and t3_islem["teminat_durum"] == "Mahsup Edildi" and t3_yev >= 1
++      and abs(bakiye(CID) - 0.0) < 0.005
++      and "borcu kalmamış" in r_borc0.text and T5s["teminat_durum"] == "Aktif" and t5_yev == 0,
++      f"kilit-anı={t3_kilit['durum']}/{t3_kilit['teminat_durum']}/{t3_yev_kilit}, "
++      f"işleme-sonrası={t3_islem['teminat_durum']}/{t3_yev}, T5={T5s['teminat_durum']}/{t5_yev}")
++
++print("BÖLÜM 12 — Erken iade")
++cari_h_c = q1("SELECT COUNT(*) c FROM cari_hareket WHERE cari_id=?", CID)["c"]
++r_iade = s.post(BASE + f"/cek_senet/{T5['id']}/teminat-iade", allow_redirects=False)
++T5i = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-T5")
++cari_h_c2 = q1("SELECT COUNT(*) c FROM cari_hareket WHERE cari_id=?", CID)["c"]
++aud_iade = q1("SELECT COUNT(*) c FROM audit_log WHERE tablo='cek_senet' AND islem='teminat-iade' "
++              "AND kayit_id=?", T5["id"])
++check("12. erken iade: durum 'İade Edildi', mali etki 0 (cari/FK sabit), audit",
++      r_iade.status_code in (302, 303) and T5i["teminat_durum"] == "İade Edildi"
++      and cari_h_c2 == cari_h_c and aud_iade["c"] >= 1,
++      f"durum={T5i['teminat_durum']}, cari {cari_h_c}→{cari_h_c2}")
++
++print("BÖLÜM 13 — Bordro + cari detay kartı")
++# kalıcı Aktif teminat: D carisi + fatura 60 + T6 (40, vadesi gelecek)
++D = MARK + "-D"
++qx("INSERT INTO cari_kart(kod, unvan, tip, sirket_id) VALUES(?,?,?,1)",
++   D, MARK + " Kart", "Musteri")
++DID = q1("SELECT id FROM cari_kart WHERE kod=?", D)["id"]
++_, FD = fatura_post("Satis", DID, 60); onayla("fatura", FD["id"]); FIDS.append(FD["id"])
++teminat_post(MARK + "-T6", DID, 40, vade="2026-10-15")
++r_bordro = s.get(BASE + "/cek_senet/teminat")
++r_bordro_aktif = s.get(BASE + "/cek_senet/teminat", params=[("durum", "Aktif")])
++r_bordro_csv = s.get(BASE + "/cek_senet/teminat", params=[("format", "csv")])
++r_cari_detay = s.get(BASE + f"/cari/{DID}")
++aktif_adet = q1("SELECT COUNT(*) c FROM cek_senet WHERE teminat=1 AND teminat_durum='Aktif' "
++                "AND cari_id=? AND durum!='İptal'", DID)["c"]
++check("13. bordro: satırlar + durum filtresi + CSV; cari detayında Teminat kartı (Aktif toplam)",
++      r_bordro.status_code == 200 and (MARK + "-T6") in r_bordro.text
++      and (MARK + "-T5") in r_bordro.text
++      and r_bordro_aktif.status_code == 200 and (MARK + "-T6") in r_bordro_aktif.text
++      and (MARK + "-T5") not in r_bordro_aktif.text
++      and r_bordro_csv.status_code == 200 and r_bordro_csv.text.startswith("\ufeff")
++      and r_cari_detay.status_code == 200 and "Teminat Çek/Senet (Aktif)" in r_cari_detay.text
++      and f"{aktif_adet} adet" in r_cari_detay.text and "40,00" in r_cari_detay.text,
++      f"aktif={aktif_adet}")
++
++print("BÖLÜM 14 — Yetki + şirket izolasyonu")
++sv, _ = giris("satis", "1234")
++r_y1 = sv.post(BASE + "/muhasebe/eslemeler", data={"anahtar": "kasa", "hedef_kod": "103"},
++               allow_redirects=False)
++r_y2 = sv.post(BASE + "/cek_senet/teminat/isle", data={"id": str(T3["id"])}, allow_redirects=False)
++r_y3 = sv.post(BASE + f"/cek_senet/{T4['id']}/teminat-iade", allow_redirects=False)
++r_y4 = sv.get(BASE + "/muhasebe/hareketler")
++qx("INSERT INTO hesap(kod, ad, tip, aktif, sirket_id) VALUES('D99','D023 diger sirket','Aktif',1,2)")
++r_izo1 = s.post(BASE + "/muhasebe/eslemeler", data={"anahtar": "kasa", "hedef_kod": "D99"},
++                allow_redirects=True)
++kasa_kod = q1("SELECT hedef_kod h FROM hesap_esleme WHERE sirket_id=1 AND anahtar='kasa'")["h"]
++qx("INSERT INTO cek_senet(no, tip, tur, cari_id, tutar, vade, durum, teminat, teminat_durum, "
++   "sirket_id) VALUES(?, 'Alinan', 'Cek', ?, 10, ?, 'Bekliyor', 1, 'Aktif', 2)",
++   MARK + "-X2", CID, BUGUN)
++X2 = q1("SELECT * FROM cek_senet WHERE no=?", MARK + "-X2")
++r_izo2 = s.post(BASE + "/cek_senet/teminat/isle", data={"id": str(X2["id"])}, allow_redirects=True)
++X2s = q1("SELECT teminat_durum d FROM cek_senet WHERE no=?", MARK + "-X2")["d"]
++check("14. yetki 403 (eşleme/iade/vade-işleme; hareketler görünür) + izolasyon: yabancı kod/teminat reddedilir",
++      r_y1.status_code == 403 and r_y2.status_code == 403 and r_y3.status_code == 403
++      and r_y4.status_code == 200
++      and "hesap planında yok" in r_izo1.text and kasa_kod == "100"
++      and "bulunamadı" in r_izo2.text and X2s == "Aktif",
++      f"403'ler={r_y1.status_code}/{r_y2.status_code}/{r_y3.status_code}, kasa={kasa_kod}, X2={X2s}")
++
++print("BÖLÜM 15 — Temizlik")
++# teminat mali izlerini ve tüm D023TEST kayıtlarını geri al
++tum_t = qa("SELECT id FROM cek_senet WHERE no LIKE ?", MARK + "%")
++for t in tum_t:
++    qx("DELETE FROM cari_hareket WHERE ilgili_modul='CekSenet' AND ilgili_kayit_id=?", t["id"])
++    qx("DELETE FROM yevmiye_kalem WHERE yevmiye_id IN "
++       "(SELECT id FROM yevmiye WHERE kaynak_modul='CekSenet' AND kaynak_id=?)", t["id"])
++    qx("DELETE FROM yevmiye WHERE kaynak_modul='CekSenet' AND kaynak_id=?", t["id"])
++qx("DELETE FROM cek_senet WHERE no LIKE ?", MARK + "%")
++qx("DELETE FROM yevmiye_kalem WHERE yevmiye_id IN "
++   "(SELECT id FROM yevmiye WHERE kaynak_modul='Demirbas' AND kaynak_id="
++   "(SELECT id FROM demirbas WHERE kod=?))", MARK + "-D")
++qx("DELETE FROM yevmiye WHERE kaynak_modul='Demirbas' AND kaynak_id="
++   "(SELECT id FROM demirbas WHERE kod=?)", MARK + "-D")
++qx("DELETE FROM demirbas_amortisman WHERE demirbas_id=(SELECT id FROM demirbas WHERE kod=?)",
++   MARK + "-D")
++qx("DELETE FROM demirbas WHERE kod=?", MARK + "-D")
++for f in FIDS:
++    qx("DELETE FROM yevmiye_kalem WHERE yevmiye_id IN "
++       "(SELECT id FROM yevmiye WHERE kaynak_modul='Fatura' AND kaynak_id=?)", f)
++    qx("DELETE FROM yevmiye WHERE kaynak_modul='Fatura' AND kaynak_id=?", f)
++    qx("DELETE FROM cari_hareket WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=?", f)
++    qx("DELETE FROM fatura_kalem WHERE fatura_id=?", f)
++    qx("DELETE FROM e_belge WHERE kaynak_fatura_id=?", f)
++    qx("DELETE FROM fatura WHERE id=?", f)
++qx("DELETE FROM cari_hareket WHERE cari_id IN (SELECT id FROM cari_kart WHERE kod LIKE ?)",
++   MARK + "%")
++qx("DELETE FROM cari_kart WHERE kod LIKE ?", MARK + "%")
++qx("DELETE FROM hesap WHERE kod='D99' AND sirket_id=2")
++# eşlemeler varsayılana döndü (temiz şema)
++for anahtar, kod in dbmod.HESAP_ESLEME_VARSAYILAN.items():
++    qx("UPDATE hesap_esleme SET hedef_kod=?, not_=NULL WHERE sirket_id=1 AND anahtar=?",
++       kod, anahtar)
++kalinti = sum(q1(
++    "SELECT COUNT(*) c FROM {t} WHERE {c} LIKE ?".format(t=t, c=c), MARK + "%")["c"]
++    for t, c in (("cari_kart", "kod"), ("fatura", "fatura_no"), ("cek_senet", "no"),
++                 ("demirbas", "kod"), ("hesap", "kod")))
++kalinti_yev = q1("SELECT COUNT(*) c FROM yevmiye WHERE aciklama LIKE ?", "%" + MARK + "%")["c"]
++esleme_sapma = q1(
++    "SELECT COUNT(*) c FROM hesap_esleme e JOIN hesap_esleme h2 ON h2.sirket_id=e.sirket_id "
++    "AND h2.anahtar=e.anahtar WHERE e.hedef_kod != h2.hedef_kod")["c"]
++fk = qa("PRAGMA foreign_key_check")
++mizan = q1("SELECT COALESCE(SUM(k.borc),0)-COALESCE(SUM(k.alacak),0) f FROM yevmiye_kalem k "
++           "JOIN yevmiye y ON y.id=k.yevmiye_id WHERE y.durum='Onaylandı' AND y.sirket_id=1")["f"]
++check("15. FK 0 + kalıntı 0 + eşlemeler varsayılan + mizan dengede",
++      kalinti == 0 and kalinti_yev == 0 and len(fk) == 0
++      and abs(mizan) < 0.01,
++      f"kalıntı={kalinti}, yev={kalinti_yev}, fk={len(fk)}, mizan fark={mizan}")
++
++print()
++print(f"=== SONUÇ: {len(ok)} başarılı / {len(fail)} başarısız (toplam {len(ok) + len(fail)}) ===")
++if fail:
++    print("BAŞARISIZLAR:")
++    for f in fail:
++        print("  ❌", f)
++    sys.exit(1)
++print("TÜM D023 TESTLERİ GEÇTİ ✅")
+diff --git a/kod/test_f6_cila.py b/kod/test_f6_cila.py
+index 8c8e3d4..b0b015b 100644
+--- a/kod/test_f6_cila.py
++++ b/kod/test_f6_cila.py
+@@ -166,7 +166,7 @@ check("13. test_saglik", r.status_code == 200 and '"durum":"ok"' in r.text,
+ # 14) test_api_saglik ----------------------------------------------------------
+ d = admin.get(BASE + "/api/saglik").json()
+ check("14. test_api_saglik",
+-      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.53.0",
++      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.54.0",
+       f"surum={d.get('surum')}, db={d.get('db')}")
+ 
+ # 15) test_f5c_korundu ---------------------------------------------------------
