@@ -25,6 +25,7 @@
 | D019  | Dövizli Gösterim, Ekstre Raporlama & e-Fatura Aktarım Cilası (H1-H9) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.50.0 MÜHÜR). 12/12 test, 33 dosya / 680 kontrol 0 hata. |
 | D020  | İade Ailesi: 4 Yeni Fiş Tipi + Kaynak Belge Dönüşümü (F1) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.51.0 MÜHÜR). 13/13 test, 34 dosya / 693 kontrol 0 hata. |
 | D021  | Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı (F2, F3, F4) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.52.0 MÜHÜR). 16/16 test, 35 dosya / 709 kontrol 0 hata. |
-| D022  | Fiş Tipi Motoru + Gerçek Mahsup Fişi (M1, T1) | KODLANDI | Coder tamamladı (v1.53.0): `fis_tipi` + tek kaynak `fiş_tipi_bul` + idempotent etiketleme; liste tip filtresi/rozetleri; ters fiş (Muhtelif/Mahsup/Tahsilat/Tediye, tersin-tersi bloke) + kopyala; `MHS-` serisi gerçek mahsup (320/120 denge, iki ekstrede çapraz link, limit+aynı cari bloke). Kapanış fişi ters-bakiye dengesizlik düzeltmesi + mizan kanıtı. 14/14 yeni test, 36 dosya / 723 kontrol 0 hata. ZIP + kanıtlar hazır, KONTROLDE'ye alınmayı bekliyor |
+| D022  | Fiş Tipi Motoru + Gerçek Mahsup Fişi (M1, T1) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.53.0 MÜHÜR). 14/14 test, 36 dosya / 723 kontrol 0 hata. |
+| D023  | Muhasebe Çekirdeği: Hesap Eşlemeleri + Fiş Hareketleri + Hesap Durumu + Teminat Çek/Senet (M2, M3, M4, T2) | KODLANIYOR | Direktif verildi (v1.54.0). Dinamik hesap eşleme motoru (`hesap_esleme` tablosu + ekranı), fiş satır hareketleri ekranı (/muhasebe/hareketler + CSV/Yazdır), 12 aylık Hesap Durumu matrisi (/muhasebe/hesap-durumu), defter dışı Teminat çek/senet oluşturma, vade işleme ve bordro. Coder'a iletildi |
 
 Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
