@@ -1,0 +1,2399 @@
+=== D021 DIFF (HEAD'e karşı) — 2026-09-17T16:26:56Z ===
+
+diff --git a/DURUM.md b/DURUM.md
+index a6978a8..747a494 100644
+--- a/DURUM.md
++++ b/DURUM.md
+@@ -24,6 +24,6 @@
+ | D018  | Akıllı PDF / e-Fatura Okuyucu & Otomatik Cari/Stok/Fatura Entegrasyonu | ONAYLANDI | pypdf entegrasyonu, herzEFATURA tam uyumlu, otomatik cari/stok/fatura doldurma. 11/11 test, 32 dosya / 668 kontrol 0 hata (v1.49.0 MÜHÜR). |
+ | D019  | Dövizli Gösterim, Ekstre Raporlama & e-Fatura Aktarım Cilası (H1-H9) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.50.0 MÜHÜR). 12/12 test, 33 dosya / 680 kontrol 0 hata. |
+ | D020  | İade Ailesi: 4 Yeni Fiş Tipi + Kaynak Belge Dönüşümü (F1) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.51.0 MÜHÜR). 13/13 test, 34 dosya / 693 kontrol 0 hata. |
+-| D021  | Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı (F2, F3, F4) | KODLANIYOR | Direktif verildi (v1.52.0). Konsinye İrsaliyesi/Faturası ve İadeleri (stoksuz irsaliye, faturalamada stok), Proforma fiş tipi, Siparişten irsaliye/fatura butonları, Teklif kapanış durumu, Fatura/İrsaliyede Kredi Kartı ödemesi. Coder'a iletildi |
++| D021  | Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı (F2, F3, F4) | KODLANDI | Coder tamamladı (v1.52.0): IKO/FKO/IKOI/FKOI + sayaçsız bakiye + `/cari/konsinye`; PF- proforma (onayda 3×COUNT 0) + Faturaya Dönüştür; sipariş İrsaliye butonu + Fatura durumu rozeti + teklif kapanışı (onayda kilit, iptalde dönüş); Kredi Kartı tek-tık tahsilat (terminal opsiyonel). 16/16 yeni test, 35 dosya / 709 kontrol 0 hata. ZIP + kanıtlar hazır, KONTROLDE'ye alınmayı bekliyor |
+ 
+ Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
+diff --git a/kod/CHANGELOG.md b/kod/CHANGELOG.md
+index 9556a4f..4294a36 100644
+--- a/kod/CHANGELOG.md
++++ b/kod/CHANGELOG.md
+@@ -8,6 +8,60 @@ Biçim: [Keep a Changelog](https://keepachangelog.com) · Sürümleme: **v1.MINO
+ 
+ ---
+ 
++## v1.52.0 — 2026-09-17
++
++### Eklenen — D021: Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı
++KÖPRÜ direktifi (`D021-konsinye-proforma-donusum.md`, F2/F3/F4 + istemci özel
++talebi Bölüm 4).
++
++**Konsinye ailesi (F2):** 4 yeni tip — `Konsinye`/`KonsinyeIade` irsaliye
++(`IKO`/`IKOI`) ve fatura (`FKO`/`FKOI`); yıl sayaçlı UNIQUE seriler,
++listelerde mavi rozet + tip filtresi. IKO/IKOI onayında stok/cari/yevmiye
++SIFIR (mal defterde ana depoda kalır); FKO onayında stok − (belge deposu) +
++cari borç (müşteri, satış faturası aynısı) + KDV yevmiye aynası; FKOI D020
++SatisIade yönleriyle (cari alacak +, stok +) ama bakiyeye etkisi 0.
++
++**Konsinye bakiyesi:** sayaçsız agregat `IKO − FKO − IKOI` (cari × stok ×
++varyant, yalnız Onaylı). FKO/IKOI girdisi ≤ anlık bakiye — formda satır
++rozeti + sunucuda flash bloke + onay-anı bekçisi. FKO red/iptalinde ters
++kayıtlar + bakiye otomatik geri döner (sayaç yok). `/cari/konsinye` stok
++takip ekranı (gönderilen/faturalanan/iade/bakiye + cari filtresi + Yazdır +
++D019 CSV standardı) + cari detayında "Konsinye Bakiyesi" kartı. IKO
++detayında "💰 Fatura Oluştur" → FKO dönüşümü; FKO'dan D020 iade akışı
++(`KonsinyeIade`). Yazdırmada `KONSİNYE FATURASI/İRSALİYESİ` etiketleri +
++çift döviz kolonu.
++
++**Proforma (F3):** `PF-YYYY-NNN` serisi (`PF-` öneki, fatura aralığına
++girmez); listede "🧾 Yeni Proforma" + `PF` rozeti; form/detay/yazdırmada
++PROFORMA şeridi ("fatura değildir", "Proforma belge e-fatura sayılmaz").
++Onayda cari/stok/yevmiye SIFIR (3 COUNT kanıtlı), e-belge üretilmez.
++"🔄 Faturaya Dönüştür" → kalem kopyalı normal fatura taslağı
++(`kaynak_proforma_id` bağlı). Proforma iade kaynağı olamaz (UI + DB).
++
++**Satış dönüşüm (F4):** Sipariş detayında "🚚 İrsaliye Oluştur" (yalnız
++Onaylandı/Kısmi + kalan>0) + İrsaliyeler tablosunda Fatura durumu rozeti
++(Faturalandı/Kısmi/Faturasız) ve Fatura Oluştur linkleri. Kısmi teslimatta
++ikinci irsaliye serbest. Teklif kapanışı: kaynak sipariş ONAYLANINCA teklif
++otomatik "Siparişe Dönüştü" (kilit: düzenleme/silme engelli); sipariş
++iptalinde başka aktif sipariş yoksa teklif "Onaylandı"ya döner. Kısmi kısmi
++birden fazla sipariş serbest.
++
++**Kredi Kartı (Bölüm 4, istemci talebi):** Ödeme türü net "Kredi Kartı"
++(eski "Kredi Kartı (POS)"). Fatura Ödeme kartında tek-tık "💳 Kredi Kartı
++ile Tahsil Et/Öde" → kalan tutar + Kart satırı önceden dolar, işlem
++faturaya bağlanır (kalan düşer, red/iptal kilidi çalışır). POS terminali
++opsiyonel: bağlıysa komisyonlu NET, değilse komisyonsuz BRÜT bankaya.
++Cari hareket açıklamasında ve makbuzda net "Kredi Kartı".
++
++**Şema:** `fatura.tip` / `irsaliye.tip` CHECK'e konsinye tipleri,
++`fatura.proforma` + `fatura.kaynak_proforma_id` kolonları (backfill 0),
++`teklif.durum`'a "Siparişe Dönüştü" (otomatik migrasyon, veri korunur; eski
++DB kanıtı `kanitlar/v1.52.0/`).
++
++### Değişen
++- Regresyon: 35 dosya / 709 kontrol, 0 hata.
++- Eski testlerdeki sabit sürüm beklentileri 1.52.0'a güncellendi (d010/d015/f6).
++
+ ## v1.51.0 — 2026-09-16
+ 
+ ### Eklenen — D020: İade Ailesi (4 Fiş Tipi + Kaynak Dönüşümü)
+diff --git a/kod/api.py b/kod/api.py
+index d9f32ab..9ed9f1a 100644
+--- a/kod/api.py
++++ b/kod/api.py
+@@ -94,7 +94,7 @@ def _cari_ara(sid, q, tip="", limit=20):
+         params += [like, like]
+     if tip == "Alis":
+         where += " AND tip IN ('Tedarikci','HerIkisi')"
+-    elif tip == "Satis":
++    elif tip in ("Satis", "Konsinye", "KonsinyeIade"):  # D021: konsinye müşteri tarafıdır
+         where += " AND tip IN ('Musteri','HerIkisi')"
+     if q:
+         rows = conn.execute(
+diff --git a/kod/cari.py b/kod/cari.py
+index a3d283b..00eb671 100644
+--- a/kod/cari.py
++++ b/kod/cari.py
+@@ -369,10 +369,14 @@ def cari_detay(req, cid):
+         (cari["id"],),
+     ).fetchall()
+     silinebilir = db.referans_var(conn, "cari_kart", cari["id"]) is None
++    # D021-§6 — konsinye bakiye kartı (açık satır + toplam bakiye).
++    _kozet = _konsinye_ozet(conn, cari["id"], db.sirket_id(req))
++    konsinye = {"kalem": len(_kozet),
++                "bakiye": round(sum((r["bakiye"] or 0) for r in _kozet), 2)}
+     conn.close()
+     return render_template("cari/detay.html", cari=cari, sekme=sekme, ozet=ozet,
+                            hareketler=hareketler, notlar=notlar, loglar=loglar,
+-                           silinebilir=silinebilir)
++                           silinebilir=silinebilir, konsinye=konsinye)
+ 
+ 
+ @route(r"/cari/(?P<cid>\d+)/sil", methods=("POST",), roles=WRITE_ROLES)
+@@ -535,6 +539,152 @@ def _ekstre_csv(cari, rows, bakiye):
+     ])
+ 
+ 
++def _konsinye_bakiye(conn, cari_id, stok_id, varyant_id=0, sid=None):
++    """D021-§3 — konsinye bakiyesi (sayaçsız agregat, YALNIZ Onaylı).
++
++    bakiye = Σ IKO − Σ FKO − Σ IKOI (cari × stok × varyant).
++    FKOI bakiyeye girmez (mal ana depoya döner). Red/İptal hariç → redde
++    otomatik geri yükselir (D020-§19 deseni).
++    """
++    if not cari_id or not stok_id:
++        return 0.0
++    varyant_id = varyant_id or 0
++    sx, sa = (" AND i.sirket_id=?", [sid]) if sid is not None else ("", [])
++    fx, fa = (" AND f.sirket_id=?", [sid]) if sid is not None else ("", [])
++
++    def _top(kalem, baslik, tip):
++        hk = "i" if baslik == "irsaliye" else "f"
++        sx2, sa2 = (sx, sa) if hk == "i" else (fx, fa)
++        return conn.execute(
++            f"SELECT COALESCE(SUM(k.miktar),0) s FROM {kalem} k "
++            f"JOIN {baslik} {hk} ON {hk}.id=k.{baslik}_id "
++            f"WHERE {hk}.tip=? AND {hk}.durum='Onaylandı' AND {hk}.cari_id=? "
++            f"AND k.stok_id=? AND COALESCE(k.varyant_id,0)=?{sx2}",
++            (tip, cari_id, stok_id, varyant_id) + tuple(sa2)).fetchone()["s"] or 0.0
++    gon = _top("irsaliye_kalem", "irsaliye", "Konsinye")
++    fat = _top("fatura_kalem", "fatura", "Konsinye")
++    iad = _top("irsaliye_kalem", "irsaliye", "KonsinyeIade")
++    return round(gon - fat - iad, 4)
++
++
++def _konsinye_ozet(conn, cari_id=None, sid=None, q="", tumu=False):
++    """D021-§6 — konsinye stoğu ekranı satırları (cari × stok × varyant).
++
++    q: stok kod/ad araması; tumu=False ise yalnız bakiye>0 satırlar.
++    """
++    sx = "AND i.sirket_id=? " if sid is not None else ""
++    fx = "AND f.sirket_id=? " if sid is not None else ""
++    sa = [sid] if sid is not None else []
++    where, params = "", []
++    if cari_id:
++        where = "WHERE x.cari_id=? "
++        params = [cari_id]
++    if q:
++        where += ("AND " if where else "WHERE ") + "(st.kod LIKE ? OR st.ad LIKE ?) "
++        _like = f"%{q}%"
++        params += [_like, _like]
++    return conn.execute(
++        "SELECT x.cari_id, c.unvan AS cari_unvan, c.kod AS cari_kod, x.stok_id, "
++        "st.kod AS stok_kod, st.ad AS stok_ad, st.birim AS birim, x.varyant_id, "
++        "COALESCE(v.ad,'') AS varyant_ad, SUM(x.gon) AS gon, SUM(x.fat) AS fat, "
++        "SUM(x.iad) AS iad, SUM(x.gon - x.fat - x.iad) AS bakiye "
++        "FROM (SELECT i.cari_id AS cari_id, k.stok_id AS stok_id, "
++        "COALESCE(k.varyant_id,0) AS varyant_id, k.miktar AS gon, 0 AS fat, 0 AS iad "
++        "FROM irsaliye_kalem k JOIN irsaliye i ON i.id=k.irsaliye_id "
++        "WHERE i.tip='Konsinye' AND i.durum='Onaylandı' AND k.stok_id IS NOT NULL " + sx +
++        "UNION ALL "
++        "SELECT f.cari_id, k.stok_id, COALESCE(k.varyant_id,0), 0, k.miktar, 0 "
++        "FROM fatura_kalem k JOIN fatura f ON f.id=k.fatura_id "
++        "WHERE f.tip='Konsinye' AND f.durum='Onaylandı' AND k.stok_id IS NOT NULL " + fx +
++        "UNION ALL "
++        "SELECT i.cari_id, k.stok_id, COALESCE(k.varyant_id,0), 0, 0, k.miktar "
++        "FROM irsaliye_kalem k JOIN irsaliye i ON i.id=k.irsaliye_id "
++        "WHERE i.tip='KonsinyeIade' AND i.durum='Onaylandı' AND k.stok_id IS NOT NULL " + sx +
++        ") x "
++        "JOIN cari_kart c ON c.id=x.cari_id JOIN stok_kart st ON st.id=x.stok_id "
++        "LEFT JOIN stok_varyant v ON v.id=x.varyant_id "
++        + where + "GROUP BY x.cari_id, x.stok_id, x.varyant_id " +
++        ("HAVING SUM(x.gon) > 0 OR SUM(x.fat) > 0 OR SUM(x.iad) > 0 "
++         if tumu else "HAVING SUM(x.gon - x.fat - x.iad) > 0.0005 ") +
++        "ORDER BY c.unvan, st.ad", sa + sa + sa + params).fetchall()
++
++
++def _konsinye_csv(rows):
++    """D021-§6 — konsinye CSV (D019 standardı: BOM + ';' + TR sayı)."""
++    buf = io.StringIO()
++    w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
++    w.writerow(["Cari", "Cari Kod", "Stok", "Stok Kod", "Varyant", "Birim",
++                "Gönderilen (IKO)", "Faturalanan (FKO)", "İade (IKOI)", "Bakiye"])
++
++    def _n(v):
++        return f"{(v or 0.0):.2f}".replace(".", ",")
++    for r in rows:
++        w.writerow([r.get("cari_unvan") or "", r.get("cari_kod") or "",
++                    r.get("stok_ad") or "", r.get("stok_kod") or "",
++                    r.get("varyant_ad") or "", r.get("birim") or "",
++                    _n(r.get("gon")), _n(r.get("fat")), _n(r.get("iad")), _n(r.get("bakiye"))])
++    return Response("﻿" + buf.getvalue(), "200 OK", [
++        ("Content-Type", "text/csv; charset=utf-8"),
++        ("Content-Disposition",
++         f"attachment; filename=\"konsinye-{datetime.date.today().isoformat()}.csv\""),
++    ])
++
++
++@route(r"/cari/konsinye", roles=())
++def cari_konsinye(req):
++    """D021-§6 — konsinye stoğu takip ekranı (cari filtresi + CSV + yazdır).
++
++    ?cari_id=…&q=…&tumu=1&format=csv — tumu=1 sıfır bakiyeleri de gösterir.
++    """
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    try:
++        cid = int(req.q("cari_id")) if req.q("cari_id") else None
++    except ValueError:
++        cid = None
++    q = req.q("q").strip()
++    tumu = req.q("tumu") == "1"
++    rows = [dict(r) for r in _konsinye_ozet(conn, cid, sid, q, tumu)]
++    satirlar = [dict(r, gonderilen=r["gon"], satilan=r["fat"], iade=r["iad"]) for r in rows]
++    musteriler = conn.execute(
++        "SELECT id, unvan, kod FROM cari_kart WHERE sirket_id=? AND aktif=1 "
++        "AND tip IN ('Musteri','HerIkisi') ORDER BY unvan", (sid,)).fetchall()
++    conn.close()
++    if req.q("format") == "csv":
++        return _konsinye_csv(rows)
++    toplamlar = {"musteri": len({r["cari_id"] for r in rows}), "kalem": len(rows),
++                 "miktar": round(sum(r["bakiye"] or 0 for r in rows), 2)}
++    return render_template("cari/konsinye.html", satirlar=satirlar, musteriler=musteriler,
++                           toplamlar=toplamlar,
++                           filtro={"cari_id": cid or "", "q": q, "tumu": tumu})
++
++
++@route(r"/cari/konsinye/yazdir", roles=())
++def cari_konsinye_yazdir(req):
++    """D021-§6 — konsinye stoğu yazdırma çıktısı."""
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    try:
++        cid = int(req.q("cari_id")) if req.q("cari_id") else None
++    except ValueError:
++        cid = None
++    q = req.q("q").strip()
++    tumu = req.q("tumu") == "1"
++    rows = [dict(r) for r in _konsinye_ozet(conn, cid, sid, q, tumu)]
++    satirlar = [dict(r, gonderilen=r["gon"], satilan=r["fat"], iade=r["iad"]) for r in rows]
++    if cid:
++        _c = conn.execute("SELECT unvan, kod FROM cari_kart WHERE id=?", (cid,)).fetchone()
++        baslik = f"{_c['unvan']} ({_c['kod']})" if _c else "Tüm müşteriler"
++    else:
++        baslik = "Tüm müşteriler"
++    conn.close()
++    toplamlar = {"musteri": len({r["cari_id"] for r in rows}), "kalem": len(rows),
++                 "miktar": round(sum(r["bakiye"] or 0 for r in rows), 2)}
++    return render_template("cari/konsinye_yazdir.html", satirlar=satirlar, baslik=baslik,
++                           toplamlar=toplamlar, filtro={"cari_id": cid or "", "q": q},
++                           bugun=datetime.date.today().isoformat())
++
++
+ @route(r"/cari/(?P<cid>\d+)/ekstre/yazdir", roles=())
+ def cari_ekstre_yazdir(req, cid):
+     """D019-H6 — ekstre yazdırma çıktısı (Wolvox tema, filtreli)."""
+diff --git a/kod/cari_odeme.py b/kod/cari_odeme.py
+index d17e409..403651a 100644
+--- a/kod/cari_odeme.py
++++ b/kod/cari_odeme.py
+@@ -30,7 +30,8 @@ TAHSILAT_ROLLERI = ("Admin", "Muhasebe", "Satis")
+ ODEME_ROLLERI = ("Admin", "Muhasebe")
+ 
+ ODEME_TIPLERI = ["Nakit", "Havale", "Kart", "Cek", "Senet"]
+-TIP_LABEL = {"Nakit": "Nakit", "Havale": "Havale/EFT", "Kart": "Kredi Kartı (POS)",
++# D021-B4 (istemci talebi): ödeme türü net "Kredi Kartı" (eski: "Kredi Kartı (POS)").
++TIP_LABEL = {"Nakit": "Nakit", "Havale": "Havale/EFT", "Kart": "Kredi Kartı",
+              "Cek": "Çek", "Senet": "Senet"}
+ 
+ 
+@@ -82,16 +83,24 @@ def _odemeler_from_form(req):
+ 
+ def tahsilat_odeme_olustur(conn, req, cari_kart, yon, odemeler, kasa_id=None,
+                            banka_hesap_id=None, terminal_id=None, tarih=None,
+-                           para_birimi="TRY", doviz_kur=None, aciklama=""):
++                           para_birimi="TRY", doviz_kur=None, aciklama="",
++                           bagli_modul=None, bagli_kayit=None):
+     """D013 çekirdeği: tahsilat/ödeme satırlarını tek işlemde yazar.
+ 
+     `conn` açık gelir; COMMIT çağıranın işidir (POS `pos_satis_olustur` deseni).
+     Başarıda (sonuc, None); hatada (None, mesaj). "YASAK:" öneki → 403'lük ihlal.
++    D021-B4: `bagli_modul/bagli_kayit` (örn. Fatura/fid) verilirse kasa/banka
++    satırları o belgeye bağlanır → fatura kalanı düşer, red/iptal kilidi çalışır.
+     """
+     sid = db.sirket_id(req)
+     if yon not in ("tahsilat", "odeme"):
+         return None, "Geçersiz işlem yönü."
+     giris = (yon == "tahsilat")
++    if bagli_modul == "Fatura" and bagli_kayit:
++        _bf = conn.execute("SELECT id, cari_id FROM fatura WHERE id=? AND durum='Onaylandı' "
++                           "AND sirket_id=?", (bagli_kayit, sid)).fetchone()
++        if not _bf or _bf["cari_id"] != cari_kart["id"]:
++            return None, "Bağlı fatura bulunamadı, onaylı değil veya bu cariye ait değil."
+     odemeler = [o for o in (odemeler or []) if o["tip"] in ODEME_TIPLERI and o["tutar"] > 0]
+     if not odemeler:
+         return None, "En az bir ödeme satırı girin (tutar 0'dan büyük olmalı)."
+@@ -125,10 +134,13 @@ def tahsilat_odeme_olustur(conn, req, cari_kart, yon, odemeler, kasa_id=None,
+                 return None, "YASAK:Bu banka hesabı için yetkiniz yok."
+     term = None
+     if lazim_term:
+-        term = conn.execute("SELECT * FROM pos_terminal WHERE id=? AND sirket_id=? AND aktif=1",
+-                            (terminal_id, sid)).fetchone() if terminal_id else None
+-        if not term:
+-            return None, "Kart satırı için aktif bir POS terminali seçin."
++        # D021-§19: terminal bağlıysa komisyonlu NET; bağlı değilse komisyonsuz BRÜT bankaya.
++        if terminal_id:
++            term = conn.execute(
++                "SELECT * FROM pos_terminal WHERE id=? AND sirket_id=? AND aktif=1",
++                (terminal_id, sid)).fetchone()
++            if not term:
++                return None, "Seçilen POS terminali geçersiz (başka şirket/pasif)."
+     kom_oran = float(term["komisyon_orani"] or 0) if term else 0.0
+ 
+     # D012 kur sabitleme deseni (kasa.py/cek_senet.py ile birebir)
+@@ -155,6 +167,9 @@ def tahsilat_odeme_olustur(conn, req, cari_kart, yon, odemeler, kasa_id=None,
+ 
+     toplam = toplam_tl = komisyon_toplam = 0.0
+     auditler = []  # audit kendi bağlantısını açar → commit SONRASI yazılır (kasa.py deseni)
++    # D021-B4: fatura-bağlı tahsilat/ödeme → kasa/banka satırı faturaya bağlanır (kalan düşer).
++    _satir_modul = bagli_modul if bagli_modul else modul
++    _satir_kayit = bagli_kayit if bagli_modul else None
+     for idx, o in enumerate(odemer for odemer in odemeler):
+         tutar_tl = round(o["tutar"] * oran, 2)
+         toplam = round(toplam + o["tutar"], 2)
+@@ -164,7 +179,7 @@ def tahsilat_odeme_olustur(conn, req, cari_kart, yon, odemeler, kasa_id=None,
+         if o["tip"] == "Nakit":
+             hid = kasa.kasa_hareket_olustur(
+                 conn, kasa_id, bugun, "Nakit Girişi" if giris else "Nakit Çıkışı",
+-                o["tutar"], satir_acik, no, cari_kart["id"], modul, None,
++                o["tutar"], satir_acik, no, cari_kart["id"], _satir_modul, _satir_kayit,
+                 req.user["id"], pb, kur, sid)
+             muhasebe.fis_uret(conn, "Kasa", hid)
+             cari.hareket_ekle(conn, cari_kart["id"], bugun, belge_tipi, no, satir_acik,
+@@ -180,10 +195,11 @@ def tahsilat_odeme_olustur(conn, req, cari_kart, yon, odemeler, kasa_id=None,
+                 kom = round(o["tutar"] * kom_oran / 100, 2)
+                 komisyon_toplam = round(komisyon_toplam + kom, 2)
+                 yazilacak = round(o["tutar"] - kom, 2)
+-                satir_acik += f" (terminal: {term['ad']}, komisyon %{kom_oran:g} → {kom:,.2f} {pb})"
++                if term:
++                    satir_acik += f" (terminal: {term['ad']}, komisyon %{kom_oran:g} → {kom:,.2f} {pb})"
+             hid = banka.banka_hareket_olustur(
+                 conn, banka_hesap_id, bugun, "Havale/EFT Girişi" if giris else "Havale/EFT Çıkışı",
+-                yazilacak, satir_acik, no, cari_kart["id"], modul, None,
++                yazilacak, satir_acik, no, cari_kart["id"], _satir_modul, _satir_kayit,
+                 req.user["id"], pb, kur, sid)
+             muhasebe.fis_uret(conn, "Banka", hid)
+             cari.hareket_ekle(conn, cari_kart["id"], bugun, belge_tipi, no, satir_acik,
+@@ -238,6 +254,13 @@ def _sunum(req, cid, yon):
+         flash(req, "Cari bulunamadı.", "danger")
+         return redirect("/cari")
+ 
++    # D021-B4 — fatura detayından tek-tık tahsilat/ödeme: ?fatura=<fid> prefill ve bağ.
++    bagli_fatura = conn.execute(
++        "SELECT * FROM fatura WHERE id=? AND cari_id=? AND sirket_id=?",
++        (_i(req.q("fatura")), int(cid), sid)).fetchone() \
++        if _i(req.q("fatura")) else None
++    bagli_fatura = dict(bagli_fatura) if bagli_fatura else None
++
+     if req.method == "POST":
+         odemeler = _odemeler_from_form(req)
+         sonuc, hata = tahsilat_odeme_olustur(
+@@ -248,7 +271,9 @@ def _sunum(req, cid, yon):
+             tarih=(req.form.get("tarih") or "").strip() or None,
+             para_birimi=req.form.get("para_birimi"),
+             doviz_kur=_f(req.form.get("doviz_kur"), None),
+-            aciklama=req.form.get("aciklama") or "")
++            aciklama=req.form.get("aciklama") or "",
++            bagli_modul="Fatura" if bagli_fatura else None,
++            bagli_kayit=bagli_fatura["id"] if bagli_fatura else None)
+         if hata:
+             conn.close()
+             if hata.startswith("YASAK:"):
+@@ -266,8 +291,25 @@ def _sunum(req, cid, yon):
+         if sonuc["avans"] > 0:
+             flash(req, f"Bakiyeyi {sonuc['avans']:,.2f} ₺ aşıyorsunuz — "
+                        "avans olarak işlenecek", "warn")
++        if bagli_fatura:
++            return redirect(f"/fatura/{bagli_fatura['id']}")
+         return redirect(f"/cari/{cid}/ekstre")
+ 
++    bagli_tutar = None
++    if bagli_fatura:
++        # D021-B4: faturanın güncel kalanı öneri tutar olarak doldurulur.
++        # Yön islem_tipi'ndedir ('Nakit Girişi'/'Havale/EFT Girişi' vs '… Çıkışı' — K15 deseni).
++        _od = conn.execute(
++            "SELECT COALESCE(SUM(CASE WHEN h.islem_tipi LIKE '%Girişi' THEN h.tutar ELSE 0 END),0) AS giris, "
++            "COALESCE(SUM(CASE WHEN h.islem_tipi LIKE '%Çıkışı' THEN h.tutar ELSE 0 END),0) AS cikis FROM ("
++            "SELECT islem_tipi, tutar FROM kasa_hareket WHERE ilgili_modul='Fatura' AND ilgili_kayit_id=? "
++            "UNION ALL SELECT islem_tipi, tutar FROM banka_hareket WHERE ilgili_modul='Fatura' "
++            "AND ilgili_kayit_id=?) h", (bagli_fatura["id"], bagli_fatura["id"])).fetchone()
++        if bagli_fatura["tip"] in ("Satis", "AlisIade", "Konsinye"):
++            _oden = round((_od["giris"] or 0) - (_od["cikis"] or 0), 2)
++        else:
++            _oden = round((_od["cikis"] or 0) - (_od["giris"] or 0), 2)
++        bagli_tutar = round((bagli_fatura["genel_toplam"] or 0) - _oden, 2)
+     bakiye = _bakiye(conn, cid)
+     kasalar = kasa._kasalar(conn, izole_sube(req), sid)
+     bankalar = banka._hesaplar(conn, izole_sube(req), sid)
+@@ -278,6 +320,7 @@ def _sunum(req, cid, yon):
+                            terminaller=terminaller, odeme_tipleri=ODEME_TIPLERI,
+                            tip_label=TIP_LABEL, para_birimleri=db.para_birimleri(sid=sid),
+                            cek_tip="Alınan" if giris else "Verilen",
++                           bagli_fatura=bagli_fatura, bagli_tutar=bagli_tutar,
+                            bugun=datetime.date.today().isoformat())
+ 
+ 
+@@ -318,7 +361,9 @@ def cari_makbuz(req, cid, belge):
+             "WHERE h.belge_no=? AND h.cari_id=? AND h.sirket_id=? ORDER BY h.id",
+             (belge, int(cid), sid)).fetchall():
+         acik = (h["aciklama"] or "").lower()
+-        satirlar.append({"sekil": "Kart" if "komisyon" in acik else "Havale/EFT",
++        # D021-B4: terminalsiz KK'de komisyon notu yok; "Kredi Kartı" etiketi belirleyicidir.
++        _kart_mi = ("kredi kart" in acik) or ("komisyon" in acik)
++        satirlar.append({"sekil": "Kart" if _kart_mi else "Havale/EFT",
+                          "detay": h["hesap_ad"], "tutar": h["tutar"],
+                          "pb": h["para_birimi"] or "TRY", "kur": h["doviz_kur"] or 1.0,
+                          "tarih": h["tarih"], "uid": h["created_by"]})
+diff --git a/kod/config.py b/kod/config.py
+index f4de80c..9c11c93 100644
+--- a/kod/config.py
++++ b/kod/config.py
+@@ -16,8 +16,8 @@ FIRMA_ADI = "Brn Teknoloji"
+ FIRMA_ALT = "İşletme Yönetim Sistemi"
+ 
+ # Uygulama sürümü — her geliştirme partisinde artırılır; CHANGELOG.md ile birlikte izlenir.
+-SURUM = "1.51.0"
+-SURUM_TARIHI = "2026-09-16"
++SURUM = "1.52.0"
++SURUM_TARIHI = "2026-09-17"
+ 
+ # K18 — Döviz Takip: desteklenen para birimleri (TRY temel; kurlar doviz_kur tablosunda).
+ PARA_BIRIMLERI = ["TRY", "USD", "EUR", "GBP"]
+diff --git a/kod/core.py b/kod/core.py
+index ea180d0..056b029 100644
+--- a/kod/core.py
++++ b/kod/core.py
+@@ -541,11 +541,12 @@ def izole_sirket(req):
+     return None
+ 
+ 
+-def yazdir_belge(r, kalemler, no_key, tip_label, kaynak_no=""):
++def yazdir_belge(r, kalemler, no_key, tip_label, kaynak_no="", proforma=False):
+     """F6 (v1.38.0) — Fatura/İrsaliye/Sipariş detayını ortak yazdırma şablonu için normalize eder.
+ 
+     `r` ilgili modülün _detay yardımcısının başlık dict'i, `kalemler` satır listesi.
+     D020-§18: iade tiplerinde başlık etiketi + kaynak satırı ("İadesi: ...").
++    D021-F3: proforma faturada "PROFORMA FATURA" başlığı + bilgilendirme şeridi.
+     """
+     _no_etiket = {"fatura_no": "FATURA NO", "irsaliye_no": "İRSALİYE NO",
+                   "teklif_no": "TEKLİF NO", "siparis_no": "SİPARİŞ NO",
+@@ -553,14 +554,21 @@ def yazdir_belge(r, kalemler, no_key, tip_label, kaynak_no=""):
+     _iade_etiket = {("fatura_no", "SatisIade"): "SATIŞ İADE FATURASI",
+                     ("fatura_no", "AlisIade"): "ALIŞ İADE FATURASI",
+                     ("irsaliye_no", "SatisIade"): "SATIŞ İADE İRSALİYESİ",
+-                    ("irsaliye_no", "AlisIade"): "ALIŞ İADE İRSALİYESİ"}.get(
++                    ("irsaliye_no", "AlisIade"): "ALIŞ İADE İRSALİYESİ",
++                    ("fatura_no", "Konsinye"): "KONSİNYE FATURASI",
++                    ("fatura_no", "KonsinyeIade"): "KONSİNYE İADE FATURASI",
++                    ("irsaliye_no", "Konsinye"): "KONSİNYE İRSALİYESİ",
++                    ("irsaliye_no", "KonsinyeIade"): "KONSİNYE İADE İRSALİYESİ"}.get(
+                         (no_key, r.get("tip") or ""))
+     if _iade_etiket:
+         _no_etiket = _iade_etiket
++    if proforma:
++        _no_etiket = "PROFORMA FATURA"
+     return {
+         "tip": tip_label,
+         "no": r.get(no_key),
+         "no_etiket": _no_etiket,
++        "proforma": proforma,
+         "kaynak_no": kaynak_no or "",
+         "belge_no": r.get("belge_no") or "",
+         "tip_kod": r.get("tip") or "",
+diff --git a/kod/db.py b/kod/db.py
+index 451a7a1..928283a 100644
+--- a/kod/db.py
++++ b/kod/db.py
+@@ -399,7 +399,7 @@ CREATE TABLE IF NOT EXISTS teklif (
+     sube_id INTEGER REFERENCES sube(id),
+     tarih TEXT NOT NULL,
+     gecerlilik_tarihi TEXT,
+-    durum TEXT NOT NULL DEFAULT 'Taslak' CHECK (durum IN ('Taslak','Gönderildi','Onaylandı','Reddedildi','Süresi Doldu')),
++    durum TEXT NOT NULL DEFAULT 'Taslak' CHECK (durum IN ('Taslak','Gönderildi','Onaylandı','Reddedildi','Süresi Doldu','Siparişe Dönüştü')),
+     para_birimi TEXT NOT NULL DEFAULT 'TRY',
+     doviz_kur REAL,
+     ara_toplam REAL NOT NULL DEFAULT 0,
+@@ -692,7 +692,7 @@ CREATE INDEX IF NOT EXISTS idx_crm_akt_tarih    ON crm_aktivite(tarih);
+ CREATE TABLE IF NOT EXISTS irsaliye (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     irsaliye_no TEXT UNIQUE,
+-    tip TEXT NOT NULL DEFAULT 'Satis' CHECK (tip IN ('Satis','Alis','Transfer','SatisIade','AlisIade')),
++    tip TEXT NOT NULL DEFAULT 'Satis' CHECK (tip IN ('Satis','Alis','Transfer','SatisIade','AlisIade','Konsinye','KonsinyeIade')),
+     cari_id INTEGER REFERENCES cari_kart(id),
+     sube_id INTEGER REFERENCES sube(id),
+     depo_id INTEGER REFERENCES depo(id),
+@@ -732,12 +732,14 @@ CREATE TABLE IF NOT EXISTS irsaliye_kalem (
+ CREATE TABLE IF NOT EXISTS fatura (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     fatura_no TEXT UNIQUE,
+-    tip TEXT NOT NULL DEFAULT 'Satis' CHECK (tip IN ('Satis','Alis','SatisIade','AlisIade')),
++    tip TEXT NOT NULL DEFAULT 'Satis' CHECK (tip IN ('Satis','Alis','SatisIade','AlisIade','Konsinye','KonsinyeIade')),
+     cari_id INTEGER REFERENCES cari_kart(id),
+     sube_id INTEGER REFERENCES sube(id),
+     depo_id INTEGER REFERENCES depo(id),
+     kaynak_irsaliye_id INTEGER REFERENCES irsaliye(id),
+     kaynak_fatura_id INTEGER REFERENCES fatura(id),
++    proforma INTEGER NOT NULL DEFAULT 0,
++    kaynak_proforma_id INTEGER REFERENCES fatura(id),
+     tarih TEXT NOT NULL,
+     vade TEXT,
+     durum TEXT NOT NULL DEFAULT 'Taslak' CHECK (durum IN ('Taslak','Onaylandı','İptal','Reddedildi')),
+@@ -966,6 +968,49 @@ def _migrate_d020(conn):
+             _TRG_IRSALIYE_SIL, _SIRKET_INDEXLER["irsaliye"])
+ 
+ 
++def _migrate_d021(conn):
++    """D021 (v1.52) — Konsinye tipleri + proforma kolonları + teklif kapanış durumu.
++
++    Idempotent; eski DB'de eksik olanı tamamlar, güncel DB'de no-op.
++    Testten doğrudan çağrılabilir (test_d021 migrasyon kanıtı).
++    """
++    # --- yeni kolonlar (proforma backfill 0 = normal fatura) ---
++    for tablo, kolon, ddl in (
++        ("fatura", "proforma", "INTEGER NOT NULL DEFAULT 0"),
++        ("fatura", "kaynak_proforma_id", "INTEGER REFERENCES fatura(id)"),
++    ):
++        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({tablo})")}
++        if cols and kolon not in cols:  # tablo yoksa PRAGMA boş döner → atla
++            conn.execute(f"ALTER TABLE {tablo} ADD COLUMN {kolon} {ddl}")
++    # --- fatura.tip CHECK'e konsinye tipleri ---
++    _frow = conn.execute(
++        "SELECT sql FROM sqlite_master WHERE type='table' AND name='fatura'").fetchone()
++    if _frow and "Konsinye" not in (_frow["sql"] or ""):
++        _check_rebuild(
++            conn, "fatura",
++            [("CHECK (tip IN ('Satis','Alis','SatisIade','AlisIade'))",
++              "CHECK (tip IN ('Satis','Alis','SatisIade','AlisIade','Konsinye','KonsinyeIade'))")],
++            _TRG_FATURA_SIL, _SIRKET_INDEXLER["fatura"])
++    # --- irsaliye.tip CHECK'e konsinye tipleri ---
++    _irow = conn.execute(
++        "SELECT sql FROM sqlite_master WHERE type='table' AND name='irsaliye'").fetchone()
++    if _irow and "Konsinye" not in (_irow["sql"] or ""):
++        _check_rebuild(
++            conn, "irsaliye",
++            [("CHECK (tip IN ('Satis','Alis','Transfer','SatisIade','AlisIade'))",
++              "CHECK (tip IN ('Satis','Alis','Transfer','SatisIade','AlisIade','Konsinye','KonsinyeIade'))")],
++            _TRG_IRSALIYE_SIL, _SIRKET_INDEXLER["irsaliye"])
++    # --- teklif.durum CHECK'e 'Siparişe Dönüştü' (F4 kapanış) ---
++    _trow = conn.execute(
++        "SELECT sql FROM sqlite_master WHERE type='table' AND name='teklif'").fetchone()
++    if _trow and "Siparişe Dönüştü" not in (_trow["sql"] or ""):
++        _check_rebuild(
++            conn, "teklif",
++            [("CHECK (durum IN ('Taslak','Gönderildi','Onaylandı','Reddedildi','Süresi Doldu'))",
++              "CHECK (durum IN ('Taslak','Gönderildi','Onaylandı','Reddedildi','Süresi Doldu','Siparişe Dönüştü'))")],
++            None, _SIRKET_INDEXLER["teklif"])
++
++
+ def _migrate(conn):
+     """Var olan veritabanlarına yeni sütun ekleme (CREATE IF NOT EXISTS bunu yapmaz)."""
+     cols = {r["name"] for r in conn.execute("PRAGMA table_info(kasa_hareket)")}
+@@ -1450,6 +1495,9 @@ def _migrate(conn):
+     # --- D020 (v1.51) — İade Ailesi: tip CHECK'leri + kaynak kolonları ---
+     _migrate_d020(conn)
+ 
++    # --- D021 (v1.52) — Konsinye tipleri + proforma + teklif kapanışı ---
++    _migrate_d021(conn)
++
+     # --- D007 (v1.39.0) — Stok kart ek alanlar (8 + model) + irsaliye döviz kuru ---
+     # Wolvox/Akınsoft referanslı alanlar: tevkifat, istisna, grup hiyerarşisi, özel kod 1-3.
+     # Geriye dönük uyumlu: mevcut kartlarda default 0/NULL; raporlar etkilenmez.
+diff --git a/kod/fatura.py b/kod/fatura.py
+index 10a0313..5fb6317 100644
+--- a/kod/fatura.py
++++ b/kod/fatura.py
+@@ -24,14 +24,19 @@ from config import PARA_BIRIMLERI
+ 
+ FATURA_WRITE = ("Admin", "Muhasebe", "Satis")
+ FATURA_ONAY = ("Admin", "Muhasebe")
+-TIPLER = ["Satis", "Alis", "SatisIade", "AlisIade"]
+-TIPLER_FORM = ["Satis", "Alis"]   # D020: normal form yalnız bunları üretir (iade dönüşümden)
+-IADE_TIPLER = ("SatisIade", "AlisIade")
+-IADE_KAYNAK = {"Satis": "SatisIade", "Alis": "AlisIade"}   # kaynak tip → iade tipi
++TIPLER = ["Satis", "Alis", "SatisIade", "AlisIade", "Konsinye", "KonsinyeIade"]
++TIPLER_FORM = ["Satis", "Alis", "Konsinye"]   # D020: iade dönüşümden; D021: FKO formdan da açılır
++IADE_TIPLER = ("SatisIade", "AlisIade", "KonsinyeIade")
++IADE_KAYNAK = {"Satis": "SatisIade", "Alis": "AlisIade",
++               "Konsinye": "KonsinyeIade"}   # kaynak tip → iade tipi
++KONSINYE_TIPLER = ("Konsinye", "KonsinyeIade")
+ TIP_LABEL = {"Satis": "Satış Faturası", "Alis": "Alış Faturası",
+-             "SatisIade": "Satış İade Faturası", "AlisIade": "Alış İade Faturası"}
+-TIP_ON_EK = {"Satis": "SF", "Alis": "AF", "SatisIade": "SFIAD", "AlisIade": "AFIAD"}
+-TIP_KISA = {"Satis": "Satış", "Alis": "Alış", "SatisIade": "S. İade", "AlisIade": "A. İade"}
++             "SatisIade": "Satış İade Faturası", "AlisIade": "Alış İade Faturası",
++             "Konsinye": "Konsinye Faturası", "KonsinyeIade": "Konsinye İade Faturası"}
++TIP_ON_EK = {"Satis": "SF", "Alis": "AF", "SatisIade": "SFIAD", "AlisIade": "AFIAD",
++             "Konsinye": "FKO", "KonsinyeIade": "FKOI"}
++TIP_KISA = {"Satis": "Satış", "Alis": "Alış", "SatisIade": "S. İade", "AlisIade": "A. İade",
++            "Konsinye": "Konsinye", "KonsinyeIade": "K. İade"}
+ DURUMLAR = ["Taslak", "Onaylandı", "İptal", "Reddedildi"]
+ DURUM_BADGE = {"Taslak": "b-muted", "Onaylandı": "b-ok", "İptal": "b-danger"}
+ 
+@@ -189,11 +194,12 @@ def _fatura_detay(conn, fid, sid=None):
+         "SELECT f.*, c.unvan AS cari_unvan, c.kod AS cari_kod, c.il AS cari_il, "
+         "sb.ad AS sube_ad, i.irsaliye_no AS kaynak_irsaliye_no, i.id AS kaynak_irsaliye_id, "
+         "sv.servis_no AS kaynak_servis_no, sv.id AS kaynak_servis_id, "
+-        "kf.fatura_no AS kaynak_fatura_no, d.ad AS depo_ad "
++        "kf.fatura_no AS kaynak_fatura_no, pf.fatura_no AS kaynak_proforma_no, d.ad AS depo_ad "
+         "FROM fatura f LEFT JOIN cari_kart c ON c.id=f.cari_id "
+         "LEFT JOIN sube sb ON sb.id=f.sube_id LEFT JOIN irsaliye i ON i.id=f.kaynak_irsaliye_id "
+         "LEFT JOIN servis_kayit sv ON sv.id=f.kaynak_servis_id "
+-        "LEFT JOIN fatura kf ON kf.id=f.kaynak_fatura_id LEFT JOIN depo d ON d.id=f.depo_id "
++        "LEFT JOIN fatura kf ON kf.id=f.kaynak_fatura_id "
++        "LEFT JOIN fatura pf ON pf.id=f.kaynak_proforma_id LEFT JOIN depo d ON d.id=f.depo_id "
+         "WHERE " + where, params,
+     ).fetchone()
+     if not r:
+@@ -211,8 +217,12 @@ def _fatura_detay(conn, fid, sid=None):
+     return r, kalemler
+ 
+ 
+-def _irsaliye_kontrol(conn, irsaliye_id, sid=None):
+-    """K10 — yalnız Onaylandı irsaliyeden fatura üretilebilir; Transfer faturaya dönüşmez."""
++def _irsaliye_kontrol(conn, irsaliye_id, sid=None, fatura_tip=None):
++    """K10 — yalnız Onaylandı irsaliyeden fatura üretilebilir; Transfer faturaya dönüşmez.
++
++    D021: konsinye eşleşmesi tip-bazlıdır — Konsinye faturası yalnız IKO'dan,
++    normal fatura konsinye irsaliyeden üretilemez (IKO'da mali etki yok).
++    """
+     where, params = "id=?", [irsaliye_id]
+     if sid is not None:
+         where += " AND sirket_id=?"
+@@ -224,11 +234,73 @@ def _irsaliye_kontrol(conn, irsaliye_id, sid=None):
+         return "Transfer irsaliyesinden fatura üretilemez (cari yok)."
+     if i["tip"] in IADE_TIPLER:
+         return "İade irsaliyesinden normal fatura üretilemez (mali etki iade faturasındadır)."
++    if fatura_tip == "Konsinye" and i["tip"] != "Konsinye":
++        return "Konsinye faturası yalnız konsinye irsaliyesinden (IKO) üretilebilir."
++    if fatura_tip in ("Satis", "Alis") and i["tip"] == "Konsinye":
++        return "Konsinye irsaliyesinden normal fatura üretilemez (IKO'da mali etki yok); konsinye faturası oluşturun."
+     if i["durum"] != "Onaylandı":
+         return f"Yalnızca 'Onaylandı' durumundaki irsaliyeden fatura üretilebilir (irsaliye: {i['durum']})."
+     return None
+ 
+ 
++def _proforma_kontrol(conn, proforma_id, sid=None):
++    """D021-F3 — yalnız Taslak/Onaylı proformadan normal fatura üretilebilir."""
++    where, params = "id=?", [proforma_id]
++    if sid is not None:
++        where += " AND sirket_id=?"
++        params.append(sid)
++    p = conn.execute(f"SELECT * FROM fatura WHERE {where}", params).fetchone()
++    if not p:
++        return "Kaynak proforma bulunamadı."
++    if not p["proforma"]:
++        return "Kaynak belge proforma değil."
++    if p["durum"] not in ("Taslak", "Onaylandı"):
++        return f"Yalnızca 'Taslak'/'Onaylandı' proformadan fatura üretilebilir (proforma: {p['durum']})."
++    return None
++
++
++def _konsinye_satir_bakiye(conn, cari_id, satirlar, sid=None):
++    """D021-§3 — form satırlarına anlık konsinye bakiyesi ('stok:varyant' → bakiye).
++
++    Yalnız stoklu satırlar; Taslak belge bakiyeye girmediğinden kendisi hariç
++    tutulmaz (agregat Onaylı-bazlıdır).
++    """
++    out = {}
++    if not cari_id:
++        return out
++    for s in satirlar:
++        sid2 = s.get("stok_id")
++        if not sid2:
++            continue
++        key = f"{sid2}:{s.get('varyant_id') or 0}"
++        if key not in out:
++            out[key] = cari._konsinye_bakiye(conn, cari_id, sid2, s.get("varyant_id") or 0, sid)
++    return out
++
++
++def _konsinye_onay_kontrol(conn, fatura, sid=None):
++    """D021-§3 — FKO onayında bakiye kilidi (Taslak sayılmadığından onayda denetlenir).
++
++    Hata metni döner; None = uygun.
++    """
++    kalemler = conn.execute(
++        "SELECT stok_id, varyant_id, miktar FROM fatura_kalem WHERE fatura_id=?",
++        (fatura["id"],)).fetchall()
++    _istenen = {}
++    for k in kalemler:
++        if not k["stok_id"]:
++            continue
++        _kk = (k["stok_id"], k["varyant_id"] or 0)
++        _istenen[_kk] = _istenen.get(_kk, 0.0) + (k["miktar"] or 0)
++    for (st, vr), mik in _istenen.items():
++        _bak = cari._konsinye_bakiye(conn, fatura["cari_id"], st, vr, sid)
++        if mik > _bak + 1e-9:
++            _ad = conn.execute("SELECT kod FROM stok_kart WHERE id=?", (st,)).fetchone()
++            return (f"konsinye bakiyesi yetersiz ({(_ad['kod'] if _ad else st)}: "
++                    f"bakiye {_bak:g}, istenen {mik:g}).")
++    return None
++
++
+ def _cari_uygula(conn, req, fatura, yon):
+     """K2/K6 — fatura onayı/iptali için cari hareketi tek işlemde yaz/geri al.
+ 
+@@ -245,10 +317,13 @@ def _cari_uygula(conn, req, fatura, yon):
+     kur = fatura.get("doviz_kur") or 1.0
+     tutar_tl = round((fatura["genel_toplam"] or 0.0) * kur, 2)   # K18: cariye TL karşılığı
+     # D020: iade kendi yönüyle yazılır (Satış iadesi→ALACAK, Alış iadesi→BORÇ).
++    # D021: FKO satış yönlüdür (müşteri borcu +, "satış faturası aynısı"); FKOI SatisIade yönlüdür.
+     yon_harita = {"Satis": ("Satış Faturası", tutar_tl, 0.0),
+                   "Alis": ("Alış Faturası", 0.0, tutar_tl),
+                   "SatisIade": ("Satış İade Faturası", 0.0, tutar_tl),
+-                  "AlisIade": ("Alış İade Faturası", tutar_tl, 0.0)}
++                  "AlisIade": ("Alış İade Faturası", tutar_tl, 0.0),
++                  "Konsinye": ("Konsinye Faturası", tutar_tl, 0.0),
++                  "KonsinyeIade": ("Konsinye İade Faturası", 0.0, tutar_tl)}
+     belge_tipi, borc, alacak = yon_harita[fatura["tip"]]
+     cari.hareket_ekle(conn, fatura["cari_id"], fatura["tarih"], belge_tipi,
+                       fatura["fatura_no"], fatura.get("aciklama"),
+@@ -295,22 +370,29 @@ def _odeme_durumu(conn, fid):
+             "pb": fpb, "kur": fkur}
+ 
+ 
+-def _stok_uygula_iade(conn, req, fatura, yon):
+-    """D020 — iade faturasının stok bacağı (yalnız iade tipleri çağırır).
++def _stok_uygula_fatura(conn, req, fatura, yon):
++    """D020/D021 — faturanın stok bacağı (iade + konsinye tipleri çağırır).
+ 
+-    SatisIade → +miktar (ürün depoya döner), AlisIade → −miktar (tedarikçiye gider).
++    SatisIade/KonsinyeIade → +miktar, AlisIade/Konsinye → −miktar.
+     yon=+1 onay, yon=-1 iptal (telafi hareketi — denetim izi korunur).
+-    Hareketler iadenin KENDİ (Fatura, id) kimliğiyle yazılır; kaynak belge
++    Hareketler belgenin KENDİ (Fatura, id) kimliğiyle yazılır; kaynak belge
+     stokuna dokunulmaz (Madde 13 — çift sayım yasak). Manuel satırlar atlanır.
+     """
+     depo_id = fatura.get("depo_id")
+     if yon == 1 and not depo_id:
+-        return ["İade faturası için depo seçimi zorunludur."]
++        return ["Bu fatura tipi için depo seçimi zorunludur."]
++    giris_mi = fatura["tip"] in ("SatisIade", "KonsinyeIade")
++    konsinye_mi = fatura["tip"] in KONSINYE_TIPLER
+     if yon == 1:
+-        islem = "İade Girişi" if fatura["tip"] == "SatisIade" else "İade Çıkışı"
++        if konsinye_mi:
++            islem = "Konsinye İade Girişi" if giris_mi else "Konsinye Çıkışı"
++        else:
++            islem = "İade Girişi" if giris_mi else "İade Çıkışı"
++    elif konsinye_mi:
++        islem = "Konsinye İptali (Geri Alış)" if giris_mi else "Konsinye İptali (Geri Veriş)"
+     else:
+-        islem = "İade İptali (Geri Alış)" if fatura["tip"] == "SatisIade" else "İade İptali (Geri Veriş)"
+-    isaret = 1 if fatura["tip"] == "SatisIade" else -1
++        islem = "İade İptali (Geri Alış)" if giris_mi else "İade İptali (Geri Veriş)"
++    isaret = 1 if giris_mi else -1
+     kalemler = conn.execute(
+         "SELECT k.*, st.kod AS stok_kod FROM fatura_kalem k "
+         "JOIN stok_kart st ON st.id=k.stok_id WHERE k.fatura_id=?", (fatura["id"],)).fetchall()
+@@ -390,13 +472,19 @@ def fatura_yeni(req):
+         return _form_post(req, conn, None)
+ 
+     kaynak = _i(req.q("kaynak_irsaliye"))
+-    satirlar, kaynak_irsaliye_id = [], None
+-    irsaliye_row = None
++    kaynak_proforma = _i(req.q("kaynak_proforma"))
++    satirlar, kaynak_irsaliye_id, kaynak_proforma_id = [], None, None
++    irsaliye_row, proforma_row = None, None
++    depo_id, pb0, kur0 = None, "TRY", None
+     # D018: ?tip=Alis ile doğrudan alış formu açılabilir (e-Fatura butonu bu URL'de).
++    # D021: ?proforma=1 → proforma modu (tip Satis kilitli); ?tip=Konsinye + IKO → FKO dönüşümü.
+     tip = req.q("tip") if req.q("tip") in TIPLER else "Satis"
++    proforma_mode = req.q("proforma") == "1"
++    if proforma_mode:
++        tip = "Satis"
+     cari_id = None
+     if kaynak:
+-        hata = _irsaliye_kontrol(conn, kaynak, db.sirket_id(req))
++        hata = _irsaliye_kontrol(conn, kaynak, db.sirket_id(req), tip)
+         if hata:
+             conn.close()
+             flash(req, hata, "danger")
+@@ -404,8 +492,11 @@ def fatura_yeni(req):
+         irsaliye_row = dict(conn.execute("SELECT * FROM irsaliye WHERE id=? AND sirket_id=?",
+                                          (kaynak, db.sirket_id(req))).fetchone())
+         kaynak_irsaliye_id = kaynak
+-        tip = "Satis" if irsaliye_row["tip"] == "Satis" else "Alis"
++        if tip != "Konsinye":
++            tip = "Satis" if irsaliye_row["tip"] == "Satis" else "Alis"
+         cari_id = irsaliye_row["cari_id"]
++        depo_id = irsaliye_row["depo_id"]
++        pb0, kur0 = irsaliye_row["para_birimi"] or "TRY", irsaliye_row["doviz_kur"]
+         kalemler = conn.execute(
+             "SELECT * FROM irsaliye_kalem WHERE irsaliye_id=? ORDER BY id", (kaynak,),
+         ).fetchall()
+@@ -414,18 +505,47 @@ def fatura_yeni(req):
+                      "kdv_orani": k["kdv_orani"], "birim": k["birim"], "goruntu_adi": k["goruntu_adi"],
+                      "manuel_ad": (k["aciklama"] or "") if not k["stok_id"] else ""}
+                     for k in kalemler]
++    if kaynak_proforma:
++        hata = _proforma_kontrol(conn, kaynak_proforma, db.sirket_id(req))
++        if hata:
++            conn.close()
++            flash(req, hata, "danger")
++            return redirect(f"/fatura/{kaynak_proforma}")
++        proforma_row = dict(conn.execute("SELECT * FROM fatura WHERE id=? AND sirket_id=?",
++                                         (kaynak_proforma, db.sirket_id(req))).fetchone())
++        kaynak_proforma_id = kaynak_proforma
++        tip = "Satis"
++        cari_id = proforma_row["cari_id"]
++        pb0, kur0 = proforma_row["para_birimi"] or "TRY", proforma_row["doviz_kur"]
++        kalemler = conn.execute(
++            "SELECT * FROM fatura_kalem WHERE fatura_id=? ORDER BY id", (kaynak_proforma,),
++        ).fetchall()
++        satirlar = [{"stok_id": k["stok_id"], "varyant_id": k["varyant_id"], "miktar": k["miktar"],
++                     "birim_fiyat": k["birim_fiyat"], "iskonto_orani": k["iskonto_orani"],
++                     "kdv_orani": k["kdv_orani"], "birim": k["birim"], "goruntu_adi": k["goruntu_adi"],
++                     "manuel_ad": (k["aciklama"] or "") if not k["stok_id"] else ""}
++                    for k in kalemler]
+ 
+     cariler = _cariler(conn, tip, db.sirket_id(req))
+     stoklar = _stoklar(conn, db.sirket_id(req))
++    depolar = conn.execute("SELECT id, kod, ad FROM depo WHERE sirket_id=? AND aktif=1 ORDER BY kod",
++                           (db.sirket_id(req),)).fetchall()
+     satirlar = _satir_gorunum(conn, satirlar, db.sirket_id(req))
+     toplamlar = _toplamlar([dict(x) for x in satirlar]) if satirlar else None
+     cari_etiket, cari_iskonto = _cari_secim(cariler, cari_id)
++    bakiyeler = _konsinye_satir_bakiye(conn, cari_id, satirlar, db.sirket_id(req)) \
++        if tip == "Konsinye" and cari_id else {}
++    fatura0 = {"tip": tip, "cari_id": cari_id, "para_birimi": pb0, "doviz_kur": kur0,
++               "depo_id": depo_id}
+     conn.close()
+     return render_template(
+-        "fatura/form.html", fatura=None, satirlar=satirlar, cariler=cariler, stoklar=stoklar,
+-        toplamlar=toplamlar, tip=tip, cari_id=cari_id, cari_etiket=cari_etiket,
++        "fatura/form.html", fatura=fatura0, satirlar=satirlar, cariler=cariler, stoklar=stoklar,
++        depolar=depolar, toplamlar=toplamlar, tip=tip, cari_id=cari_id, cari_etiket=cari_etiket,
+         cari_iskonto=cari_iskonto, kaynak_irsaliye_id=kaynak_irsaliye_id,
+-        kaynak_irsaliye=irsaliye_row, birimler=db.birimler(sid=db.sirket_id(req)), para_birimleri=db.para_birimleri(sid=db.sirket_id(req)),
++        kaynak_irsaliye=irsaliye_row, kaynak_proforma_id=kaynak_proforma_id,
++        kaynak_proforma=proforma_row,
++        proforma_mode=proforma_mode, konsinye_bakiye=bakiyeler,
++        birimler=db.birimler(sid=db.sirket_id(req)), para_birimleri=db.para_birimleri(sid=db.sirket_id(req)),
+         kdv_dahil=0, bugun=datetime.date.today().isoformat())
+ 
+ 
+@@ -445,12 +565,19 @@ def fatura_detay(req, fid):
+                           (f["id"],)).fetchall()
+     odeme = _odeme_durumu(conn, f["id"])
+     # D020: bize gelen para yönü — Satış + Alış iadesinde giriş, Alış + Satış iadesinde çıkış.
+-    odenen = (round(odeme["giris"] - odeme["cikis"], 2) if f["tip"] in ("Satis", "AlisIade")
++    # D021: Konsinye satış yönlü, KonsinyeIade iade yönlüdür.
++    odenen = (round(odeme["giris"] - odeme["cikis"], 2)
++              if f["tip"] in ("Satis", "AlisIade", "Konsinye")
+               else round(odeme["cikis"] - odeme["giris"], 2))
+     kalan = round((f["genel_toplam"] or 0) - odenen, 2)
+     # D020: kaynak kartı + bağlı iadeler + kalem bazında iade edilen.
+     iadeler = [dict(x) for x in _belge_iadeleri(conn, f["id"])]
+     iade_edilen = {k["id"]: _iade_edilen(conn, k["id"]) for k in kalemler}
++    # D021-F3: proformadan üretilmiş normal faturalar.
++    donusumler = [dict(x) for x in conn.execute(
++        "SELECT id, fatura_no, tarih, genel_toplam, para_birimi, durum FROM fatura "
++        "WHERE kaynak_proforma_id=? ORDER BY id", (f["id"],)).fetchall()] \
++        if f["proforma"] else []
+     # D019-H9 — TL karşılıklar (dövizli belgede parantez gösterim için).
+     _kur = (f["doviz_kur"] or 1.0) if (f["para_birimi"] or "TRY") != "TRY" else 1.0
+     odenen_tl = round(odenen * _kur, 2)
+@@ -463,7 +590,8 @@ def fatura_detay(req, fid):
+     conn.close()
+     return render_template("fatura/detay.html", fatura=f, kalemler=kalemler, loglar=loglar,
+                            tip_label=TIP_LABEL, iade_tipler=IADE_TIPLER,
+-                           iadeler=iadeler, iade_edilen=iade_edilen,
++                           konsinye_tipler=KONSINYE_TIPLER,
++                           iadeler=iadeler, iade_edilen=iade_edilen, donusumler=donusumler,
+                            odeme=odeme, odenen=odenen, kalan=kalan,
+                            odenen_tl=odenen_tl, kalan_tl=kalan_tl,
+                            ekler=ekler_list, ek_upload=ek_upload, ek_modul="Fatura",
+@@ -505,12 +633,24 @@ def fatura_duzenle(req, fid):
+     toplamlar = _toplamlar([dict(x) for x in satirlar])
+     cariler = _cariler(conn, f["tip"], db.sirket_id(req))
+     stoklar = _stoklar(conn, db.sirket_id(req))
++    depolar = conn.execute("SELECT id, kod, ad FROM depo WHERE sirket_id=? AND aktif=1 ORDER BY kod",
++                           (db.sirket_id(req),)).fetchall()
+     cari_etiket, cari_iskonto = _cari_secim(cariler, f["cari_id"])
++    bakiyeler = _konsinye_satir_bakiye(conn, f["cari_id"], satirlar, db.sirket_id(req)) \
++        if f["tip"] == "Konsinye" else {}
++    kaynak_proforma = dict(conn.execute("SELECT id, fatura_no FROM fatura WHERE id=?",
++                                        (f["kaynak_proforma_id"],)).fetchone()) \
++        if f["kaynak_proforma_id"] else None
+     conn.close()
+     return render_template("fatura/form.html", fatura=f, satirlar=satirlar, cariler=cariler,
+-                           stoklar=stoklar, toplamlar=toplamlar, tip=f["tip"], cari_id=f["cari_id"],
++                           stoklar=stoklar, depolar=depolar, toplamlar=toplamlar,
++                           tip=f["tip"], cari_id=f["cari_id"],
+                            cari_etiket=cari_etiket, cari_iskonto=cari_iskonto,
+                            kaynak_irsaliye_id=f["kaynak_irsaliye_id"], kaynak_irsaliye=None,
++                           kaynak_proforma_id=f["kaynak_proforma_id"],
++                           kaynak_proforma=kaynak_proforma,
++                           proforma_mode=bool(f["proforma"]), depo_id=f["depo_id"],
++                           konsinye_bakiye=bakiyeler,
+                            birimler=db.birimler(sid=db.sirket_id(req)), para_birimleri=db.para_birimleri(sid=db.sirket_id(req)),
+                            kdv_dahil=(f["kdv_dahil"] or 0),
+                            bugun=datetime.date.today().isoformat())
+@@ -546,6 +686,11 @@ def fatura_sil(req, fid):
+ def _form_post(req, conn, mevcut):
+     # D020: normal form iade üretmez (POST enjeksiyonu da Satış'a düşer); iade dönüşümden.
+     tip = req.form.get("tip") if req.form.get("tip") in TIPLER_FORM else "Satis"
++    # D021-F3: proforma bayrağı (yalnız oluşturmada; tip Satis kilitli).
++    proforma = 1 if (req.form.get("proforma") == "1" and not mevcut) else (mevcut["proforma"] if mevcut else 0)
++    if proforma:
++        tip = "Satis"
++    depo_id = _i(req.form.get("depo_id"))
+     cari_id = _i(req.form.get("cari_id"))
+     tarih = req.form.get("tarih") or datetime.date.today().isoformat()
+     vade = (req.form.get("vade") or "").strip() or None
+@@ -558,8 +703,10 @@ def _form_post(req, conn, mevcut):
+     elif not doviz_kur or doviz_kur <= 0:
+         doviz_kur = db.guncel_kur(conn, para_birimi, db.sirket_id(req))
+     kaynak_irsaliye_id = _i(req.form.get("kaynak_irsaliye"))
++    kaynak_proforma_id = _i(req.form.get("kaynak_proforma"))
+     if mevcut:
+         kaynak_irsaliye_id = mevcut["kaynak_irsaliye_id"]
++        kaynak_proforma_id = mevcut["kaynak_proforma_id"]
+     kdv_dahil = 1 if req.form.get("kdv_dahil") in ("1", "dahil", "on") else 0
+     satirlar = _satirlar_from_form(req, kdv_dahil)
+ 
+@@ -625,7 +772,13 @@ def _form_post(req, conn, mevcut):
+         return _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade, aciklama,
+                             kaynak_irsaliye_id)
+     if kaynak_irsaliye_id:
+-        hata = _irsaliye_kontrol(conn, kaynak_irsaliye_id, db.sirket_id(req))
++        hata = _irsaliye_kontrol(conn, kaynak_irsaliye_id, db.sirket_id(req), tip)
++        if hata:
++            flash(req, hata, "danger")
++            return _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade, aciklama,
++                                kaynak_irsaliye_id)
++    if kaynak_proforma_id and not mevcut:
++        hata = _proforma_kontrol(conn, kaynak_proforma_id, db.sirket_id(req))
+         if hata:
+             flash(req, hata, "danger")
+             return _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade, aciklama,
+@@ -651,6 +804,31 @@ def _form_post(req, conn, mevcut):
+             flash(req, "Geçersiz stok seçimi (başka şirkete ait).", "danger")
+             return _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade, aciklama,
+                                 kaynak_irsaliye_id)
++    if tip == "Konsinye":
++        # D021-§3: konsinye yalnız stoklu satır + satır toplamı ≤ anlık bakiye (DB bloke).
++        if any(not s["stok_id"] for s in gecerli):
++            flash(req, "Konsinye faturasında manuel satır olamaz (bakiye stok bazlı izlenir).",
++                  "danger")
++            return _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade, aciklama,
++                                kaynak_irsaliye_id)
++        if not depo_id or not conn.execute(
++                "SELECT id FROM depo WHERE id=? AND sirket_id=?",
++                (depo_id, db.sirket_id(req))).fetchone():
++            flash(req, "Konsinye faturası için geçerli bir depo seçin.", "danger")
++            return _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade, aciklama,
++                                kaynak_irsaliye_id)
++        _istenen = {}
++        for s in gecerli:
++            _k = (s["stok_id"], s["varyant_id"] or 0)
++            _istenen[_k] = _istenen.get(_k, 0.0) + (s["miktar"] or 0)
++        for (st, vr), mik in _istenen.items():
++            _bak = cari._konsinye_bakiye(conn, cari_id, st, vr, db.sirket_id(req))
++            if mik > _bak + 1e-9:
++                _ad = conn.execute("SELECT kod FROM stok_kart WHERE id=?", (st,)).fetchone()
++                flash(req, f"Konsinye bakiyesi yetersiz ({(_ad['kod'] if _ad else st)}: "
++                           f"bakiye {_bak:g}, istenen {mik:g}).", "danger")
++                return _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade,
++                                    aciklama, kaynak_irsaliye_id)
+     top = _toplamlar(gecerli)
+ 
+     islem = None
+@@ -658,27 +836,30 @@ def _form_post(req, conn, mevcut):
+         conn.execute(
+             "UPDATE fatura SET tip=?, cari_id=?, tarih=?, vade=?, aciklama=?, para_birimi=?, "
+             "doviz_kur=?, ara_toplam=?, iskonto_toplam=?, kdv_toplam=?, genel_toplam=?, "
+-            "kdv_dahil=?, belge_no=?, updated_at=datetime('now','localtime') WHERE id=?",
++            "kdv_dahil=?, belge_no=?, depo_id=?, updated_at=datetime('now','localtime') WHERE id=?",
+             (tip, cari_id, tarih, vade, aciklama, para_birimi, doviz_kur,
+              top["ara_toplam"], top["iskonto_toplam"], top["kdv_toplam"], top["genel_toplam"],
+-             kdv_dahil, belge_no, mevcut["id"]),
++             kdv_dahil, belge_no, depo_id, mevcut["id"]),
+         )
+         conn.execute("DELETE FROM fatura_kalem WHERE fatura_id=?", (mevcut["id"],))
+         fid = mevcut["id"]
+         islem = ("guncelle", {"fatura_no": mevcut["fatura_no"]}, "Fatura güncellendi.")
+     else:
+-        on_ek = TIP_ON_EK[tip]
++        on_ek = "PF" if proforma else TIP_ON_EK[tip]
+         no = db.sonraki_belge_no(conn, "fatura", "fatura_no", on_ek, tarih[:4], db.sirket_id(req))
+         cur = conn.execute(
+-            "INSERT INTO fatura(fatura_no, tip, cari_id, kaynak_irsaliye_id, "
++            "INSERT INTO fatura(fatura_no, tip, cari_id, depo_id, kaynak_irsaliye_id, "
++            "kaynak_proforma_id, proforma, "
+             "tarih, vade, durum, para_birimi, doviz_kur, ara_toplam, iskonto_toplam, kdv_toplam, "
+-            "genel_toplam, aciklama, kdv_dahil, belge_no, sube_id, created_by, sirket_id) VALUES(?,?,?,?,?,?,'Taslak',?,?,?,?,?,?,?,?,?,?,?,?)",
+-            (no, tip, cari_id, kaynak_irsaliye_id, tarih, vade, para_birimi, doviz_kur,
++            "genel_toplam, aciklama, kdv_dahil, belge_no, sube_id, created_by, sirket_id) VALUES(?,?,?,?,?,?,?,?,?,'Taslak',?,?,?,?,?,?,?,?,?,?,?,?)",
++            (no, tip, cari_id, depo_id, kaynak_irsaliye_id, kaynak_proforma_id, proforma,
++             tarih, vade, para_birimi, doviz_kur,
+              top["ara_toplam"], top["iskonto_toplam"], top["kdv_toplam"], top["genel_toplam"],
+              aciklama, kdv_dahil, belge_no, izole_sube(req), req.user["id"], db.sirket_id(req)),
+         )
+         fid = cur.lastrowid
+-        islem = ("olustur", {"fatura_no": no}, f"Fatura oluşturuldu: {no}")
++        islem = ("olustur", {"fatura_no": no},
++                 f"{'Proforma oluşturuldu' if proforma else 'Fatura oluşturuldu'}: {no}")
+ 
+     stok_birim = {}
+     _stok_ids = {s["stok_id"] for s in gecerli if s["stok_id"]}
+@@ -712,6 +893,8 @@ def _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade, aciklam
+     toplamlar = _toplamlar([dict(s) for s in satirlar])
+     cariler = _cariler(conn, tip, db.sirket_id(req))
+     stoklar = _stoklar(conn, db.sirket_id(req))
++    depolar = conn.execute("SELECT id, kod, ad FROM depo WHERE sirket_id=? AND aktif=1 ORDER BY kod",
++                           (db.sirket_id(req),)).fetchall()
+     cari_etiket, cari_iskonto = _cari_secim(cariler, cari_id)
+     fatura = dict(mevcut) if mevcut else {"tip": tip, "cari_id": cari_id, "tarih": tarih,
+                                           "vade": vade, "aciklama": aciklama,
+@@ -720,13 +903,23 @@ def _form_render(req, conn, mevcut, satirlar, tip, cari_id, tarih, vade, aciklam
+         for k in ("para_birimi", "doviz_kur"):
+             if req.form.get(k) not in (None, ""):
+                 fatura[k] = req.form.get(k)
++    # D021: proforma/depo/kaynak_proforma formdan korunur; konsinye satır bakiyesi hesaplanır.
++    proforma_mode = (req.form.get("proforma") == "1") if mevcut is None else bool(mevcut["proforma"])
++    depo_id = _i(req.form.get("depo_id")) if mevcut is None else mevcut["depo_id"]
++    kaynak_proforma_id = _i(req.form.get("kaynak_proforma")) if mevcut is None else mevcut["kaynak_proforma_id"]
++    bakiyeler = _konsinye_satir_bakiye(conn, cari_id, satirlar, db.sirket_id(req)) \
++        if tip == "Konsinye" and cari_id else {}
+     kdv_dahil = 1 if req.form.get("kdv_dahil") in ("1", "dahil", "on") else (0 if mevcut is None else (mevcut["kdv_dahil"] or 0))
+     return render_template("fatura/form.html", fatura=fatura, satirlar=satirlar,
+-                           cariler=cariler, stoklar=stoklar, toplamlar=toplamlar,
++                           cariler=cariler, stoklar=stoklar, depolar=depolar,
++                           toplamlar=toplamlar,
+                            cari_etiket=cari_etiket, cari_iskonto=cari_iskonto,
+                            birimler=db.birimler(sid=db.sirket_id(req)), para_birimleri=db.para_birimleri(sid=db.sirket_id(req)),
+                            tip=tip, cari_id=cari_id, kaynak_irsaliye_id=kaynak_irsaliye_id,
+-                           kaynak_irsaliye=None, kdv_dahil=kdv_dahil,
++                           kaynak_irsaliye=None, kaynak_proforma_id=kaynak_proforma_id,
++                           kaynak_proforma=None,
++                           proforma_mode=proforma_mode, depo_id=depo_id,
++                           konsinye_bakiye=bakiyeler, kdv_dahil=kdv_dahil,
+                            bugun=datetime.date.today().isoformat())
+ 
+ 
+@@ -750,24 +943,35 @@ def fatura_durum(req, fid):
+             return redirect(f"/fatura/{fid}")
+         # F1 — kaynak irsaliyesi olan fatura yalnızca belgeleştirir; mali etki
+         # irsaliye onayında oluşmuştur (çifte kayıt önlenir).
+-        kaynakli = bool(f["kaynak_irsaliye_id"])
++        # D021: IKO'dan gelen Konsinye fatura HARİÇ (IKO mali üretmemişti → FKO tam işler).
++        proforma_mi = bool(f["proforma"])
++        kaynakli = bool(f["kaynak_irsaliye_id"]) and f["tip"] != "Konsinye"
+         iade_mi = f["tip"] in IADE_TIPLER
+-        if not kaynakli:
++        stoklu_mi = iade_mi or f["tip"] == "Konsinye"
++        if not proforma_mi and not kaynakli:
+             _cari_uygula(conn, req, dict(f), yon=1)
+-        if iade_mi:
+-            # D020-§10/11 — iade faturası onayla stok bacağını da işler (kendi kimliğiyle).
+-            hatalar = _stok_uygula_iade(conn, req, dict(f), yon=1)
++        if not proforma_mi and stoklu_mi:
++            if f["tip"] == "Konsinye":
++                # D021-§3 — onay anında bakiye kilidi (Taslak bakiyeye girmez → burada denetlenir).
++                _bak_hata = _konsinye_onay_kontrol(conn, dict(f), db.sirket_id(req))
++                if _bak_hata:
++                    conn.close()
++                    flash(req, "Konsinye faturası onaylanamadı: " + _bak_hata, "danger")
++                    return redirect(f"/fatura/{fid}")
++            # D020-§10/11 — iade/konsinye faturası onayla stok bacağını da işler (kendi kimliğiyle).
++            hatalar = _stok_uygula_fatura(conn, req, dict(f), yon=1)
+             if hatalar:
+                 conn.close()
+-                flash(req, "İade onaylanamadı: " + " · ".join(hatalar), "danger")
++                flash(req, "Fatura onaylanamadı: " + " · ".join(hatalar), "danger")
+                 return redirect(f"/fatura/{fid}")
+         conn.execute("UPDATE fatura SET durum='Onaylandı' WHERE id=?", (int(fid),))
+-        if not kaynakli:
++        if not proforma_mi and not kaynakli:
+             muhasebe.fis_uret(conn, "Fatura", int(fid),   # K26: otomatik yevmiye (iade→'iade' sahne)
+                               "iade" if iade_mi else None)
+         # F4 — Satış faturası onayında otomatik e-belge taslağı (e-Fatura/e-Arşiv tip otomatik).
+         # e-Dönüşüm yalnızca BELGELEŞTİRME katmanıdır; mali etki (cari+yevmiye) yukarıda işlendi.
+-        if f["tip"] == "Satis":
++        # D021: proforma e-belge değildir → taslak üretilmez.
++        if f["tip"] == "Satis" and not proforma_mi:
+             try:
+                 import edonusum
+                 edonusum._olustur(conn, req, "fatura", int(fid))
+@@ -775,8 +979,12 @@ def fatura_durum(req, fid):
+                 pass  # e-belge üretimi hata verirse fatura onayını bloke etme
+         conn.commit()
+         audit(req, "fatura", int(fid), "durum", {"eski": f["durum"], "yeni": "Onaylandı"})
+-        mesaj = ("Fatura onaylandı (kaynak irsaliyeden mali etki zaten işlenmişti)."
+-                 if kaynakli else "Fatura onaylandı; cari hareket oluşturuldu.")
++        if proforma_mi:
++            mesaj = "Proforma onaylandı (mali etki yok: cari/stok/yevmiye işlenmedi)."
++        elif kaynakli:
++            mesaj = "Fatura onaylandı (kaynak irsaliyeden mali etki zaten işlenmişti)."
++        else:
++            mesaj = "Fatura onaylandı; cari hareket oluşturuldu."
+         notify("bilgi", "Fatura onaylandı", f"{f['fatura_no']} onaylandı.", "fatura", int(fid), sirket_id=db.sirket_id(req))
+         conn.close()
+         flash(req, mesaj, "ok")
+@@ -803,13 +1011,15 @@ def fatura_durum(req, fid):
+                        "Önce ilgili hareketi iptal edin, sonra faturayı iptal edin.", "danger")
+             return redirect(f"/fatura/{fid}")
+         # F1 — kaynaklı fatura mali etki üretmemişti; geri alınacak bir şey yok.
+-        if not f["kaynak_irsaliye_id"]:
++        # D021: proforma mali üretmemişti; Konsinye (IKO kaynaklı da olsa) tam üretmişti.
++        _kaynakli_belge = bool(f["kaynak_irsaliye_id"]) and f["tip"] != "Konsinye"
++        if not f["proforma"] and not _kaynakli_belge:
+             _cari_uygula(conn, req, dict(f), yon=-1)
+             muhasebe.fis_sil(conn, "Fatura", int(fid),   # K26: fiş geri alınır (iade sahnesiyle)
+                              "iade" if f["tip"] in IADE_TIPLER else None)
+-            if f["tip"] in IADE_TIPLER:
+-                # D020 — iade stok bacağı telafi hareketiyle geri alınır (iz korunur).
+-                _stok_uygula_iade(conn, req, dict(f), yon=-1)
++            if f["tip"] in IADE_TIPLER or f["tip"] == "Konsinye":
++                # D020 — iade/konsinye stok bacağı telafi hareketiyle geri alınır (iz korunur).
++                _stok_uygula_fatura(conn, req, dict(f), yon=-1)
+     conn.execute("UPDATE fatura SET durum='İptal' WHERE id=?", (int(fid),))
+     # Kaynaksız kalan Taslak/Reddedildi e-belgeleri de İptal'e al (öksüz kalmasın)
+     conn.execute(
+@@ -866,7 +1076,8 @@ def fatura_red_fisi(req, fid):
+ 
+     # 2) Yevmiye storno (orijinal fiş durur; ters fiş sahne='red' ile yazılır).
+     # D020: iade fişi 'iade' sahnelidir → orijinal araması iki sahneyi de kapsar.
+-    if not f["kaynak_irsaliye_id"]:
++    # D021: Konsinye (IKO kaynaklı da olsa) tam mali üretmişti → storno gerekir.
++    if not f["kaynak_irsaliye_id"] or f["tip"] == "Konsinye":
+         orig = conn.execute("SELECT * FROM yevmiye WHERE kaynak_modul='Fatura' AND kaynak_id=? "
+                             "AND COALESCE(kaynak_sahne,'') IN ('','iade')", (f["id"],)).fetchone()
+         if orig:
+@@ -920,7 +1131,8 @@ def fatura_yazdir(req, fid):
+         return Response("Bu kayıt başka bir şubeye aittir.", "403 Forbidden")
+     # D020-§18 — iade belgesinde kaynak satırı ("İadesi: SF-2026-001").
+     kaynak_no = f.get("kaynak_fatura_no") or ""
+-    belge = yazdir_belge(f, kalemler, "fatura_no", TIP_LABEL[f["tip"]], kaynak_no=kaynak_no)
++    belge = yazdir_belge(f, kalemler, "fatura_no", TIP_LABEL[f["tip"]], kaynak_no=kaynak_no,
++                         proforma=bool(f.get("proforma")))
+     conn.close()
+     return render_template("yazdir/belge.html", belge=belge)
+ 
+@@ -930,8 +1142,8 @@ def fatura_iade_sec(req):
+     """D020-§5 — iade kaynağı seçimi (yalnız Onaylı Satış/Alış faturaları)."""
+     conn = db.get_conn()
+     q = req.q("q").strip()
+-    where, params = ["f.sirket_id=?", "f.durum='Onaylandı'", "f.tip IN ('Satis','Alis')"], \
+-        [db.sirket_id(req)]
++    where, params = ["f.sirket_id=?", "f.durum='Onaylandı'", "f.proforma=0",
++                       "f.tip IN ('Satis','Alis','Konsinye')"], [db.sirket_id(req)]
+     if q:
+         where.append("(f.fatura_no LIKE ? OR c.unvan LIKE ? OR c.kod LIKE ?)")
+         like = f"%{q}%"
+@@ -963,9 +1175,10 @@ def fatura_iade_olustur(req, fid):
+     k = dict(k)
+     _cu = conn.execute("SELECT unvan FROM cari_kart WHERE id=?", (k["cari_id"],)).fetchone()
+     k["cari_unvan"] = _cu["unvan"] if _cu else ""
+-    if k["tip"] not in IADE_KAYNAK or k["durum"] != "Onaylandı":
++    # D021-F3: proforma iade kaynağı olamaz (mali etkisi yok).
++    if k["tip"] not in IADE_KAYNAK or k["durum"] != "Onaylandı" or k["proforma"]:
+         conn.close()
+-        flash(req, "Yalnızca 'Onaylandı' durumundaki satış/alış faturasından iade oluşturulabilir.",
++        flash(req, "Yalnızca 'Onaylandı' durumundaki satış/alış/konsinye faturasından iade oluşturulabilir.",
+               "danger")
+         return redirect(f"/fatura/{k['id']}")
+     if not sube_koruma(req, k["sube_id"]):
+diff --git a/kod/irsaliye.py b/kod/irsaliye.py
+index bbfb4d9..136e5d8 100644
+--- a/kod/irsaliye.py
++++ b/kod/irsaliye.py
+@@ -26,16 +26,20 @@ from core import route, render_template, redirect, flash, audit, notify, izole_s
+ 
+ IRSALIYE_WRITE = ("Admin", "Muhasebe", "Satis")
+ IRSALIYE_ONAY = ("Admin", "Muhasebe")
+-TIPLER = ["Satis", "Alis", "Transfer", "SatisIade", "AlisIade"]
+-TIPLER_FORM = ["Satis", "Alis", "Transfer"]   # D020: normal form yalnız bunları üretir
++TIPLER = ["Satis", "Alis", "Transfer", "SatisIade", "AlisIade", "Konsinye", "KonsinyeIade"]
++TIPLER_FORM = ["Satis", "Alis", "Transfer", "Konsinye", "KonsinyeIade"]   # D020: iade dönüşümden
++KONSINYE_TIPLER = ("Konsinye", "KonsinyeIade")
+ IADE_TIPLER = ("SatisIade", "AlisIade")
+ IADE_KAYNAK = {"Satis": "SatisIade", "Alis": "AlisIade"}   # kaynak tip → iade tipi
+ TIP_LABEL = {"Satis": "Satış İrsaliyesi", "Alis": "Alış İrsaliyesi", "Transfer": "Transfer İrsaliyesi",
+-             "SatisIade": "Satış İade İrsaliyesi", "AlisIade": "Alış İade İrsaliyesi"}
++             "SatisIade": "Satış İade İrsaliyesi", "AlisIade": "Alış İade İrsaliyesi",
++             "Konsinye": "Konsinye İrsaliyesi", "KonsinyeIade": "Konsinye İade İrsaliyesi"}
+ TIP_ON_EK = {"Satis": "IRS", "Alis": "IRA", "Transfer": "IRT",
+-             "SatisIade": "IRSIAD", "AlisIade": "IRAIAD"}
++             "SatisIade": "IRSIAD", "AlisIade": "IRAIAD",
++             "Konsinye": "IKO", "KonsinyeIade": "IKOI"}
+ TIP_KISA = {"Satis": "Satış", "Alis": "Alış", "Transfer": "Transfer",
+-            "SatisIade": "S. İade", "AlisIade": "A. İade"}
++            "SatisIade": "S. İade", "AlisIade": "A. İade",
++            "Konsinye": "Konsinye", "KonsinyeIade": "K. İade"}
+ DURUMLAR = ["Taslak", "Onaylandı", "İptal", "Reddedildi"]
+ DURUM_BADGE = {"Taslak": "b-muted", "Onaylandı": "b-ok", "İptal": "b-danger"}
+ 
+@@ -223,7 +227,11 @@ def _irsaliye_detay(conn, iid, sid=None):
+ 
+ 
+ def _siparis_kontrol(conn, siparis_id, sid=None):
+-    """K10 — yalnız Onaylandı siparişten irsaliye üretilebilir."""
++    """K10 — yalnız Onaylandı/Kısmi siparişten irsaliye üretilebilir.
++
++    D021-F4: kısmi teslim sonrası (Kısmi) kalan için yeni irsaliye açılabilir;
++    aşırı teslimat `_siparis_teslim_kontrol` ile engellenir.
++    """
+     where, params = "id=?", [siparis_id]
+     if sid is not None:
+         where += " AND sirket_id=?"
+@@ -231,8 +239,8 @@ def _siparis_kontrol(conn, siparis_id, sid=None):
+     s = conn.execute(f"SELECT * FROM siparis WHERE {where}", params).fetchone()
+     if not s:
+         return "Kaynak sipariş bulunamadı."
+-    if s["durum"] != "Onaylandı":
+-        return f"Yalnızca 'Onaylandı' durumundaki siparişten irsaliye oluşturulabilir (sipariş: {s['durum']})."
++    if s["durum"] not in ("Onaylandı", "Kısmi"):
++        return f"Yalnızca 'Onaylandı'/'Kısmi' durumundaki siparişten irsaliye oluşturulabilir (sipariş: {s['durum']})."
+     return None
+ 
+ 
+@@ -296,8 +304,9 @@ def _cari_uygula_irsaliye(conn, req, irs, yon):
+ 
+     yon=+1 → Satış→BORÇ, Alış→ALACAK (ilgili_modul='Irsaliye');
+     yon=-1 → irsaliyenin kendi cari hareketini sil (iptal → net sıfır).
+-    Transfer'de cari yoktur → mali etki üretilmez."""
+-    if irs["tip"] == "Transfer" or not irs["cari_id"]:
++    Transfer'de cari yoktur → mali etki üretilmez.
++    D021: konsinye irsaliyede mali etki YOK (savunma; durum rotası da atlar)."""
++    if irs["tip"] in ("Transfer", "Konsinye", "KonsinyeIade") or not irs["cari_id"]:
+         return
+     if yon == -1:
+         conn.execute(
+@@ -433,7 +442,10 @@ def _stok_kontrol_ve_uygula(conn, req, irs, kalemler, yon):
+             stok._hareket_olustur(conn, req, k["stok_id"], k["varyant_id"], depo_id, islem_tipi,
+                                   isaretli, birim_maliyet=None, aciklama=belge_no, belge_no=belge_no,
+                                   ilgili_modul="Irsaliye", ilgili_kayit_id=iid, tarih=tarih)
+-        else:  # Transfer
++        elif irs["tip"] in KONSINYE_TIPLER:
++            # D021-§4 — konsinye irsaliyede stok hareketi YOK (mal defterde ana deponun).
++            continue
++        elif irs["tip"] == "Transfer":
+             stok._hareket_olustur(conn, req, k["stok_id"], k["varyant_id"], depo_id,
+                                   "Depolar Arası Transfer", -k["miktar"] * yon,
+                                   birim_maliyet=None, aciklama=belge_no, belge_no=belge_no,
+@@ -475,6 +487,41 @@ def _belge_iadeleri(conn, kaynak_irsaliye_id):
+         "WHERE kaynak_irsaliye_id=? ORDER BY id", (kaynak_irsaliye_id,)).fetchall()
+ 
+ 
++def _konsinye_satir_bakiye(conn, cari_id, satirlar, sid=None):
++    """D021-§3 — form satırlarına anlık konsinye bakiyesi ('stok:varyant' → bakiye)."""
++    out = {}
++    if not cari_id:
++        return out
++    for s in satirlar:
++        sid2 = s.get("stok_id")
++        if not sid2:
++            continue
++        key = f"{sid2}:{s.get('varyant_id') or 0}"
++        if key not in out:
++            out[key] = cari._konsinye_bakiye(conn, cari_id, sid2, s.get("varyant_id") or 0, sid)
++    return out
++
++
++def _konsinye_onay_kontrol(conn, irsaliye, sid=None):
++    """D021-§3 — IKOI onayında bakiye kilidi. Hata metni döner; None = uygun."""
++    kalemler = conn.execute(
++        "SELECT stok_id, varyant_id, miktar FROM irsaliye_kalem WHERE irsaliye_id=?",
++        (irsaliye["id"],)).fetchall()
++    _istenen = {}
++    for k in kalemler:
++        if not k["stok_id"]:
++            continue
++        _kk = (k["stok_id"], k["varyant_id"] or 0)
++        _istenen[_kk] = _istenen.get(_kk, 0.0) + (k["miktar"] or 0)
++    for (st, vr), mik in _istenen.items():
++        _bak = cari._konsinye_bakiye(conn, irsaliye["cari_id"], st, vr, sid)
++        if mik > _bak + 1e-9:
++            _ad = conn.execute("SELECT kod FROM stok_kart WHERE id=?", (st,)).fetchone()
++            return (f"konsinye bakiyesi yetersiz ({(_ad['kod'] if _ad else st)}: "
++                    f"bakiye {_bak:g}, istenen {mik:g}).")
++    return None
++
++
+ # --------------------------------------------------------------------------
+ # Rotalar
+ # --------------------------------------------------------------------------
+@@ -578,6 +625,7 @@ def irsaliye_yeni(req):
+         hedef_depo_id=None, cari_id=cari_id, cari_etiket=cari_etiket, cari_iskonto=cari_iskonto, birimler=db.birimler(sid=db.sirket_id(req)),
+         para_birimleri=db.para_birimleri(sid=db.sirket_id(req)),
+         kaynak_siparis_id=kaynak_siparis_id, kaynak_siparis=siparis_row,
++        konsinye_bakiye={},
+         kdv_dahil=0, bugun=datetime.date.today().isoformat())
+ 
+ 
+@@ -625,7 +673,8 @@ def irsaliye_detay(req, iid):
+     return render_template("irsaliye/detay.html", irsaliye=r, kalemler=kalemler, loglar=loglar,
+                            faturalar=faturalar, faturalandi_no=faturalandi_no,
+                            faturalandi_id=faturalandi_id, tip_label=TIP_LABEL,
+-                           iade_tipler=IADE_TIPLER, iadeler=iadeler, iade_edilen=iade_edilen,
++                           iade_tipler=IADE_TIPLER, konsinye_tipler=KONSINYE_TIPLER,
++                           iadeler=iadeler, iade_edilen=iade_edilen,
+                            ekler=ekler_list, ek_upload=ek_upload, ek_modul="Irsaliye",
+                            ek_kayit_id=r["id"], ek_geri=f"/irsaliye/{r['id']}",
+                            e_belgeler=e_belgeler)
+@@ -666,6 +715,8 @@ def irsaliye_duzenle(req, iid):
+     stoklar = _stoklar(conn, db.sirket_id(req))
+     depolar = _depolar(conn, db.sirket_id(req))
+     cari_etiket, cari_iskonto = _cari_secim(cariler, r["cari_id"])
++    bakiyeler = _konsinye_satir_bakiye(conn, r["cari_id"], satirlar, db.sirket_id(req)) \
++        if r["tip"] in KONSINYE_TIPLER else {}
+     conn.close()
+     return render_template("irsaliye/form.html", irsaliye=r, satirlar=satirlar, cariler=cariler,
+                            stoklar=stoklar, depolar=depolar, toplamlar=toplamlar, tip=r["tip"],
+@@ -673,6 +724,7 @@ def irsaliye_duzenle(req, iid):
+                            cari_id=r["cari_id"], cari_etiket=cari_etiket, cari_iskonto=cari_iskonto, birimler=db.birimler(sid=db.sirket_id(req)),
+                            para_birimleri=db.para_birimleri(sid=db.sirket_id(req)),
+                            kaynak_siparis_id=r["kaynak_siparis_id"], kaynak_siparis=None,
++                           konsinye_bakiye=bakiyeler,
+                            kdv_dahil=(r["kdv_dahil"] or 0),
+                            bugun=datetime.date.today().isoformat())
+ 
+@@ -841,6 +893,31 @@ def _form_post(req, conn, mevcut):
+             flash(req, "Teslimat kontrolü: " + " · ".join(teslim_hata), "danger")
+             return _form_render(req, conn, mevcut, satirlar, tip, cari_id, depo_id, hedef_depo_id,
+                                 tarih, aciklama, kaynak_siparis_id)
++    if tip in KONSINYE_TIPLER:
++        # D021-§3/§5: konsinye yalnız stoklu satır; siparişten üretilemez.
++        if any(not s["stok_id"] for s in gecerli):
++            flash(req, "Konsinye irsaliyesinde manuel satır olamaz (bakiye stok bazlı izlenir).",
++                  "danger")
++            return _form_render(req, conn, mevcut, satirlar, tip, cari_id, depo_id, hedef_depo_id,
++                                tarih, aciklama, kaynak_siparis_id)
++        if kaynak_siparis_id:
++            flash(req, "Konsinye irsaliyesi siparişten üretilemez.", "danger")
++            return _form_render(req, conn, mevcut, satirlar, tip, cari_id, depo_id, hedef_depo_id,
++                                tarih, aciklama, kaynak_siparis_id)
++    if tip == "KonsinyeIade":
++        # D021-§3: IKOI girdisi ≤ anlık bakiye (DB bloke; satır toplamı bazında).
++        _istenen = {}
++        for s in gecerli:
++            _k = (s["stok_id"], s["varyant_id"] or 0)
++            _istenen[_k] = _istenen.get(_k, 0.0) + (s["miktar"] or 0)
++        for (st, vr), mik in _istenen.items():
++            _bak = cari._konsinye_bakiye(conn, cari_id, st, vr, db.sirket_id(req))
++            if mik > _bak + 1e-9:
++                _ad = conn.execute("SELECT kod FROM stok_kart WHERE id=?", (st,)).fetchone()
++                flash(req, f"Konsinye bakiyesi yetersiz ({(_ad['kod'] if _ad else st)}: "
++                           f"bakiye {_bak:g}, istenen {mik:g}).", "danger")
++                return _form_render(req, conn, mevcut, satirlar, tip, cari_id, depo_id,
++                                    hedef_depo_id, tarih, aciklama, kaynak_siparis_id)
+     top = _toplamlar(gecerli)
+ 
+     islem = None
+@@ -912,12 +989,15 @@ def _form_render(req, conn, mevcut, satirlar, tip, cari_id, depo_id, hedef_depo_
+                                             "hedef_depo_id": hedef_depo_id, "tarih": tarih,
+                                             "aciklama": aciklama}
+     kdv_dahil = 1 if req.form.get("kdv_dahil") in ("1", "dahil", "on") else (0 if mevcut is None else (mevcut["kdv_dahil"] or 0))
++    bakiyeler = _konsinye_satir_bakiye(conn, cari_id, satirlar, db.sirket_id(req)) \
++        if tip in KONSINYE_TIPLER and cari_id else {}
+     return render_template("irsaliye/form.html", irsaliye=irsaliye, satirlar=satirlar,
+                            cariler=cariler, stoklar=stoklar, depolar=depolar, toplamlar=toplamlar,
+                            tip=tip, depo_id=depo_id, hedef_depo_id=hedef_depo_id,
+                            cari_id=cari_id, cari_etiket=cari_etiket, cari_iskonto=cari_iskonto, birimler=db.birimler(sid=db.sirket_id(req)),
+                            para_birimleri=db.para_birimleri(sid=db.sirket_id(req)),
+                            kaynak_siparis_id=kaynak_siparis_id, kaynak_siparis=None,
++                           konsinye_bakiye=bakiyeler,
+                            kdv_dahil=kdv_dahil, bugun=datetime.date.today().isoformat())
+ 
+ 
+@@ -942,18 +1022,28 @@ def irsaliye_durum(req, iid):
+         kalemler = [dict(k) for k in conn.execute(
+             "SELECT k.*, st.kod AS stok_kod FROM irsaliye_kalem k "
+             "JOIN stok_kart st ON st.id=k.stok_id WHERE k.irsaliye_id=?", (int(iid),)).fetchall()]
+-        hatalar = _stok_kontrol_ve_uygula(conn, req, dict(r), kalemler, yon=1)
+-        if hatalar:
+-            conn.close()
+-            flash(req, "İrsaliye onaylanamadı: " + " · ".join(hatalar), "danger")
+-            return redirect(f"/irsaliye/{iid}")
++        # D021-§4 — konsinye irsaliyede stok/cari/yevmiye YOK (yalnız bakiye agregatı).
++        konsinye_mi = r["tip"] in KONSINYE_TIPLER
++        if konsinye_mi:
++            if r["tip"] == "KonsinyeIade":
++                _bak_hata = _konsinye_onay_kontrol(conn, dict(r), db.sirket_id(req))
++                if _bak_hata:
++                    conn.close()
++                    flash(req, "Konsinye iade irsaliyesi onaylanamadı: " + _bak_hata, "danger")
++                    return redirect(f"/irsaliye/{iid}")
++        else:
++            hatalar = _stok_kontrol_ve_uygula(conn, req, dict(r), kalemler, yon=1)
++            if hatalar:
++                conn.close()
++                flash(req, "İrsaliye onaylanamadı: " + " · ".join(hatalar), "danger")
++                return redirect(f"/irsaliye/{iid}")
+         # F1 — mali etki (cari + yevmiye) irsaliye onayında oluşur (Transfer hariç).
+         # D020-§12 — iade irsaliye YALNIZ stok üretir; mali etki iade faturasındadır.
+         iade_mi = r["tip"] in IADE_TIPLER
+-        if not iade_mi:
++        if not iade_mi and not konsinye_mi:
+             _cari_uygula_irsaliye(conn, req, dict(r), yon=1)
+         conn.execute("UPDATE irsaliye SET durum='Onaylandı' WHERE id=?", (int(iid),))
+-        if not iade_mi:
++        if not iade_mi and not konsinye_mi:
+             muhasebe.fis_uret(conn, "Irsaliye", int(iid))
+         # F4 — Satış/Alış irsaliyesi onayında otomatik e-İrsaliye taslağı (Transfer hariç).
+         # e-Dönüşüm yalnızca BELGELEŞTİRME katmanıdır; F1 mali etkisi yukarıda işlendi.
+@@ -965,14 +1055,20 @@ def irsaliye_durum(req, iid):
+                 pass  # e-belge üretimi hata verirse irsaliye onayını bloke etme
+         conn.commit()
+         audit(req, "irsaliye", int(iid), "durum", {"eski": r["durum"], "yeni": "Onaylandı"})
++        if konsinye_mi:
++            _bilgi = "stok/cari/yevmiye etkisi yok; konsinye bakiyesi güncellendi."
++            _mesaj = "Konsinye irsaliyesi onaylandı (stok/cari/yevmiye işlenmedi; bakiye güncellendi)."
++        elif iade_mi:
++            _bilgi = "yalnız stok hareketi işlendi (iade). "
++            _mesaj = "İade irsaliyesi onaylandı; yalnız stok hareketi oluşturuldu."
++        else:
++            _bilgi = "stok + cari hareket (borç/alacak) + yevmiye işlendi. "
++            _mesaj = "İrsaliye onaylandı; cari hareket ve yevmiye oluşturuldu."
+         notify("bilgi", "İrsaliye onaylandı",
+-               f"{r['irsaliye_no']} onaylandı; "
+-               + ("yalnız stok hareketi işlendi (iade). " if iade_mi
+-                  else "stok + cari hareket (borç/alacak) + yevmiye işlendi. "),
++               f"{r['irsaliye_no']} onaylandı; " + _bilgi,
+                "irsaliye", int(iid), sirket_id=db.sirket_id(req))
+         conn.close()
+-        flash(req, "İade irsaliyesi onaylandı; yalnız stok hareketi oluşturuldu."
+-              if iade_mi else "İrsaliye onaylandı; cari hareket ve yevmiye oluşturuldu.", "ok")
++        flash(req, _mesaj, "ok")
+         return redirect(f"/irsaliye/{iid}")
+ 
+     # --- İptal ---
+@@ -1003,10 +1099,12 @@ def irsaliye_durum(req, iid):
+         kalemler = [dict(k) for k in conn.execute(
+             "SELECT k.*, st.kod AS stok_kod FROM irsaliye_kalem k "
+             "JOIN stok_kart st ON st.id=k.stok_id WHERE k.irsaliye_id=?", (int(iid),)).fetchall()]
+-        _stok_kontrol_ve_uygula(conn, req, dict(r), kalemler, yon=-1)
++        # D021 — konsinye irsaliye etki üretmemişti; geri alınacak bir şey yok.
++        if r["tip"] not in KONSINYE_TIPLER:
++            _stok_kontrol_ve_uygula(conn, req, dict(r), kalemler, yon=-1)
+         # F1 — mali etki geri alınır (cari hareket sil + yevmiye fişi sil).
+         # D020 — iade irsaliye mali etki üretmemişti; geri alınacak bir şey yok.
+-        if r["tip"] not in IADE_TIPLER:
++        if r["tip"] not in IADE_TIPLER and r["tip"] not in KONSINYE_TIPLER:
+             _cari_uygula_irsaliye(conn, req, dict(r), yon=-1)
+             muhasebe.fis_sil(conn, "Irsaliye", int(iid))
+     conn.execute("UPDATE irsaliye SET durum='İptal' WHERE id=?", (int(iid),))
+diff --git a/kod/muhasebe.py b/kod/muhasebe.py
+index 07bfaa1..e610cab 100644
+--- a/kod/muhasebe.py
++++ b/kod/muhasebe.py
+@@ -69,10 +69,11 @@ def _fatura_satirlar(conn, f):
+     ara = round((f["ara_toplam"] or 0.0) * kur, 2)
+     kdv = round((f["kdv_toplam"] or 0.0) * kur, 2)
+     genel = round((f["genel_toplam"] or 0.0) * kur, 2)
+-    if f["tip"] == "Satis":
++    if f["tip"] in ("Satis", "Konsinye"):
+         # Manuel satırlar da hasılat (600) — yevmiye yapısı değişmez.
++        # D021: konsinye fatura satış aynasıdır.
+         return [("120", genel, 0.0), ("600", 0.0, ara), ("391", 0.0, kdv)]
+-    if f["tip"] == "SatisIade":
++    if f["tip"] in ("SatisIade", "KonsinyeIade"):
+         # Satış iadesi: 600/391 borç, 120 alacak (satış fişinin tersi).
+         return [("600", ara, 0.0), ("391", kdv, 0.0), ("120", 0.0, genel)]
+     # Alış / Alış iadesi: matrahı stoklu / manuel olarak böl (manuel → 770).
+@@ -111,8 +112,9 @@ def _irsaliye_satirlar(conn, i):
+     Satış: 120 borç / 600 alacak (matrah) + 391 alacak (KDV).
+     Alış: stoklu → 153, manuel → 770 + 191 borç (KDV) / 320 alacak.
+     Transfer: cari yok → mali etki üretilmez (None). TL karşılık (K18).
+-    D020: iade irsaliye YALNIZ stok üretir; mali etki iade faturasındadır → None."""
+-    if i["tip"] in ("Transfer", "SatisIade", "AlisIade"):
++    D020: iade irsaliye YALNIZ stok üretir; mali etki iade faturasındadır → None.
++    D021: konsinye irsaliyelerde mali etki YOK (stok bile yok) → None."""
++    if i["tip"] in ("Transfer", "SatisIade", "AlisIade", "Konsinye", "KonsinyeIade"):
+         return None
+     kur = i["doviz_kur"] or 1.0
+     ara = round((i["ara_toplam"] or 0.0) * kur, 2)
+@@ -299,7 +301,7 @@ def fis_uret(conn, kaynak_modul, kaynak_id, sahne=None):
+         sid = d["sirket_id"]
+     elif kaynak_modul == "Irsaliye":
+         i = conn.execute("SELECT * FROM irsaliye WHERE id=?", (int(kaynak_id),)).fetchone()
+-        if not i or i["durum"] != "Onaylandı" or i["tip"] in ("Transfer", "SatisIade", "AlisIade"):
++        if not i or i["durum"] != "Onaylandı" or i["tip"] in ("Transfer", "SatisIade", "AlisIade", "Konsinye", "KonsinyeIade"):
+             return None
+         satirlar = _irsaliye_satirlar(conn, i)
+         aciklama = f"{i['irsaliye_no']} — {i['aciklama'] or ''}".strip(" —")
+diff --git a/kod/regresyon_runner.py b/kod/regresyon_runner.py
+index fe7e1a8..237b8b5 100644
+--- a/kod/regresyon_runner.py
++++ b/kod/regresyon_runner.py
+@@ -51,8 +51,8 @@ for t in tests:
+     rows.append((t, exitc, summary))
+ 
+ report = []
+-report.append(f"===== D020 (v1.51.0) — TAM REGRESYON =====")
+-report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.51.0")
++report.append(f"===== D021 (v1.52.0) — TAM REGRESYON =====")
++report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.52.0")
+ report.append("")
+ for t, e, s in rows:
+     report.append(f"[{t:<32}] exit={e} | {s}")
+diff --git a/kod/siparis.py b/kod/siparis.py
+index bea36d8..ae00dbc 100644
+--- a/kod/siparis.py
++++ b/kod/siparis.py
+@@ -208,7 +208,11 @@ def _siparis_detay(conn, sid, sirket_id=None):
+ 
+ 
+ def _teklif_kaynak_kontrol(conn, kaynak_id, sid=None):
+-    """K10 — yalnız Onaylandı tekliften sipariş üretilebilir."""
++    """K10 — yalnız Onaylandı/'Siparişe Dönüştü' tekliften sipariş üretilebilir.
++
++    D021-F4: kısmi kısmi birden fazla sipariş üretilebilir (ilk sipariş teklifi
++    'Siparişe Dönüştü'ye alır; sonraki siparişler o durumdan devam eder).
++    """
+     where, params = "id=?", [kaynak_id]
+     if sid is not None:
+         where += " AND sirket_id=?"
+@@ -216,8 +220,9 @@ def _teklif_kaynak_kontrol(conn, kaynak_id, sid=None):
+     t = conn.execute(f"SELECT * FROM teklif WHERE {where}", params).fetchone()
+     if not t:
+         return "Kaynak teklif bulunamadı."
+-    if t["durum"] != "Onaylandı":
+-        return f"Yalnızca 'Onaylandı' durumundaki tekliften sipariş oluşturulabilir (teklif: {t['durum']})."
++    if t["durum"] not in ("Onaylandı", "Siparişe Dönüştü"):
++        return (f"Yalnızca 'Onaylandı' durumundaki tekliften sipariş oluşturulabilir "
++                f"(teklif: {t['durum']}).")
+     return None
+ 
+ 
+@@ -286,7 +291,7 @@ def siparis_yeni(req):
+                      "manuel_ad": (k["aciklama"] or "") if not k["stok_id"] else ""} for k in kalemler]
+         # K12 — bu tekliften daha önce oluşturulan siparişler (bilgilendirme amaçlı)
+         onceki_siparisler = conn.execute(
+-            "SELECT siparis_no, durum FROM siparis WHERE kaynak_teklif_id=? ORDER BY id", (kaynak,)
++            "SELECT id, siparis_no, durum FROM siparis WHERE kaynak_teklif_id=? ORDER BY id", (kaynak,)
+         ).fetchall()
+ 
+     cariler = _cariler(conn, "Musteri", db.sirket_id(req))
+@@ -335,9 +340,18 @@ def siparis_detay(req, sid):
+         "SELECT i.id, i.irsaliye_no, i.durum, i.tarih, i.genel_toplam FROM irsaliye i "
+         "WHERE i.kaynak_siparis_id=? ORDER BY i.id", (s["id"],),
+     ).fetchall()
++    # D021-F4 — her irsaliyenin faturası (durum rozeti + link için).
++    faturalar = {}
++    if irsaliyeler:
++        _ph = ",".join("?" * len(irsaliyeler))
++        for _fr in conn.execute(
++                f"SELECT id, fatura_no, durum, kaynak_irsaliye_id FROM fatura "
++                f"WHERE kaynak_irsaliye_id IN ({_ph}) ORDER BY id",
++                tuple(x["id"] for x in irsaliyeler)).fetchall():
++            faturalar.setdefault(_fr["kaynak_irsaliye_id"], []).append(dict(_fr))
+     conn.close()
+     return render_template("siparis/detay.html", siparis=s, kalemler=kalemler, loglar=loglar,
+-                           irsaliyeler=irsaliyeler, tip_label=TIP_LABEL)
++                           irsaliyeler=irsaliyeler, faturalar=faturalar, tip_label=TIP_LABEL)
+ 
+ 
+ @route(r"/siparis/(?P<sid>\d+)/duzenle", methods=("GET", "POST"), roles=SIPARIS_WRITE)
+@@ -536,6 +550,8 @@ def _form_post(req, conn, mevcut):
+              s["iskonto_orani"], s["kdv_orani"], s.get("kdv_dahil"), s["tutar"],
+              (s.get("manuel_ad") or "").strip() or None, birim, goruntu, db.sirket_id(req)),
+         )
++    # D021-F4 — NOT: teklif kilidi oluşumda DEĞİL onayda uygulanır (madde 16);
++    # bkz. siparis_durum. Burada işaretleme yapılmaz.
+     conn.commit()
+     audit(req, "siparis", sid, islem[0], islem[1])
+     flash(req, islem[2], "ok")
+@@ -610,6 +626,11 @@ def siparis_durum(req, sid):
+                     (k["miktar"], k["stok_id"], s["depo_id"]),
+                 )
+         conn.execute("UPDATE siparis SET durum='Onaylandı' WHERE id=?", (int(sid),))
++        # D021-F4 (madde 16) — tekliften doğan sipariş ONAYLANINCA teklif kapanır:
++        # 'Siparişe Dönüştü' + kilit (yalnız hâlâ Onaylandı ise; kısmi ikinci sipariş yarışı zararsız).
++        if s["kaynak_teklif_id"]:
++            conn.execute("UPDATE teklif SET durum='Siparişe Dönüştü' "
++                         "WHERE id=? AND durum='Onaylandı'", (s["kaynak_teklif_id"],))
+         conn.commit()
+         audit(req, "siparis", int(sid), "durum", {"eski": s["durum"], "yeni": "Onaylandı"})
+         if s["tip"] == "Musteri":
+@@ -634,10 +655,22 @@ def siparis_durum(req, sid):
+                 (k["miktar"], k["stok_id"], s["depo_id"]),
+             )
+     conn.execute("UPDATE siparis SET durum='İptal' WHERE id=?", (int(sid),))
++    # D021-F4 (madde 16) — sipariş iptalinde teklif 'Onaylandı'ya döner (yeniden
++    # kullanılabilir); ancak aynı tekliften BAŞKA aktif sipariş varsa kilit korunur.
++    _teklif_mesaj = ""
++    if s["kaynak_teklif_id"]:
++        _baska = conn.execute(
++            "SELECT 1 FROM siparis WHERE kaynak_teklif_id=? AND id!=? "
++            "AND durum IN ('Onaylandı','Kısmi','Tamamlandı') LIMIT 1",
++            (s["kaynak_teklif_id"], int(sid))).fetchone()
++        if not _baska:
++            conn.execute("UPDATE teklif SET durum='Onaylandı' "
++                         "WHERE id=? AND durum='Siparişe Dönüştü'", (s["kaynak_teklif_id"],))
++            _teklif_mesaj = " Kaynak teklif yeniden 'Onaylandı' durumuna alındı."
+     conn.commit()
+     audit(req, "siparis", int(sid), "durum", {"eski": s["durum"], "yeni": "İptal"})
+     conn.close()
+-    flash(req, "Sipariş iptal edildi (rezervasyon serbest bırakıldı).", "ok")
++    flash(req, "Sipariş iptal edildi (rezervasyon serbest bırakıldı)." + _teklif_mesaj, "ok")
+     return redirect(f"/siparis/{sid}")
+ 
+ 
+diff --git a/kod/teklif.py b/kod/teklif.py
+index 64caf14..dc7b478 100644
+--- a/kod/teklif.py
++++ b/kod/teklif.py
+@@ -17,7 +17,8 @@ import stok
+ from core import route, render_template, redirect, flash, audit, izole_sube, sube_koruma, Response, kdv_ayikla, yazdir_belge
+ 
+ TEKLIF_WRITE = ("Admin", "Muhasebe", "Satis")
+-DURUMLAR = ["Taslak", "Gönderildi", "Onaylandı", "Reddedildi", "Süresi Doldu"]
++DURUMLAR = ["Taslak", "Gönderildi", "Onaylandı", "Reddedildi", "Süresi Doldu",
++            "Siparişe Dönüştü"]
+ DURUM_BADGE = {
+     "Taslak": "b-muted",
+     "Gönderildi": "b-info",
+@@ -283,9 +284,10 @@ def teklif_duzenle(req, tid):
+     if not t:
+         conn.close()
+         return redirect("/teklif")
+-    if t["durum"] in ("Onaylandı", "Reddedildi"):
++    if t["durum"] in ("Onaylandı", "Reddedildi", "Siparişe Dönüştü"):
+         conn.close()
+-        flash(req, "Onaylanmış veya reddedilmiş teklifler düzenlenemez.", "danger")
++        flash(req, "Onaylanmış, reddedilmiş veya siparişe dönüştürülmüş teklifler düzenlenemez.",
++              "danger")
+         return redirect(f"/teklif/{t['id']}")
+     if req.method == "POST":
+         return _form_post(req, conn, t)
+@@ -467,6 +469,22 @@ def teklif_durum(req, tid):
+     if not t:
+         conn.close()
+         return redirect("/teklif")
++    # D021-F4 — 'Siparişe Dönüştü' kilittir: yalnız sipariş-beslemeli + Onaylandı'dan,
++    # geri dönüş yok. (Süresi Doldu/Reddedildi zaten düzeltilemez.)
++    if durum == "Siparişe Dönüştü":
++        if t["durum"] != "Onaylandı":
++            conn.close()
++            flash(req, "Yalnızca 'Onaylandı' teklifi siparişe dönüştürülebilir.", "danger")
++            return redirect(f"/teklif/{tid}")
++        if not conn.execute("SELECT 1 FROM siparis WHERE kaynak_teklif_id=? LIMIT 1",
++                            (int(tid),)).fetchone():
++            conn.close()
++            flash(req, "Önce bu tekliften sipariş oluşturun.", "danger")
++            return redirect(f"/teklif/{tid}")
++    if t["durum"] == "Siparişe Dönüştü" and durum != "Siparişe Dönüştü":
++        conn.close()
++        flash(req, "'Siparişe Dönüştü' teklifi değiştirilemez (kilitli).", "danger")
++        return redirect(f"/teklif/{tid}")
+     conn.execute("UPDATE teklif SET durum=? WHERE id=?", (durum, int(tid)))
+     conn.commit()
+     audit(req, "teklif", int(tid), "durum", {"eski": t["durum"], "yeni": durum})
+diff --git a/kod/templates/cari/detay.html b/kod/templates/cari/detay.html
+index f1056d7..d793549 100644
+--- a/kod/templates/cari/detay.html
++++ b/kod/templates/cari/detay.html
+@@ -13,6 +13,7 @@
+     <a class="btn" href="/cari/{{ cari.id }}/ekstre">Ekstre</a>
+     <a class="btn" href="/cari/{{ cari.id }}/tahsilat">💰 Tahsilat</a>
+     <a class="btn" href="/cari/{{ cari.id }}/odeme">💸 Ödeme</a>
++    <a class="btn" href="/cari/konsinye?cari_id={{ cari.id }}">📦 Konsinye</a>
+     <a class="btn primary" href="/cari/{{ cari.id }}/duzenle">✏️ Düzenle</a>
+     {% if silinebilir %}
+     <form method="post" action="/cari/{{ cari.id }}/sil" style="display:inline;"
+@@ -24,6 +25,17 @@
+   </div>
+ </div>
+ 
++{% if konsinye and konsinye.kalem %}
++<div class="card" style="border-left:4px solid var(--info);">
++  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center;">
++    <div class="muted">📦 <b>Konsinye Bakiyesi:</b> bu müşteride bekleyen
++      <b>{{ konsinye.kalem }} kalem / {{ konsinye.bakiye|sayi }} birim</b>
++      (yalnız Onaylı IKO/IKOI/FKO; Taslak/İptal/Red hariç).</div>
++    <a class="btn sm" href="/cari/konsinye?cari_id={{ cari.id }}">Detayı Aç →</a>
++  </div>
++</div>
++{% endif %}
++
+ <div class="tabs">
+   <a class="tab {{ 'active' if not sekme }}" href="/cari/{{ cari.id }}">Bilgiler</a>
+   <a class="tab {{ 'active' if sekme == 'hareket' }}" href="/cari/{{ cari.id }}?sekme=hareket">Hareketler</a>
+diff --git a/kod/templates/cari/liste.html b/kod/templates/cari/liste.html
+index e731173..bf390b8 100644
+--- a/kod/templates/cari/liste.html
++++ b/kod/templates/cari/liste.html
+@@ -9,6 +9,7 @@
+     <div class="desc">Müşteri ve tedarikçi kartları, bakiyeler, kredi limitleri ve yaşlandırma.</div>
+   </div>
+   <div class="page-actions">
++    <a class="btn" href="/cari/konsinye">📦 Konsinye Durumu</a>
+     <a class="btn" href="/cari/rapor">📋 Yaşlandırma Raporu</a>
+     <a class="btn" href="/cari/gruplar">🗂️ Gruplar</a>
+     <a class="btn" href="/cari/sablon">⬇ Şablon</a>
+diff --git a/kod/templates/cari/makbuz.html b/kod/templates/cari/makbuz.html
+index f1f77a9..82c5ab1 100644
+--- a/kod/templates/cari/makbuz.html
++++ b/kod/templates/cari/makbuz.html
+@@ -65,7 +65,7 @@
+     <tbody>
+       {% for s in satirlar %}
+       <tr>
+-        <td><b>{{ s.sekil }}</b></td>
++        <td><b>{{ 'Kredi Kartı' if s.sekil == 'Kart' else s.sekil }}</b></td>
+         <td>{{ s.detay }}</td>
+         <td class="num">{% if para_birimi != 'TRY' %}{{ s.tutar|sayi }} {{ para_birimi }}{% else %}{{ s.tutar|para }}{% endif %}</td>
+       </tr>
+diff --git a/kod/templates/cari/tahsilat_odeme.html b/kod/templates/cari/tahsilat_odeme.html
+index 00d1e14..2823c02 100644
+--- a/kod/templates/cari/tahsilat_odeme.html
++++ b/kod/templates/cari/tahsilat_odeme.html
+@@ -32,7 +32,16 @@
+   </div>
+ </div>
+ 
+-<form method="post" action="/cari/{{ cari.id }}/{{ yon }}" id="odeme-form">
++{% if bagli_fatura %}
++<div class="card" style="border-left:4px solid #4aa3ff;">
++  <div class="muted">🧾 Bağlı fatura: <a href="/fatura/{{ bagli_fatura.id }}"><b>{{ bagli_fatura.fatura_no }}</b></a>
++    · Toplam: <b>{{ bagli_fatura.genel_toplam|para(bagli_fatura.para_birimi) }}</b>
++    · Önerilen tahsilat/ödeme: <b>{{ bagli_tutar|para(bagli_fatura.para_birimi) }}</b> (güncel kalan).
++    Bu işlem faturaya bağlanır — kalan düşer, makbuzda görünür.</div>
++</div>
++{% endif %}
++
++<form method="post" action="/cari/{{ cari.id }}/{{ yon }}{% if bagli_fatura %}?fatura={{ bagli_fatura.id }}{% endif %}" id="odeme-form">
+   <input type="hidden" name="csrf" value="{{ csrf_token }}">
+ 
+   <div class="card">
+@@ -77,9 +86,9 @@
+         </select>
+       </div>
+       <div class="fitem" style="grid-column:span 4;">
+-        <label>POS Terminali (Kart komisyonu için)</label>
++        <label>POS Terminali (opsiyonel — Kart komisyonu için)</label>
+         <select name="terminal_id" id="terminal-sel">
+-          <option value="">— Seçin —</option>
++          <option value="">— Yok (komisyonsuz) —</option>
+           {% for t in terminaller %}
+           <option value="{{ t.id }}" data-komisyon="{{ t.komisyon_orani }}">{{ t.ad }} (%{{ t.komisyon_orani }} komisyon)</option>
+           {% endfor %}
+@@ -193,6 +202,19 @@
+   kurGiris.addEventListener('input', hesapla);
+ 
+   satirEkle();
++  {% if bagli_fatura %}
++  // D021-B4 — fatura bağlantılı açılışta ilk satır Kredi Kartı + kalan tutar ile dolar.
++  (function () {
++    var ilk = odemeBody.querySelector('tr.odeme');
++    if (ilk) {
++      var sel = ilk.querySelector('.odeme-tip');
++      sel.value = 'Kart';
++      sel.dispatchEvent(new Event('change'));
++      ilk.querySelector('[name=p_tutar]').value = "{{ bagli_tutar }}";
++    }
++    {% if bagli_fatura.para_birimi %}pbSel.value = "{{ bagli_fatura.para_birimi }}";{% endif %}
++  })();
++  {% endif %}
+   hesapla();
+ })();
+ </script>
+diff --git a/kod/templates/fatura/detay.html b/kod/templates/fatura/detay.html
+index 9d67ed3..2ee08eb 100644
+--- a/kod/templates/fatura/detay.html
++++ b/kod/templates/fatura/detay.html
+@@ -7,18 +7,26 @@
+   <div>
+     <h1>{{ fatura.fatura_no }}</h1>
+     <div class="desc">
++      {% if fatura.proforma %}<span class="badge b-warn">PROFORMA — fatura değil</span> · {% endif %}
+       {{ tip_label[fatura.tip] }} · {{ fatura.cari_unvan or '' }} ({{ fatura.cari_kod or '' }})
+       · {{ fatura.tarih|tarih }}
+       {% if fatura.vade %} · Vade: {{ fatura.vade|tarih }}{% endif %}
+       {% if fatura.belge_no %} · 📄 Belge No: <b>{{ fatura.belge_no }}</b>{% endif %}
++      {% if fatura.tip == 'Konsinye' and fatura.depo_ad %} · 📦 Çıkış: <b>{{ fatura.depo_ad }}</b>{% endif %}
+       · {% if fatura.durum == 'Taslak' %}<span class="badge b-muted">Taslak</span>
+       {% elif fatura.durum == 'Onaylandı' %}<span class="badge b-ok">Onaylandı</span>
+       {% elif fatura.durum == 'Reddedildi' %}<span class="badge b-danger">Reddedildi</span>
+       {% else %}<span class="badge b-danger">İptal</span>{% endif %}
+     </div>
++    {% if fatura.proforma %}
++    <div class="muted" style="margin-top:4px;">ℹ️ Proforma onaylansa bile cari/stok/yevmiye oluşmaz; gerçek fatura ayrı üretilir (<b>PF-</b> serisi, fatura no aralığına girmez).</div>
++    {% endif %}
+     {% if fatura.kaynak_irsaliye_no %}
+     <div class="muted" style="margin-top:4px;">🔗 Kaynak irsaliye: <a href="/irsaliye/{{ fatura.kaynak_irsaliye_id }}">{{ fatura.kaynak_irsaliye_no }}</a></div>
+     {% endif %}
++    {% if fatura.kaynak_proforma_no %}
++    <div class="muted" style="margin-top:4px;">🧾 Kaynak proforma: <a href="/fatura/{{ fatura.kaynak_proforma_id }}">{{ fatura.kaynak_proforma_no }}</a></div>
++    {% endif %}
+     {% if fatura.kaynak_servis_no %}
+     <div class="muted" style="margin-top:4px;">🛠️ Kaynak servis: <a href="/servis/{{ fatura.kaynak_servis_id }}">{{ fatura.kaynak_servis_no }}</a></div>
+     {% endif %}
+@@ -29,7 +37,10 @@
+   <div class="page-actions">
+     <a class="btn" href="/fatura">← Liste</a>
+     <a class="btn" href="/fatura/{{ fatura.id }}/yazdir">🖨 Yazdır / PDF</a>
+-    {% if fatura.durum == 'Onaylandı' and fatura.tip in ['Satis','Alis'] and user.rol in ['Admin','Muhasebe','Satis'] %}
++    {% if fatura.proforma and fatura.durum in ['Taslak','Onaylandı'] and user.rol in ['Admin','Muhasebe','Satis'] %}
++    <a class="btn ok" href="/fatura/yeni?kaynak_proforma={{ fatura.id }}">🔄 Faturaya Dönüştür</a>
++    {% endif %}
++    {% if not fatura.proforma and fatura.durum == 'Onaylandı' and fatura.tip in ['Satis','Alis','Konsinye'] and user.rol in ['Admin','Muhasebe','Satis'] %}
+     <a class="btn warn" href="/fatura/{{ fatura.id }}/iade-olustur">↩ İade Faturası Oluştur</a>
+     {% endif %}
+     {% if fatura.durum == 'Taslak' and user.rol in ['Admin','Muhasebe','Satis'] %}
+@@ -74,12 +85,31 @@
+ </div>
+ {% endif %}
+ 
+-{% if fatura.durum == 'Onaylandı' %}
++{% if donusumler %}
++<div class="card">
++  <div class="card-head"><h2>🧾 Bu Proformadan Üretilen Faturalar</h2></div>
++  <table class="tbl">
++    <thead><tr><th>No</th><th>Tarih</th><th class="num">Tutar</th><th>Durum</th></tr></thead>
++    <tbody>
++      {% for d in donusumler %}
++      <tr>
++        <td class="strong"><a href="/fatura/{{ d.id }}">{{ d.fatura_no }}</a></td>
++        <td>{{ d.tarih|tarih }}</td>
++        <td class="num">{{ d.genel_toplam|para(d.para_birimi) }}</td>
++        <td>{{ d.durum }}</td>
++      </tr>
++      {% endfor %}
++    </tbody>
++  </table>
++</div>
++{% endif %}
++
++{% if fatura.durum == 'Onaylandı' and not fatura.proforma %}
+ <div class="card" style="border-left:4px solid #4aa3ff;">
+   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;align-items:center;">
+     <div>
+       <div class="muted">💳 Ödeme Durumu (bağlı Kasa/Banka hareketleri)</div>
+-      {% if fatura.tip in ['Satis','AlisIade'] %}
++      {% if fatura.tip in ['Satis','AlisIade','Konsinye'] %}
+       <div class="strong" style="font-size:17px;">Tahsil edilen: {{ odenen|para(fatura.para_birimi) }}{% if fatura.para_birimi != 'TRY' %} (≈ {{ odenen_tl|para }}){% endif %} <span class="muted">· Kalan: {{ kalan|para(fatura.para_birimi) }}{% if fatura.para_birimi != 'TRY' %} (≈ {{ kalan_tl|para }}){% endif %}</span></div>
+       {% else %}
+       <div class="strong" style="font-size:17px;">Ödenen: {{ odenen|para(fatura.para_birimi) }}{% if fatura.para_birimi != 'TRY' %} (≈ {{ odenen_tl|para }}){% endif %} <span class="muted">· Kalan: {{ kalan|para(fatura.para_birimi) }}{% if fatura.para_birimi != 'TRY' %} (≈ {{ kalan_tl|para }}){% endif %}</span></div>
+@@ -87,6 +117,15 @@
+     </div>
+     <div class="muted">Toplam {{ fatura.genel_toplam|para(fatura.para_birimi) }} · bağlı hareket: {{ odeme.adet }}</div>
+   </div>
++  {% if kalan > 0 and fatura.cari_id and user.rol in ['Admin','Muhasebe','Satis'] %}
++  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
++    {% if fatura.tip in ['Satis','AlisIade','Konsinye'] %}
++    <a class="btn ok" href="/cari/{{ fatura.cari_id }}/tahsilat?fatura={{ fatura.id }}">💳 Kredi Kartı ile Tahsil Et{% if kalan %} ({{ kalan|para(fatura.para_birimi) }}){% endif %}</a>
++    {% else %}
++    <a class="btn ok" href="/cari/{{ fatura.cari_id }}/odeme?fatura={{ fatura.id }}">💳 Kredi Kartı ile Öde{% if kalan %} ({{ kalan|para(fatura.para_birimi) }}){% endif %}</a>
++    {% endif %}
++  </div>
++  {% endif %}
+ </div>
+ {% endif %}
+ 
+@@ -95,10 +134,15 @@
+   <div class="card-head"><h2>Durum İşlemleri</h2></div>
+   {% if fatura.durum == 'Taslak' %}
+   <div style="display:flex;gap:8px;flex-wrap:wrap;">
+-    <form method="post" action="/fatura/{{ fatura.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="Onaylandı"><button class="btn ok">✅ Onayla (cari hareket)</button></form>
++    <form method="post" action="/fatura/{{ fatura.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="Onaylandı"><button class="btn ok">{% if fatura.proforma %}✅ Onayla (mali etki yok){% else %}✅ Onayla (cari hareket){% endif %}</button></form>
+     <form method="post" action="/fatura/{{ fatura.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="İptal"><button class="btn danger">✕ İptal Et</button></form>
+   </div>
+-  <div class="hint" style="margin-top:10px;">💡 Onaylanınca {% if fatura.tip == 'Satis' %}müşteriye borç (bakiye +){% elif fatura.tip == 'Alis' %}tedarikçiye alacak (bakiye −){% elif fatura.tip == 'SatisIade' %}müşteriye alacak + depoya stok girişi{% else %}tedarikçiye borç düşüşü + depodan stok çıkışı{% endif %} işlenir.{% if fatura.tip not in iade_tipler %} Stok etkisi İrsaliye'de tamamlandı; fatura stok'a dokunmaz.{% else %} İade faturası stok'u kendi kimliğiyle işler; aynı iade için ayrıca iade irsaliyesi oluşturmayın (çift sayım).{% endif %}</div>
++  <div class="hint" style="margin-top:10px;">💡 {% if fatura.proforma %}Proforma onayı mali etki üretmez (cari/stok/yevmiye yok).
++    {% elif fatura.tip == 'Satis' %}Onaylanınca müşteriye borç (bakiye +) işlenir.
++    {% elif fatura.tip == 'Alis' %}Onaylanınca tedarikçiye alacak (bakiye −) işlenir.
++    {% elif fatura.tip == 'Konsinye' %}Onaylanınca müşteriye borç (bakiye +) + çıkış deposundan stok düşüşü + Satis KDV aynısı işlenir; konsinye bakiyesi otomatik düşer.
++    {% elif fatura.tip == 'SatisIade' %}Onaylanınca müşteriye alacak + depoya stok girişi işlenir.
++    {% else %}Onaylanınca tedarikçiye borç düşüşü + depodan stok çıkışı işlenir.{% endif %}{% if not fatura.proforma and fatura.tip not in iade_tipler and fatura.tip != 'Konsinye' %} Stok etkisi İrsaliye'de tamamlandı; fatura stok'a dokunmaz.{% elif fatura.tip in iade_tipler %} İade faturası stok'u kendi kimliğiyle işler; aynı iade için ayrıca iade irsaliyesi oluşturmayın (çift sayım).{% endif %}</div>
+   {% elif fatura.durum == 'Onaylandı' %}
+   <div style="display:flex;gap:8px;flex-wrap:wrap;">
+     <form method="post" action="/fatura/{{ fatura.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="İptal"><button class="btn danger">✕ İptal Et (cari hareketi geri al)</button></form>
+diff --git a/kod/templates/fatura/form.html b/kod/templates/fatura/form.html
+index 1dd5312..a96c9f0 100644
+--- a/kod/templates/fatura/form.html
++++ b/kod/templates/fatura/form.html
+@@ -1,15 +1,17 @@
+ {% extends "base.html" %}
+-{% block title %}{{ 'Fatura Düzenle' if fatura and fatura.id else 'Yeni Fatura' }} — Brn Teknoloji ERP{% endblock %}
+-{% block crumb %}Satış Döngüsü / Fatura / {{ 'Düzenle' if fatura and fatura.id else 'Yeni' }}{% endblock %}
++{% block title %}{% if proforma_mode %}Proforma Fatura{% else %}{{ 'Fatura Düzenle' if fatura and fatura.id else 'Yeni Fatura' }}{% endif %} — Brn Teknoloji ERP{% endblock %}
++{% block crumb %}Satış Döngüsü / {% if proforma_mode %}Proforma{% else %}Fatura / {{ 'Düzenle' if fatura and fatura.id else 'Yeni' }}{% endif %}{% endblock %}
+ 
+ {% set secili_tip = fatura.tip if fatura and fatura.tip else tip %}
+ 
+ {% block content %}
+ <div class="page-head">
+   <div>
+-    <h1>{{ '✏️ Fatura Düzenle' if fatura and fatura.id else '➕ Yeni Fatura' }}</h1>
+-    <div class="desc">Satış veya alış faturası.
+-      {% if kaynak_irsaliye or kaynak_irsaliye_id %}Kaynak irsaliyeden üretildi — mali etki irsaliyenin onayında işlenmişti; bu fatura yalnızca belgeleştirir.{% else %}Onaylanınca cari hareket (borç/alacak) işlenir — mali etkinin oluştuğu adım.{% endif %}
++    <h1>{% if proforma_mode %}🧾 Proforma Fatura{% else %}{{ '✏️ Fatura Düzenle' if fatura and fatura.id else '➕ Yeni Fatura' }}{% endif %}</h1>
++    <div class="desc">{% if proforma_mode %}Ön bilgilendirme belgesidir — onaylansa bile cari/stok/yevmiye oluşmaz. <b>Fatura değil.</b>
++      {% elif secili_tip == 'Konsinye' %}Konsinye fatura — onayda cari borç + stok düşüş + Satis KDV aynısı (bakiye otomatik düşer).
++      {% elif kaynak_irsaliye or kaynak_irsaliye_id %}Satış veya alış faturası. Kaynak irsaliyeden üretildi — mali etki irsaliyenin onayında işlenmişti; bu fatura yalnızca belgeleştirir.
++      {% else %}Satış veya alış faturası. Onaylanınca cari hareket (borç/alacak) işlenir — mali etkinin oluştuğu adım.{% endif %}
+     </div>
+   </div>
+   <div class="page-actions">
+@@ -17,9 +19,16 @@
+   </div>
+ </div>
+ 
++{% if kaynak_proforma %}
++<div class="card" style="border-left:4px solid var(--info);">
++  <div class="muted">🧾 Kaynak proforma: <b>{{ kaynak_proforma.fatura_no }}</b> — kalemler taşındı, dilerseniz düzenleyin.</div>
++</div>
++{% endif %}
++
+ {% if kaynak_irsaliye %}
+ <div class="card" style="border-left:4px solid var(--ok);">
+-  <div class="muted">🧾 Kaynak irsaliye: <b>{{ kaynak_irsaliye.irsaliye_no }}</b> — kalemler taşındı, dilerseniz düzenleyin.</div>
++  <div class="muted">{% if secili_tip == 'Konsinye' %}📦 Konsinye irsaliyesi: <b>{{ kaynak_irsaliye.irsaliye_no }}</b> — kalemler taşındı; onayda tam mali etki (cari + stok + KDV) oluşur.
++    {% else %}🧾 Kaynak irsaliye: <b>{{ kaynak_irsaliye.irsaliye_no }}</b> — kalemler taşındı, dilerseniz düzenleyin.{% endif %}</div>
+ </div>
+ {% endif %}
+ 
+@@ -28,15 +37,22 @@
+   <input type="hidden" name="csrf" value="{{ csrf_token }}">
+   <input type="hidden" name="tip_degistir" id="tipdegistir" value="">
+   {% if kaynak_irsaliye_id %}<input type="hidden" name="kaynak_irsaliye" value="{{ kaynak_irsaliye_id }}">{% endif %}
++  {% if kaynak_proforma_id %}<input type="hidden" name="kaynak_proforma" value="{{ kaynak_proforma_id }}">{% endif %}
++  {% if proforma_mode %}<input type="hidden" name="proforma" value="1">{% endif %}
+ 
+   <div class="card">
+     <div class="card-head"><h2>Başlık</h2></div>
+     <div class="grid cols-3">
+       <div class="field"><label class="req">Fatura Tipi</label>
++        {% if proforma_mode %}
++        <input type="hidden" name="tip" value="Satis">
++        <div class="strong" style="padding-top:8px;">🧾 Proforma Fatura <span class="badge b-warn">mali etki yok</span></div>
++        {% else %}
+         <select name="tip" onchange="document.getElementById('tipdegistir').value='1';this.form.submit()">
+           <option value="Satis" {{ 'selected' if secili_tip == 'Satis' }}>Satış Faturası</option>
+           <option value="Alis" {{ 'selected' if secili_tip == 'Alis' }}>Alış Faturası</option>
+-        </select></div>
++          <option value="Konsinye" {{ 'selected' if secili_tip == 'Konsinye' }}>Konsinye Faturası</option>
++        </select>{% endif %}</div>
+       <div class="field"><label class="req">Cari</label>
+         <input type="hidden" name="cari_id" id="cari-id" value="{{ cari_id if cari_etiket else '' }}">
+         <div class="typeahead" data-tip="cari" data-cari-tip="{{ secili_tip }}"
+@@ -45,6 +61,14 @@
+              data-initial="{{ cari_etiket }}"></div>
+         <div class="hint">Yazdıkça canlı arama yapılır; listeden seçin.</div>
+       </div>
++      <div class="field"><label {% if secili_tip == 'Konsinye' %}class="req"{% endif %}>Çıkış Deposu</label>
++        <select name="depo_id">
++          <option value="">—</option>
++          {% for d in depolar %}
++          <option value="{{ d.id }}" {{ 'selected' if (depo_id|string) == (d.id|string) }}>{{ d.kod }} — {{ d.ad }}</option>
++          {% endfor %}
++        </select>
++        <div class="hint">{% if secili_tip == 'Konsinye' %}Konsinye faturada zorunludur; stok bu depodan düşer.{% else %}Konsinye faturada stokun düşeceği depo.{% endif %}</div></div>
+       <div class="field"><label class="req">Tarih</label>
+         <input type="date" name="tarih" value="{{ fatura.tarih if fatura and fatura.tarih else bugun }}" required></div>
+       <div class="field"><label>Fiyat Girişi</label>
+@@ -121,6 +145,35 @@
+ 
+   <script type="application/json" id="satirlar-data">{{ satirlar | tojson }}</script>
+   <script type="application/json" id="birimler-data">{{ birimler | tojson }}</script>
++  {% if secili_tip == 'Konsinye' and konsinye_bakiye %}
++  <script type="application/json" id="konsinye-bakiye">{{ konsinye_bakiye | tojson }}</script>
++  <script>
++  // D021 — konsinye bakiye rozeti (sunucu doğrulaması esastır; bu yalnızca görsel ipucu).
++  (function () {
++    var el = document.getElementById('konsinye-bakiye');
++    if (!el) return;
++    var bak = {};
++    try { bak = JSON.parse(el.textContent || '{}'); } catch (e) { return; }
++    document.getElementById('kalemler-tbl').addEventListener('change', function (ev) {
++      var row = ev.target.closest('tr');
++      if (!row) return;
++      var sid = row.querySelector('[name$="stok_id"]');
++      var vid = row.querySelector('[name$="varyant_id"]');
++      var mik = row.querySelector('[name$="miktar"]');
++      var old = row.querySelector('.kb-hint');
++      if (old) old.remove();
++      if (!sid || !sid.value || !mik) return;
++      var key = sid.value + ':' + ((vid && vid.value) ? vid.value : '0');
++      if (!(key in bak)) return;
++      var span = document.createElement('span');
++      span.className = 'kb-hint badge b-info';
++      span.style.marginLeft = '6px';
++      span.textContent = 'Bakiye: ' + bak[key];
++      mik.parentNode.appendChild(span);
++    }, true);
++  })();
++  </script>
++  {% endif %}
+   <script src="/static/js/form-satir.js"></script>
+   {% if secili_tip == 'Alis' %}
+   <script src="/static/js/efatura-doldur.js"></script>
+diff --git a/kod/templates/fatura/liste.html b/kod/templates/fatura/liste.html
+index d87435b..9b2cf48 100644
+--- a/kod/templates/fatura/liste.html
++++ b/kod/templates/fatura/liste.html
+@@ -10,6 +10,7 @@
+   </div>
+   <div class="page-actions">
+     <a class="btn primary" href="/fatura/yeni">+ Yeni Fatura</a>
++    <a class="btn" href="/fatura/yeni?proforma=1">🧾 Yeni Proforma</a>
+     <a class="btn" href="/fatura/iade-sec">↩ Yeni İade</a>
+   </div>
+ </div>
+@@ -43,9 +44,9 @@
+     <tbody>
+       {% for t in rows %}
+       <tr>
+-        <td class="strong"><a href="/fatura/{{ t.id }}">{{ t.fatura_no }}</a></td>
++        <td class="strong"><a href="/fatura/{{ t.id }}">{{ t.fatura_no }}</a>{% if t.proforma %} <span class="badge b-warn">PF</span>{% endif %}</td>
+         <td class="muted">{{ t.belge_no or '—' }}</td>
+-        <td>{% if t.tip in ['SatisIade','AlisIade'] %}<span class="badge b-danger">{{ tip_label[t.tip] }}</span>{% else %}{{ tip_label[t.tip] }}{% endif %}</td>
++        <td>{% if t.tip in ['SatisIade','AlisIade','KonsinyeIade'] %}<span class="badge b-danger">{{ tip_label[t.tip] }}</span>{% elif t.tip == 'Konsinye' %}<span class="badge b-info">{{ tip_label[t.tip] }}</span>{% else %}{{ tip_label[t.tip] }}{% endif %}</td>
+         <td>{{ t.cari_unvan or '—' }} <span class="muted">{{ t.cari_kod or '' }}</span></td>
+         <td>{{ t.tarih|tarih }}</td>
+         <td>{{ t.vade|tarih if t.vade else '—' }}</td>
+diff --git a/kod/templates/irsaliye/detay.html b/kod/templates/irsaliye/detay.html
+index 75f4b5a..479e02d 100644
+--- a/kod/templates/irsaliye/detay.html
++++ b/kod/templates/irsaliye/detay.html
+@@ -19,6 +19,7 @@
+       {% elif irsaliye.durum == 'Reddedildi' %}<span class="badge b-danger">Reddedildi</span>
+       {% else %}<span class="badge b-danger">İptal</span>{% endif %}
+       {% if irsaliye.belge_no %} · 📄 Belge No: <b>{{ irsaliye.belge_no }}</b>{% endif %}
++      {% if irsaliye.tip in konsinye_tipler %} · <span class="badge b-info">stok/cari/yevmiye yok — yalnız bakiye</span>{% endif %}
+     </div>
+     {% if irsaliye.kaynak_siparis_no %}
+     <div class="muted" style="margin-top:4px;">🔗 Kaynak sipariş: <a href="/siparis/{{ irsaliye.kaynak_siparis_id }}">{{ irsaliye.kaynak_siparis_no }}</a></div>
+@@ -30,6 +31,9 @@
+   <div class="page-actions">
+     <a class="btn" href="/irsaliye">← Liste</a>
+     <a class="btn" href="/irsaliye/{{ irsaliye.id }}/yazdir">🖨 Yazdır / PDF</a>
++    {% if irsaliye.tip in konsinye_tipler %}
++    <a class="btn" href="/cari/konsinye?cari_id={{ irsaliye.cari_id }}">📦 Konsinye Durumu</a>
++    {% endif %}
+     {% if irsaliye.durum == 'Onaylandı' and irsaliye.tip in ['Satis','Alis'] and user.rol in ['Admin','Muhasebe','Satis'] %}
+     <a class="btn warn" href="/irsaliye/{{ irsaliye.id }}/iade-olustur">↩ İade İrsaliyesi Oluştur</a>
+     {% endif %}
+@@ -46,6 +50,9 @@
+     {% if irsaliye.durum == 'Onaylandı' and irsaliye.tip in ['Satis','Alis'] and not faturalandi_no %}
+     <a class="btn primary" href="/fatura/yeni?kaynak_irsaliye={{ irsaliye.id }}">🧾 Faturala</a>
+     {% endif %}
++    {% if irsaliye.durum == 'Onaylandı' and irsaliye.tip == 'Konsinye' and not faturalandi_no and user.rol in ['Admin','Muhasebe','Satis'] %}
++    <a class="btn ok" href="/fatura/yeni?kaynak_irsaliye={{ irsaliye.id }}&tip=Konsinye">💰 Fatura Oluştur</a>
++    {% endif %}
+   </div>
+ </div>
+ 
+@@ -79,13 +86,18 @@
+ 
+ {% if faturalandi_no %}
+ <div class="card" style="border-left:4px solid var(--ok);">
+-  <div class="muted">🧾 <b>Faturalandı:</b> <a href="/fatura/{{ faturalandi_id }}">{{ faturalandi_no }}</a> — mali etki (cari borç/alacak) bu irsaliyenin onayında işlendi; fatura yalnızca belgeleştirir.</div>
++  <div class="muted">🧾 <b>Faturalandı:</b> <a href="/fatura/{{ faturalandi_id }}">{{ faturalandi_no }}</a>{% if irsaliye.tip == 'Konsinye' %} — mali etki (cari + stok + KDV) konsinye faturasının onayında oluştu; bakiye otomatik düştü.{% else %} — mali etki (cari borç/alacak) bu irsaliyenin onayında işlendi; fatura yalnızca belgeleştirir.{% endif %}</div>
+ </div>
+ {% elif irsaliye.durum == 'Onaylandı' and irsaliye.tip in ['Satis','Alis'] %}
+ <div class="card" style="border-left:4px solid var(--warn);">
+   <div class="muted">⚠️ <b>Faturasız:</b> bu irsaliye onaylandı ancak henüz faturaya dönüştürülmedi. Mali etki (cari borç/alacak + yevmiye) bu irsaliyenin <b>onayında</b> işlendi — oluşturulacak fatura yalnızca belgeleştirir.
+     <a href="/fatura/yeni?kaynak_irsaliye={{ irsaliye.id }}">Şimdi faturala →</a></div>
+ </div>
++{% elif irsaliye.durum == 'Onaylandı' and irsaliye.tip == 'Konsinye' %}
++<div class="card" style="border-left:4px solid var(--info);">
++  <div class="muted">📦 <b>Konsinye bakiyede:</b> bu gönderim müşteride bekliyor (stok/cari/yevmiye yok). Satış gerçekleşince konsinye faturası oluşturun — mali etki o faturanın onayında oluşur.
++    <a href="/fatura/yeni?kaynak_irsaliye={{ irsaliye.id }}&tip=Konsinye">Konsinye faturası oluştur →</a></div>
++</div>
+ {% endif %}
+ 
+ {% if user.rol in ['Admin','Muhasebe'] %}
+@@ -93,14 +105,16 @@
+   <div class="card-head"><h2>Durum İşlemleri</h2></div>
+   {% if irsaliye.durum == 'Taslak' %}
+   <div style="display:flex;gap:8px;flex-wrap:wrap;">
+-    <form method="post" action="/irsaliye/{{ irsaliye.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="Onaylandı"><button class="btn ok">✅ Onayla (stok hareketi)</button></form>
++    <form method="post" action="/irsaliye/{{ irsaliye.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="Onaylandı"><button class="btn ok">{% if irsaliye.tip in konsinye_tipler %}✅ Onayla (yalnız bakiye){% else %}✅ Onayla (stok hareketi){% endif %}</button></form>
+     <form method="post" action="/irsaliye/{{ irsaliye.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="İptal"><button class="btn danger">✕ İptal Et</button></form>
+   </div>
+-  <div class="hint" style="margin-top:10px;">💡 {% if irsaliye.tip in iade_tipler %}Onaylanınca YALNIZ stok hareketi işlenir (cari + yevmiye iade faturasındadır).{% else %}Onaylanınca satışta stok çıkışı + rezervasyon serbest bırakılır, alışta mal girişi yapılır; bağlı siparişin teslim durumu güncellenir.{% endif %}</div>
++  <div class="hint" style="margin-top:10px;">💡 {% if irsaliye.tip in konsinye_tipler %}Onaylanınca stok/cari/yevmiye oluşmaz; yalnız müşteri konsinye bakiyesi güncellenir ({% if irsaliye.tip == 'Konsinye' %}+{% else %}−{% endif %}). Mal defterde ana depoda kalır.
++    {% elif irsaliye.tip in iade_tipler %}Onaylanınca YALNIZ stok hareketi işlenir (cari + yevmiye iade faturasındadır).
++    {% else %}Onaylanınca satışta stok çıkışı + rezervasyon serbest bırakılır, alışta mal girişi yapılır; bağlı siparişin teslim durumu güncellenir.{% endif %}</div>
+   {% elif irsaliye.durum == 'Onaylandı' %}
+   <div style="display:flex;gap:8px;flex-wrap:wrap;">
+-    <form method="post" action="/irsaliye/{{ irsaliye.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="İptal"><button class="btn danger">✕ İptal Et (stok hareketini geri al)</button></form>
+-    <form method="post" action="/irsaliye/{{ irsaliye.id }}/red-fisi" onsubmit="return confirm('Red fişi oluşturulsun mu? Cari + stok + yevmiye ters kayıtla sıfırlanır, irsaliye Reddedildi olur.');"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn warn">🔁 Red / İptal Fişi Oluştur</button></form>
++    <form method="post" action="/irsaliye/{{ irsaliye.id }}/durum"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="İptal"><button class="btn danger">✕ İptal Et{% if irsaliye.tip not in konsinye_tipler %} (stok hareketini geri al){% endif %}</button></form>
++    <form method="post" action="/irsaliye/{{ irsaliye.id }}/red-fisi" onsubmit="return confirm('{% if irsaliye.tip in konsinye_tipler %}Red fişi oluşturulsun mu? Hareket üretilmediği için yalnızca Reddedildi olur, bakiye otomatik düzelir.{% else %}Red fişi oluşturulsun mu? Cari + stok + yevmiye ters kayıtla sıfırlanır, irsaliye Reddedildi olur.{% endif %}');"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="btn warn">🔁 Red / İptal Fişi Oluştur</button></form>
+   </div>
+   {% else %}
+   <div class="muted">İptal edilmiş irsaliye için durum işlemi yok.</div>
+@@ -113,7 +127,7 @@
+   <div class="tbl-wrap">
+   <table class="tbl">
+     <thead>
+-      <tr><th>Ürün</th><th class="num">Miktar</th>{% if irsaliye.tip not in iade_tipler and irsaliye.tip != 'Transfer' %}<th class="num">İade Edilen</th>{% endif %}<th class="num">Birim Fiyat{% if irsaliye.para_birimi != 'TRY' %} ({{ irsaliye.para_birimi }}){% endif %}</th>
++      <tr><th>Ürün</th><th class="num">Miktar</th>{% if irsaliye.tip not in iade_tipler and irsaliye.tip != 'Transfer' and irsaliye.tip not in konsinye_tipler %}<th class="num">İade Edilen</th>{% endif %}<th class="num">Birim Fiyat{% if irsaliye.para_birimi != 'TRY' %} ({{ irsaliye.para_birimi }}){% endif %}</th>
+           {% if irsaliye.para_birimi != 'TRY' %}<th class="num">Birim Fiyat (TL)</th>{% endif %}
+           <th class="num">İskonto %</th><th class="num">KDV %</th><th class="num">Net Tutar{% if irsaliye.para_birimi != 'TRY' %} ({{ irsaliye.para_birimi }}){% endif %}</th>
+           {% if irsaliye.para_birimi != 'TRY' %}<th class="num">Tutar (TL)</th>{% endif %}</tr>
+@@ -123,7 +137,7 @@
+       <tr>
+         <td class="strong">{{ k.gorunen_ad }}{% if k.varyant_ad %} <span class="badge b-info">{{ k.varyant_ad }}</span>{% endif %}{% if k.manuel %} <span class="badge b-warn">manuel</span>{% else %} <span class="muted">{{ k.stok_kod }}</span>{% endif %}</td>
+         <td class="num">{{ k.miktar|sayi }} <span class="muted">{{ k.birim_goster }}</span></td>
+-        {% if irsaliye.tip not in iade_tipler and irsaliye.tip != 'Transfer' %}<td class="num">{% if iade_edilen[k.id] %}<span class="badge b-warn">{{ iade_edilen[k.id]|sayi }} / {{ k.miktar|sayi }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>{% endif %}
++        {% if irsaliye.tip not in iade_tipler and irsaliye.tip != 'Transfer' and irsaliye.tip not in konsinye_tipler %}<td class="num">{% if iade_edilen[k.id] %}<span class="badge b-warn">{{ iade_edilen[k.id]|sayi }} / {{ k.miktar|sayi }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>{% endif %}
+         <td class="num">{{ k.birim_fiyat|para(irsaliye.para_birimi) }}</td>
+         {% if irsaliye.para_birimi != 'TRY' %}<td class="num muted">{{ (k.birim_fiyat * (irsaliye.doviz_kur or 1))|para }}</td>{% endif %}
+         <td class="num muted">%{{ k.iskonto_orani|sayi }}</td>
+diff --git a/kod/templates/irsaliye/form.html b/kod/templates/irsaliye/form.html
+index 7a345f8..f3b6b1d 100644
+--- a/kod/templates/irsaliye/form.html
++++ b/kod/templates/irsaliye/form.html
+@@ -10,7 +10,8 @@
+ <div class="page-head">
+   <div>
+     <h1>{{ '✏️ İrsaliye Düzenle' if irsaliye and irsaliye.id else '➕ Yeni İrsaliye' }}</h1>
+-    <div class="desc">Satış (sevk), alış (mal kabul) veya depo→depo transfer. Onaylanınca stok hareketi işlenir; satış/alış irsaliyesinde mali etki (cari borç/alacak + yevmiye) de bu onayda oluşur.</div>
++    <div class="desc">{% if secili_tip in ['Konsinye','KonsinyeIade'] %}Konsinye irsaliyesi — onayda <b>stok/cari/yevmiye oluşmaz</b>; yalnız müşteri konsinye bakiyesi güncellenir ({% if secili_tip == 'Konsinye' %}gönderim: bakiye +{% else %}iade: bakiye −{% endif %}). Yalnız stoklu satır; siparişten üretilemez.
++    {% else %}Satış (sevk), alış (mal kabul) veya depo→depo transfer. Onaylanınca stok hareketi işlenir; satış/alış irsaliyesinde mali etki (cari borç/alacak + yevmiye) de bu onayda oluşur.{% endif %}</div>
+   </div>
+   <div class="page-actions">
+     <a class="btn" href="{{ '/irsaliye/' ~ irsaliye.id if irsaliye and irsaliye.id else '/irsaliye' }}">← Geri</a>
+@@ -24,7 +25,7 @@
+ {% endif %}
+ 
+ <form method="post" action="{{ '/irsaliye/' ~ irsaliye.id ~ '/duzenle' if irsaliye and irsaliye.id else '/irsaliye/yeni' }}"
+-      data-belge="irsaliye" data-tip="{{ secili_tip }}" data-manuel-yasak="{{ '1' if secili_tip == 'Transfer' else '0' }}">
++      data-belge="irsaliye" data-tip="{{ secili_tip }}" data-manuel-yasak="{{ '1' if secili_tip in ['Transfer','Konsinye','KonsinyeIade'] else '0' }}">
+   <input type="hidden" name="csrf" value="{{ csrf_token }}">
+   <input type="hidden" name="tip_degistir" id="tipdegistir" value="">
+   {% if kaynak_siparis_id %}<input type="hidden" name="kaynak_siparis" value="{{ kaynak_siparis_id }}">{% endif %}
+@@ -37,6 +38,8 @@
+           <option value="Satis" {{ 'selected' if secili_tip == 'Satis' }}>Satış İrsaliyesi (sevk)</option>
+           <option value="Alis" {{ 'selected' if secili_tip == 'Alis' }}>Alış İrsaliyesi (mal kabul)</option>
+           <option value="Transfer" {{ 'selected' if secili_tip == 'Transfer' }}>Transfer İrsaliyesi (depo→depo)</option>
++          <option value="Konsinye" {{ 'selected' if secili_tip == 'Konsinye' }}>Konsinye Gönderim (IKO)</option>
++          <option value="KonsinyeIade" {{ 'selected' if secili_tip == 'KonsinyeIade' }}>Konsinye İade (IKOI)</option>
+         </select></div>
+       {% if secili_tip != 'Transfer' %}
+       <div class="field"><label class="req">Cari</label>
+@@ -100,10 +103,12 @@
+         <button type="button" class="btn sm" id="barkod-ekle" title="Barkod ile satır ekle">＋ Barkod</button>
+         {% endif %}
+         <button type="button" class="btn primary" id="satir-ekle">＋ Satır Ekle</button>
+-        {% if secili_tip != 'Transfer' %}
++        {% if secili_tip != 'Transfer' and secili_tip not in ['Konsinye','KonsinyeIade'] %}
+         <span class="hint" style="margin:0;">Ürün hücresine ad / kod / barkod yazın; eşleşme yoksa satır otomatik <b>manuel</b> olur.</span>
+-        {% else %}
++        {% elif secili_tip == 'Transfer' %}
+         <span class="hint" style="margin:0;">Transfer irsaliyesinde yalnız stoklu ürün satırı eklenebilir.</span>
++        {% else %}
++        <span class="hint" style="margin:0;">Konsinye irsaliyesinde yalnız stoklu satır; bakiye stok bazında izlenir{% if secili_tip == 'KonsinyeIade' %} — iade miktarı bakiyeyi aşamaz{% endif %}.</span>
+         {% endif %}
+       </div>
+     </div>
+@@ -135,6 +140,35 @@
+ 
+   <script type="application/json" id="satirlar-data">{{ satirlar | tojson }}</script>
+   <script type="application/json" id="birimler-data">{{ birimler | tojson }}</script>
++  {% if secili_tip in ['Konsinye','KonsinyeIade'] and konsinye_bakiye %}
++  <script type="application/json" id="konsinye-bakiye">{{ konsinye_bakiye | tojson }}</script>
++  <script>
++  // D021 — konsinye bakiye rozeti (sunucu doğrulaması esastır; bu yalnızca görsel ipucu).
++  (function () {
++    var el = document.getElementById('konsinye-bakiye');
++    if (!el) return;
++    var bak = {};
++    try { bak = JSON.parse(el.textContent || '{}'); } catch (e) { return; }
++    document.getElementById('kalemler-tbl').addEventListener('change', function (ev) {
++      var row = ev.target.closest('tr');
++      if (!row) return;
++      var sid = row.querySelector('[name$="stok_id"]');
++      var vid = row.querySelector('[name$="varyant_id"]');
++      var mik = row.querySelector('[name$="miktar"]');
++      var old = row.querySelector('.kb-hint');
++      if (old) old.remove();
++      if (!sid || !sid.value || !mik) return;
++      var key = sid.value + ':' + ((vid && vid.value) ? vid.value : '0');
++      if (!(key in bak)) return;
++      var span = document.createElement('span');
++      span.className = 'kb-hint badge b-info';
++      span.style.marginLeft = '6px';
++      span.textContent = 'Bakiye: ' + bak[key];
++      mik.parentNode.appendChild(span);
++    }, true);
++  })();
++  </script>
++  {% endif %}
+   <script>
+   (function () {
+     var pb = document.getElementById('para-birimi');
+diff --git a/kod/templates/irsaliye/liste.html b/kod/templates/irsaliye/liste.html
+index 1f9ecbf..7137448 100644
+--- a/kod/templates/irsaliye/liste.html
++++ b/kod/templates/irsaliye/liste.html
+@@ -46,7 +46,7 @@
+       <tr>
+         <td class="strong"><a href="/irsaliye/{{ t.id }}">{{ t.irsaliye_no }}</a></td>
+         <td class="muted">{{ t.belge_no or '—' }}</td>
+-        <td>{% if t.tip in ['SatisIade','AlisIade'] %}<span class="badge b-danger">{{ tip_label[t.tip] }}</span>{% else %}{{ tip_label[t.tip] }}{% endif %}</td>
++        <td>{% if t.tip in ['SatisIade','AlisIade'] %}<span class="badge b-danger">{{ tip_label[t.tip] }}</span>{% elif t.tip in ['Konsinye','KonsinyeIade'] %}<span class="badge b-info">{{ tip_label[t.tip] }}</span>{% else %}{{ tip_label[t.tip] }}{% endif %}</td>
+         <td>{{ t.cari_unvan or '—' }} <span class="muted">{{ t.cari_kod or '' }}</span></td>
+         <td>{{ t.tarih|tarih }}</td>
+         <td class="num">{{ t.kalem_sayisi }}</td>
+@@ -61,6 +61,8 @@
+           {% if t.fatura_no %}<span class="badge b-ok">Faturalandı</span>
+           {% elif t.durum == 'Onaylandı' and t.tip in ['Satis','Alis'] %}
+             <a class="btn sm primary" href="/fatura/yeni?kaynak_irsaliye={{ t.id }}">Faturala</a>
++          {% elif t.durum == 'Onaylandı' and t.tip == 'Konsinye' %}
++            <a class="btn sm ok" href="/fatura/yeni?kaynak_irsaliye={{ t.id }}&tip=Konsinye">FKO</a>
+           {% else %}<span class="muted">—</span>{% endif %}
+         </td>
+         <td class="right">
+diff --git a/kod/templates/siparis/detay.html b/kod/templates/siparis/detay.html
+index 9a0b4e1..21d34df 100644
+--- a/kod/templates/siparis/detay.html
++++ b/kod/templates/siparis/detay.html
+@@ -23,6 +23,9 @@
+   <div class="page-actions">
+     <a class="btn" href="/siparis">← Liste</a>
+     <a class="btn" href="/siparis/{{ siparis.id }}/yazdir">🖨 Yazdır / PDF</a>
++    {% if siparis.durum in ['Onaylandı','Kısmi'] and user.rol in ['Admin','Muhasebe','Satis'] %}
++    <a class="btn ok" href="/irsaliye/yeni?kaynak_siparis={{ siparis.id }}">🚚 İrsaliye Oluştur</a>
++    {% endif %}
+     {% if siparis.durum == 'Bekliyor' and user.rol in ['Admin','Muhasebe','Satis'] %}
+     <a class="btn primary" href="/siparis/{{ siparis.id }}/duzenle">✏️ Düzenle</a>
+     <form method="post" action="/siparis/{{ siparis.id }}/sil" style="display:inline;"
+@@ -41,7 +44,7 @@
+   <div class="card-head"><h2>🚚 Bu siparişten oluşturulan irsaliyeler ({{ irsaliyeler|length }})</h2></div>
+   <div class="tbl-wrap">
+   <table class="tbl">
+-    <thead><tr><th>No</th><th>Tarih</th><th class="num">Genel Toplam</th><th>Durum</th></tr></thead>
++    <thead><tr><th>No</th><th>Tarih</th><th class="num">Genel Toplam</th><th>Durum</th><th>Fatura</th></tr></thead>
+     <tbody>
+       {% for s in irsaliyeler %}
+       <tr>
+@@ -53,6 +56,17 @@
+           {% elif s.durum == 'Onaylandı' %}<span class="badge b-ok">Onaylandı</span>
+           {% else %}<span class="badge b-danger">İptal</span>{% endif %}
+         </td>
++        <td>
++          {% if faturalar.get(s.id) %}
++            {% for f in faturalar.get(s.id) %}<a href="/fatura/{{ f.id }}">{{ f.fatura_no }}</a>
++              {% if f.durum == 'Onaylandı' %}<span class="badge b-ok">Faturalandı</span>
++              {% elif f.durum == 'Taslak' %}<span class="badge b-warn">Kısmi</span> <a class="btn sm primary" href="/fatura/{{ f.id }}">Faturayı Aç</a>
++              {% else %}<span class="badge b-danger">Faturasız</span>{% if s.durum == 'Onaylandı' %} <a class="btn sm primary" href="/fatura/yeni?kaynak_irsaliye={{ s.id }}">Fatura Oluştur</a>{% endif %}
++              {% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}
++          {% elif s.durum == 'Onaylandı' %}
++            <span class="badge b-muted">Faturasız</span> <a class="btn sm primary" href="/fatura/yeni?kaynak_irsaliye={{ s.id }}">Fatura Oluştur</a>
++          {% else %}<span class="muted">—</span>{% endif %}
++        </td>
+       </tr>
+       {% endfor %}
+     </tbody>
+diff --git a/kod/templates/siparis/form.html b/kod/templates/siparis/form.html
+index 183c2e9..b32e0b3 100644
+--- a/kod/templates/siparis/form.html
++++ b/kod/templates/siparis/form.html
+@@ -25,10 +25,15 @@
+ {% if kaynak_teklif and onceki_siparisler %}
+ <div class="card" style="border-left:4px solid var(--warn);">
+   <div class="muted">ℹ️ Bu tekliften daha önce <b>{{ onceki_siparisler|length }}</b> sipariş oluşturuldu:
+-  {% for s in onceki_siparisler %}<b>{{ s.siparis_no }}</b> ({{ s.durum }}){% if not loop.last %}, {% endif %}{% endfor %}.
++  {% for s in onceki_siparisler %}<a href="/siparis/{{ s.id }}"><b>{{ s.siparis_no }}</b></a> ({{ s.durum }}){% if not loop.last %}, {% endif %}{% endfor %}.
+   Kısmi dönüşüm serbesttir — yine de yeni sipariş oluşturabilirsiniz.</div>
+ </div>
+ {% endif %}
++{% if kaynak_teklif and kaynak_teklif.durum == 'Siparişe Dönüştü' and not onceki_siparisler %}
++<div class="card" style="border-left:4px solid var(--warn);">
++  <div class="muted">ℹ️ Bu teklif daha önce siparişe dönüştürülmüş; kısmi ihtiyaç için ek sipariş oluşturuyorsunuz.</div>
++</div>
++{% endif %}
+ 
+ <form method="post" action="{{ '/siparis/' ~ siparis.id ~ '/duzenle' if siparis and siparis.id else '/siparis/yeni' }}"
+       data-belge="siparis" data-tip="{{ 'Alis' if secili_tip == 'Alis' else 'Satis' }}" data-manuel-yasak="0">
+diff --git a/kod/templates/teklif/detay.html b/kod/templates/teklif/detay.html
+index cab05d2..20bee75 100644
+--- a/kod/templates/teklif/detay.html
++++ b/kod/templates/teklif/detay.html
+@@ -13,16 +13,20 @@
+       {% elif teklif.durum == 'Gönderildi' %}<span class="badge b-info">Gönderildi</span>
+       {% elif teklif.durum == 'Onaylandı' %}<span class="badge b-ok">Onaylandı</span>
+       {% elif teklif.durum == 'Reddedildi' %}<span class="badge b-danger">Reddedildi</span>
++      {% elif teklif.durum == 'Siparişe Dönüştü' %}<span class="badge b-ok">🛒 Siparişe Dönüştü</span>
+       {% else %}<span class="badge b-warn">Süresi Doldu</span>{% endif %}
+     </div>
+   </div>
+   <div class="page-actions">
+     <a class="btn" href="/teklif">← Liste</a>
+     <a class="btn" href="/teklif/{{ teklif.id }}/yazdir">🖨 Yazdır / PDF</a>
+-    {% if teklif.durum == 'Onaylandı' %}
++    {% if teklif.durum in ['Onaylandı','Siparişe Dönüştü'] %}
+     <a class="btn ok" href="/siparis/yeni?kaynak_teklif={{ teklif.id }}">🛒 Siparişe Çevir</a>
+     {% endif %}
+-    {% if teklif.durum != 'Onaylandı' and teklif.durum != 'Reddedildi' %}
++    {% if teklif.durum == 'Onaylandı' and siparisler %}
++    <form method="post" action="/teklif/{{ teklif.id }}/durum" style="display:inline;"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="durum" value="Siparişe Dönüştü"><button class="btn" title="Sipariş üretildi; teklifi kilitle">🔒 Dönüştü Olarak İşaretle</button></form>
++    {% endif %}
++    {% if teklif.durum != 'Onaylandı' and teklif.durum != 'Reddedildi' and teklif.durum != 'Siparişe Dönüştü' %}
+     <a class="btn primary" href="/teklif/{{ teklif.id }}/duzenle">✏️ Düzenle</a>
+     {% endif %}
+     {% if teklif.durum in ('Taslak', 'Reddedildi', 'Süresi Doldu') %}
+@@ -61,7 +65,7 @@
+     </tbody>
+   </table>
+   </div>
+-  <div class="hint" style="margin-top:8px;">💡 Bir teklif kısmi kısmi birden fazla siparişe dönüştürülebilir; bu liste yalnızca bilgilendirme amaçlıdır, dönüşümü engellemez.</div>
++  <div class="hint" style="margin-top:8px;">💡 Bir teklif kısmi kısmi birden fazla siparişe dönüştürülebilir; ilk sipariş teklifi otomatik “Siparişe Dönüştü” yapar ve kilitler.{% if teklif.durum == 'Siparişe Dönüştü' %} Bu teklif kilitli — düzenlenemez, silinemez.{% endif %}</div>
+ </div>
+ {% endif %}
+ 
+diff --git a/kod/templates/teklif/liste.html b/kod/templates/teklif/liste.html
+index a9adfdc..b4bf1be 100644
+--- a/kod/templates/teklif/liste.html
++++ b/kod/templates/teklif/liste.html
+@@ -47,6 +47,7 @@
+           {% elif t.durum == 'Gönderildi' %}<span class="badge b-info">Gönderildi</span>
+           {% elif t.durum == 'Onaylandı' %}<span class="badge b-ok">Onaylandı</span>
+           {% elif t.durum == 'Reddedildi' %}<span class="badge b-danger">Reddedildi</span>
++          {% elif t.durum == 'Siparişe Dönüştü' %}<span class="badge b-ok">🛒 Siparişe Dönüştü</span>
+           {% else %}<span class="badge b-warn">Süresi Doldu</span>{% endif %}
+         </td>
+         <td class="right">
+diff --git a/kod/templates/yazdir/belge.html b/kod/templates/yazdir/belge.html
+index feb5693..ee1a7c1 100644
+--- a/kod/templates/yazdir/belge.html
++++ b/kod/templates/yazdir/belge.html
+@@ -47,6 +47,11 @@
+     </div>
+   </div>
+ 
++  {% if belge.proforma %}
++  <div style="background:#fff3cd;border:1px solid #e6c200;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:16px;">
++    ⚠️ <b>PROFORMA FATURA</b> — bu belge ön bilgilendirme amaçlıdır; <b>fatura değildir</b>, mali yükümlülük doğurmaz.</div>
++  {% endif %}
++
+   <div class="party">
+     <div><b>Cari:</b> {{ belge.cari }}<br>{{ belge.cari_il or '' }} · {{ belge.cari_kod or '' }}</div>
+     <div><b>Durum:</b> {{ belge.durum }} {% if belge.sube_ad %}· <b>Şube:</b> {{ belge.sube_ad }}{% endif %}</div>
+@@ -91,7 +96,7 @@
+ 
+   <div class="footer">
+     <div>{{ firma.unvan or 'Brn Teknoloji' }} · {{ belge.no }} · {{ belge.tarih }}</div>
+-    <div>Bu belge {{ belge.para_birimi }} cinsinden düzenlenmiştir.</div>
++    <div>{% if belge.proforma %}Proforma belge e-fatura sayılmaz.{% else %}Bu belge {{ belge.para_birimi }} cinsinden düzenlenmiştir.{% endif %}</div>
+   </div>
+ </div>
+ 
+diff --git a/kod/test_d010_yedekleme.py b/kod/test_d010_yedekleme.py
+index a3690d5..7c10c8f 100644
+--- a/kod/test_d010_yedekleme.py
++++ b/kod/test_d010_yedekleme.py
+@@ -183,7 +183,7 @@ print("=" * 70)
+ s2, _ = giris()
+ r = s2.get(BASE + "/api/saglik", allow_redirects=False)
+ js = r.json()
+-check("13. /api/saglik canlı + sürüm 1.51.0", r.status_code == 200 and js.get("surum") == "1.51.0",
++check("13. /api/saglik canlı + sürüm 1.52.0", r.status_code == 200 and js.get("surum") == "1.52.0",
+       f"status={r.status_code}, surum={js.get('surum')}")
+ 
+ r = s2.get(BASE + "/api/bildirimler", allow_redirects=False)
+diff --git a/kod/test_d015_toplu_yardim_sistem.py b/kod/test_d015_toplu_yardim_sistem.py
+index 97eb4d5..58cb92e 100644
+--- a/kod/test_d015_toplu_yardim_sistem.py
++++ b/kod/test_d015_toplu_yardim_sistem.py
+@@ -166,7 +166,7 @@ sv, _ = giris("satis", "1234")
+ r403 = sv.get(BASE + "/sistem/bilgi", allow_redirects=False)
+ import re as _re
+ check("11. admin 200 (sürüm+hash+integrity+FK+saglik) + satis 403",
+-      "v1.51.0" in h and _re.search(r"[0-9a-f]{40}", h) is not None
++      "v1.52.0" in h and _re.search(r"[0-9a-f]{40}", h) is not None
+       and "Integrity Check" in h and ">ok<" in h and "0 sorun" in h
+       and "api/saglik" in h and 'href="/sistem/bilgi"' in h0 and r403.status_code == 403,
+       f"satis={r403.status_code}")
+diff --git a/kod/test_f6_cila.py b/kod/test_f6_cila.py
+index bdcc32a..ba41b05 100644
+--- a/kod/test_f6_cila.py
++++ b/kod/test_f6_cila.py
+@@ -166,7 +166,7 @@ check("13. test_saglik", r.status_code == 200 and '"durum":"ok"' in r.text,
+ # 14) test_api_saglik ----------------------------------------------------------
+ d = admin.get(BASE + "/api/saglik").json()
+ check("14. test_api_saglik",
+-      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.51.0",
++      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.52.0",
+       f"surum={d.get('surum')}, db={d.get('db')}")
+ 
+ # 15) test_f5c_korundu ---------------------------------------------------------

@@ -1,0 +1,75 @@
+=== D021 DEĞİŞEN DOSYALAR — 2026-09-17T16:26:56Z ===
+
+ M DURUM.md
+ M kod/CHANGELOG.md
+ M kod/api.py
+ M kod/cari.py
+ M kod/cari_odeme.py
+ M kod/config.py
+ M kod/core.py
+ M kod/db.py
+ M kod/fatura.py
+ M kod/irsaliye.py
+ M kod/muhasebe.py
+ M kod/regresyon_runner.py
+ M kod/siparis.py
+ M kod/teklif.py
+ M kod/templates/cari/detay.html
+ M kod/templates/cari/liste.html
+ M kod/templates/cari/makbuz.html
+ M kod/templates/cari/tahsilat_odeme.html
+ M kod/templates/fatura/detay.html
+ M kod/templates/fatura/form.html
+ M kod/templates/fatura/liste.html
+ M kod/templates/irsaliye/detay.html
+ M kod/templates/irsaliye/form.html
+ M kod/templates/irsaliye/liste.html
+ M kod/templates/siparis/detay.html
+ M kod/templates/siparis/form.html
+ M kod/templates/teklif/detay.html
+ M kod/templates/teklif/liste.html
+ M kod/templates/yazdir/belge.html
+ M kod/test_d010_yedekleme.py
+ M kod/test_d015_toplu_yardim_sistem.py
+ M kod/test_f6_cila.py
+?? coder-raporlari/R021-konsinye-proforma-donusum.md
+?? kanitlar/v1.52.0/
+?? kod/templates/cari/konsinye.html
+?? kod/templates/cari/konsinye_yazdir.html
+?? kod/test_d021_konsinye_proforma_donushum.py
+?? teslim/D021-v1.52.0.zip
+
+--- diff --stat ---
+ DURUM.md                               |   2 +-
+ kod/CHANGELOG.md                       |  54 ++++++
+ kod/api.py                             |   2 +-
+ kod/cari.py                            | 152 ++++++++++++++-
+ kod/cari_odeme.py                      |  67 +++++--
+ kod/config.py                          |   4 +-
+ kod/core.py                            |  12 +-
+ kod/db.py                              |  54 +++++-
+ kod/fatura.py                          | 333 +++++++++++++++++++++++++++------
+ kod/irsaliye.py                        | 150 ++++++++++++---
+ kod/muhasebe.py                        |  12 +-
+ kod/regresyon_runner.py                |   4 +-
+ kod/siparis.py                         |  45 ++++-
+ kod/teklif.py                          |  24 ++-
+ kod/templates/cari/detay.html          |  12 ++
+ kod/templates/cari/liste.html          |   1 +
+ kod/templates/cari/makbuz.html         |   2 +-
+ kod/templates/cari/tahsilat_odeme.html |  28 ++-
+ kod/templates/fatura/detay.html        |  54 +++++-
+ kod/templates/fatura/form.html         |  67 ++++++-
+ kod/templates/fatura/liste.html        |   5 +-
+ kod/templates/irsaliye/detay.html      |  28 ++-
+ kod/templates/irsaliye/form.html       |  42 ++++-
+ kod/templates/irsaliye/liste.html      |   4 +-
+ kod/templates/siparis/detay.html       |  16 +-
+ kod/templates/siparis/form.html        |   7 +-
+ kod/templates/teklif/detay.html        |  10 +-
+ kod/templates/teklif/liste.html        |   1 +
+ kod/templates/yazdir/belge.html        |   7 +-
+ kod/test_d010_yedekleme.py             |   2 +-
+ kod/test_d015_toplu_yardim_sistem.py   |   2 +-
+ kod/test_f6_cila.py                    |   2 +-
+ 32 files changed, 1043 insertions(+), 162 deletions(-)

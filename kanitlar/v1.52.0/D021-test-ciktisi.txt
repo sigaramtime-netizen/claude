@@ -1,0 +1,33 @@
+=== D021 TEST ÇIKTISI (v1.52.0) — 2026-09-17T15:25:02Z ===
+
+BÖLÜM KURULUM
+BÖLÜM 1/2 — IKO + IKOI (sıfır etki)
+  ✅ 1. IKO: seri + onayda stok/cari/yevmiye 0 + bakiye 40  → IKO-2026-001, hareket=0/0/0, bakiye=40
+  ✅ 2. IKOI: seri + sıfır etki + bakiye 35  → IKOI-2026-001, hareket=0/0/0, bakiye=35
+BÖLÜM 3/4 — FKO + FKOI
+  ✅ 3. FKO: borç 300 + stok −25 + KDV aynası + bakiye 10 + IKO bağlantısı  → FKO-2026-001, cari=(300,0), yev=[('120', 300.0, 0.0), ('391', 0.0, 50.0), ('600', 0.0, 250.0)], bakiye=10
+  ✅ 4. FKOI: bakiye değişmez + alacak 120 + stok +10 + seri  → FKOI-2026-001, cari=(0,120), bakiye=10
+BÖLÜM 5 — Bakiye Aşımı Blokları
+  ✅ 5. aşım bloke: FKO + IKOI form reddi + onay-anı bekçisi  → form=200/200, bakiye=4, taslak=Taslak
+BÖLÜM 6 — FKO Red (ters + otomatik bakiye)
+  ✅ 6. FKO red: cari net 0 + stok geri + red fişi + bakiye otomatik 29  → cari=(300,300), bakiye=29
+BÖLÜM 7 — Konsinye Ekranı
+  ✅ 7. konsinye ekran: SQL-birebir + CSV + yazdır + detay kartı  → ekran/csv/yazdır/kart
+BÖLÜM 8/9 — Proforma
+  ✅ 8. proforma: PF serisi + onayda 3×COUNT 0 + başlık + gerçek faturaya çevirme  → PF-2026-001 → SF-2026-008
+  ✅ 9. proforma iade kaynağı olamaz (UI + DB)  → iade-yok=True
+BÖLÜM 10/11 — Satış Dönüşümü
+  ✅ 11. teklif: onayda 'Siparişe Dönüştü' + kilit + iptalde 'Onaylandı'ya dönüş  → oluşum=Onaylandı, onay=Siparişe Dönüştü, iptal=Onaylandı, tekrar=Siparişe Dönüştü
+  ✅ 10. sipariş→irsaliye: buton + kısmi ikinci irsaliye + fatura durumu + tam kapanış  → SIP-2026-006 → IRS-2026-003 → SF-2026-009, sipariş=Kısmi→Tamamlandı
+BÖLÜM 12/13 — Kredi Kartı
+  ✅ 12. KK terminalsiz: brüt 120 bankaya + kalan 0 + makbuz 'Kredi Kartı'  → banka=120.0, makbuz=True
+  ✅ 13. KK terminalli: NET 117,60 (%2 komisyon) + etiket 'Kredi Kartı'  → banka=117.6
+BÖLÜM 16 — USD Konsinye
+  ✅ 16. USD konsinye: pb devralma + TL cari + çift kolon + KONSİNYE etiketi  → cari=(4800,0) TL, bakiye=29
+BÖLÜM 14 — Migrasyon
+  ✅ 14. v1.51 şeması → v1.52: CHECK + kolon + veri + FK + idempotent  → veri=1/1/1, proforma-backfill=0, fk=0
+BÖLÜM 15 — Temizlik
+  ✅ 15. FK bütünlüğü 0 + kalıntı yok  → fk=0, kalıntı=0
+
+=== SONUÇ: 16 başarılı / 0 başarısız (toplam 16) ===
+TÜM D021 TESTLERİ GEÇTİ ✅

@@ -1,0 +1,30 @@
+=== D021 MİGRASYON KANITI (v1.51.0 → v1.52.0) — 2026-09-17T15:33:09Z ===
+
+--- ADIM 1: v1.51.0 şeması (tırnaklı tablo adları, eski CHECK'ler) + örnek veri ---
+fatura CHECK konsinye içeriyor mu: False (beklenen: False)
+irsaliye CHECK konsinye içeriyor mu: False (beklenen: False)
+teklif CHECK 'Siparişe Dönüştü': False (beklenen: False)
+fatura proforma kolonu: False (beklenen: False)
+veri: 1 fatura / 1 kalem / 1 teklif
+
+--- ADIM 2: _migrate_d021 (2× — idempotent) ---
+idempotent (2. çağrı no-op): True (beklenen: True)
+
+--- ADIM 3: sonrası ---
+fatura CHECK konsinye: True (beklenen: True)
+irsaliye CHECK konsinye: True (beklenen: True)
+teklif CHECK dönüşüm: True (beklenen: True)
+kolonlar: True (beklenen: True)
+proforma backfill: 0 (beklenen: 0)
+veri korundu: True (beklenen: True)
+ornek fatura: ('SF-2026-001', 1180.0)
+FK check: [] (beklenen: [])
+sil-tetigi: 2 (beklenen: 2)
+
+--- ADIM 4: canlı demo DB (sunucu açılışında otomatik migrate) ---
+canlı fatura konsinye: True | irsaliye konsinye: True | teklif dönüşüm: True
+canlı kolonlar: True
+canlı veri: 7 fatura / 3 irsaliye / 3 teklif
+canlı FK: []
+
+MİGRASYON KANITI TAMAM ✅
