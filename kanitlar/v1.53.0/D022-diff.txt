@@ -1,0 +1,746 @@
+=== D022 DIFF (HEAD'e karşı) — 2026-09-18T11:44:09Z ===
+
+diff --git a/DURUM.md b/DURUM.md
+index b6b7e8b..f43528e 100644
+--- a/DURUM.md
++++ b/DURUM.md
+@@ -25,6 +25,6 @@
+ | D019  | Dövizli Gösterim, Ekstre Raporlama & e-Fatura Aktarım Cilası (H1-H9) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.50.0 MÜHÜR). 12/12 test, 33 dosya / 680 kontrol 0 hata. |
+ | D020  | İade Ailesi: 4 Yeni Fiş Tipi + Kaynak Belge Dönüşümü (F1) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.51.0 MÜHÜR). 13/13 test, 34 dosya / 693 kontrol 0 hata. |
+ | D021  | Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı (F2, F3, F4) | ONAYLANDI | KÖPRÜ test etti ve ONAYLADI (v1.52.0 MÜHÜR). 16/16 test, 35 dosya / 709 kontrol 0 hata. |
+-| D022  | Fiş Tipi Motoru + Gerçek Mahsup Fişi (M1, T1) | KODLANIYOR | Direktif verildi (v1.53.0). Yevmiye tablosuna `fis_tipi` kolonu ve motoru (Açılış, Kapanış, Tahsilat, Tediye, Mahsup, Red, Otomatik, Muhtelif), ters fiş ve fiş kopyalama, çift carili gerçek mahsup fişi (MHS- serisi, 120/320 denge, cari hareketleri ve çapraz ekstre linkleri). Coder'a iletildi |
++| D022  | Fiş Tipi Motoru + Gerçek Mahsup Fişi (M1, T1) | KODLANDI | Coder tamamladı (v1.53.0): `fis_tipi` + tek kaynak `fiş_tipi_bul` + idempotent etiketleme; liste tip filtresi/rozetleri; ters fiş (Muhtelif/Mahsup/Tahsilat/Tediye, tersin-tersi bloke) + kopyala; `MHS-` serisi gerçek mahsup (320/120 denge, iki ekstrede çapraz link, limit+aynı cari bloke). Kapanış fişi ters-bakiye dengesizlik düzeltmesi + mizan kanıtı. 14/14 yeni test, 36 dosya / 723 kontrol 0 hata. ZIP + kanıtlar hazır, KONTROLDE'ye alınmayı bekliyor |
+ 
+ Durum akışı: `BEKLEMEDE` → `KODLANIYOR` → `KODLANDI` → `KONTROLDE` → `ONAYLANDI` / `REVIZYON`
+diff --git a/kod/CHANGELOG.md b/kod/CHANGELOG.md
+index 4294a36..6f2a5d4 100644
+--- a/kod/CHANGELOG.md
++++ b/kod/CHANGELOG.md
+@@ -8,6 +8,49 @@ Biçim: [Keep a Changelog](https://keepachangelog.com) · Sürümleme: **v1.MINO
+ 
+ ---
+ 
++## v1.53.0 — 2026-09-18
++
++### Eklenen — D022: Fiş Tipi Motoru + Gerçek Mahsup Fişi (M1, T1)
++KÖPRÜ direktifi (`D022-fis-motoru-mahsup.md`, muhasebe çekirdeği).
++
++**Fiş tipi motoru (M1):** `yevmiye.fis_tipi` kolonu (CHECK'li: Açılış,
++Tahsilat, Tediye, Mahsup, Kapanış, Muhtelif, Red, Otomatik). Geriye dönük
++etiketleme migrasyonda idempotent: açılış/kapanış açıklama deseni, red
++sahnesi, Fatura/İrsaliye/Çek-Senet → Otomatik, kasa/banka THS-/ODM- belge
++no'suna göre Tahsilat/Tediye, kalan → Muhtelif. **Tek kaynak helper:**
++`muhasebe.fis_tipi_bul(modul, sahne, belge_no)`; tüm INSERT noktaları
++(manuel fiş, açılış, kapanış, `fis_uret`, D019 red fişleri, D020/D021
++iade/konsinye fişleri) buradan tip alır. Yevmiye listesinde tip filtresi +
++rozetler (Otomatik=muted, Tahsilat=ok, Tediye=warn, Red=danger, Mahsup=info,
++Açılış/Kapanış=primary). Mevcut kaynak filtresi korunur.
++
++**Ters fiş:** `POST /muhasebe/<id>/ters` — yalnız Muhtelif/Mahsup/Tahsilat/
++Tediye (otomatik fişlerde flash: "kaynak belgenin red fişiyle tersine
++çevirin"); borç↔alacak takası, aynı tip, `kaynak_sahne='ters'`; Mahsup'ta
++cari hareketleri de takas edilir (bakiyeler aynen döner). Tersinin tersi
++bloke; detayda "Ters: <no>" / "Ters edilen fiş" çapraz linkleri.
++
++**Kopyalama:** `POST /muhasebe/<id>/kopyala` — her tipten; yeni Muhtelif
++fiş, satırlar aynen, tarih bugün, `Kopya: <fis_no>`.
++
++**Gerçek mahsup fişi (T1):** `GET/POST /muhasebe/mahsup` — alacaklı cari
++(borç bakiyeli) ↔ borçlu cari (alacak bakiyeli); `MHS-YYYY-NNN` serisi;
++`320 SATICILAR` borç / `120 ALICILAR` alacak dengeli fiş; iki cariye
++`(Mahsup, yevmiye_id)` kimliğiyle cari hareketi; her iki ekstrede `MHS-`
++satırı tıklanabilir çapraz referans (`/muhasebe/<id>`). Limitte UI + sunucu
++bloke (tutar ≤ min(bakiyeler), aynı cari yasak, çapraz şirket enjeksiyon
++koruması). Detayda mahsup cari kartı.
++
++**Düzeltme:** Kapanış fişi, ters bakiyeli hesapta (iade/red sonrası gelir
++borç ya da gider alacak bakiyeli kalabilir) negatif satır yazıp fişi
++dengesizleştirebiliyordu — kapatma artık bakiyenin ters tarafına mutlak
++değer yazar; kâr/zarar farkı 590/591 doğru tarafta (mizan denge testi
++eklendi).
++
++### Değişen
++- Regresyon: 36 dosya / 723 kontrol, 0 hata.
++- Eski testlerdeki sabit sürüm beklentileri 1.53.0'a güncellendi (d010/d015/f6).
++
+ ## v1.52.0 — 2026-09-17
+ 
+ ### Eklenen — D021: Konsinye Ailesi + Proforma + Satış Dönüşüm + Kredi Kartı
+diff --git a/kod/cari.py b/kod/cari.py
+index 00eb671..12bfe9f 100644
+--- a/kod/cari.py
++++ b/kod/cari.py
+@@ -421,7 +421,10 @@ def _ekstre_satirlar(rows, opening, cari_id):
+         h["belge_url"] = None
+         _no = h.get("belge_no") or ""
+         _mod, _kid = h.get("ilgili_modul"), h.get("ilgili_kayit_id")
+-        if _no.startswith("THS-") or _no.startswith("ODM-"):
++        if _no.startswith("MHS-") and _kid:
++            # D022-T1 — mahsup fişi çapraz referansı (her iki carinin ekstresinde).
++            h["belge_url"] = f"/muhasebe/{_kid}"
++        elif _no.startswith("THS-") or _no.startswith("ODM-"):
+             h["belge_url"] = f"/cari/{cari_id}/makbuz/{_no}"
+         elif _mod == "Fatura" and _kid:
+             h["belge_url"] = f"/fatura/{_kid}"
+diff --git a/kod/config.py b/kod/config.py
+index 9c11c93..c070d25 100644
+--- a/kod/config.py
++++ b/kod/config.py
+@@ -16,8 +16,8 @@ FIRMA_ADI = "Brn Teknoloji"
+ FIRMA_ALT = "İşletme Yönetim Sistemi"
+ 
+ # Uygulama sürümü — her geliştirme partisinde artırılır; CHANGELOG.md ile birlikte izlenir.
+-SURUM = "1.52.0"
+-SURUM_TARIHI = "2026-09-17"
++SURUM = "1.53.0"
++SURUM_TARIHI = "2026-09-18"
+ 
+ # K18 — Döviz Takip: desteklenen para birimleri (TRY temel; kurlar doviz_kur tablosunda).
+ PARA_BIRIMLERI = ["TRY", "USD", "EUR", "GBP"]
+diff --git a/kod/db.py b/kod/db.py
+index 928283a..0b01496 100644
+--- a/kod/db.py
++++ b/kod/db.py
+@@ -1011,6 +1011,48 @@ def _migrate_d021(conn):
+             None, _SIRKET_INDEXLER["teklif"])
+ 
+ 
++def _migrate_d022(conn):
++    """D022 (v1.53) — yevmiye.fis_tipi kolonu + geriye dönük etiketleme.
++
++    Idempotent; eski DB'de kolonu ekleyip kurallı etiketler, güncel DB'de
++    yalnız eksik etiketleri tamamlar (yeni tipler korunur).
++    Testten doğrudan çağrılabilir (test_d022 migrasyon kanıtı).
++    """
++    cols = {r["name"] for r in conn.execute("PRAGMA table_info(yevmiye)")}
++    if cols and "fis_tipi" not in cols:
++        # CHECK'li ADD COLUMN rebuild gerektirmez; mevcut satırlar 'Muhtelif' alır.
++        conn.execute("ALTER TABLE yevmiye ADD COLUMN fis_tipi TEXT NOT NULL DEFAULT 'Muhtelif' "
++                     "CHECK (fis_tipi IN ('Açılış','Tahsilat','Tediye','Mahsup','Kapanış',"
++                     "'Muhtelif','Red','Otomatik'))")
++    conn.execute("CREATE INDEX IF NOT EXISTS idx_yevmiye_fis_tipi ON yevmiye(fis_tipi)")
++    cols = {r["name"] for r in conn.execute("PRAGMA table_info(yevmiye)")}
++    if "fis_tipi" not in cols:
++        return
++    # Geriye dönük etiketleme (yalnız henüz 'Muhtelif' olanlar → idempotent + yeni tip koruması).
++    conn.execute("UPDATE yevmiye SET fis_tipi='Açılış' WHERE aciklama LIKE 'Dönem Açılış Fişi %' "
++                 "AND fis_tipi='Muhtelif'")
++    conn.execute("UPDATE yevmiye SET fis_tipi='Kapanış' WHERE aciklama LIKE 'Dönem Kapanış Fişi %' "
++                 "AND fis_tipi='Muhtelif'")
++    conn.execute("UPDATE yevmiye SET fis_tipi='Red' WHERE COALESCE(kaynak_sahne,'')='red' "
++                 "AND fis_tipi='Muhtelif'")
++    conn.execute("UPDATE yevmiye SET fis_tipi='Otomatik' WHERE kaynak_modul IN ('Fatura','Irsaliye',"
++                 "'CekSenet') AND COALESCE(kaynak_sahne,'') NOT IN ('red','ters') "
++                 "AND fis_tipi='Muhtelif'")
++    # Kasa/Banka: hareketin belge_no'suna göre THS→Tahsilat, ODM→Tediye.
++    for _tablo, _modul in (("kasa_hareket", "Kasa"), ("banka_hareket", "Banka")):
++        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
++                            (_tablo,)).fetchone():
++            continue
++        conn.execute(f"UPDATE yevmiye SET fis_tipi='Tahsilat' WHERE kaynak_modul=? "
++                     "AND COALESCE(kaynak_sahne,'') NOT IN ('red','ters') AND fis_tipi='Muhtelif' "
++                     f"AND EXISTS(SELECT 1 FROM {_tablo} h WHERE h.id=yevmiye.kaynak_id "
++                     "AND h.belge_no LIKE 'THS-%')", (_modul,))
++        conn.execute(f"UPDATE yevmiye SET fis_tipi='Tediye' WHERE kaynak_modul=? "
++                     "AND COALESCE(kaynak_sahne,'') NOT IN ('red','ters') AND fis_tipi='Muhtelif' "
++                     f"AND EXISTS(SELECT 1 FROM {_tablo} h WHERE h.id=yevmiye.kaynak_id "
++                     "AND h.belge_no LIKE 'ODM-%')", (_modul,))
++
++
+ def _migrate(conn):
+     """Var olan veritabanlarına yeni sütun ekleme (CREATE IF NOT EXISTS bunu yapmaz)."""
+     cols = {r["name"] for r in conn.execute("PRAGMA table_info(kasa_hareket)")}
+@@ -1332,6 +1374,7 @@ def _migrate(conn):
+             kaynak_modul TEXT,
+             kaynak_id INTEGER,
+             kaynak_sahne TEXT,
++            fis_tipi TEXT NOT NULL DEFAULT 'Muhtelif' CHECK (fis_tipi IN ('Açılış','Tahsilat','Tediye','Mahsup','Kapanış','Muhtelif','Red','Otomatik')),
+             sube_id INTEGER REFERENCES sube(id),
+             durum TEXT NOT NULL DEFAULT 'Onaylandı' CHECK (durum IN ('Taslak','Onaylandı','İptal')),
+             created_by INTEGER,
+@@ -1498,6 +1541,9 @@ def _migrate(conn):
+     # --- D021 (v1.52) — Konsinye tipleri + proforma + teklif kapanışı ---
+     _migrate_d021(conn)
+ 
++    # --- D022 (v1.53) — Fiş tipi motoru: kolon + geriye dönük etiketleme ---
++    _migrate_d022(conn)
++
+     # --- D007 (v1.39.0) — Stok kart ek alanlar (8 + model) + irsaliye döviz kuru ---
+     # Wolvox/Akınsoft referanslı alanlar: tevkifat, istisna, grup hiyerarşisi, özel kod 1-3.
+     # Geriye dönük uyumlu: mevcut kartlarda default 0/NULL; raporlar etkilenmez.
+diff --git a/kod/fatura.py b/kod/fatura.py
+index 5fb6317..d5c81cb 100644
+--- a/kod/fatura.py
++++ b/kod/fatura.py
+@@ -1088,9 +1088,11 @@ def fatura_red_fisi(req, fid):
+                                          datetime.date.today().year, sid)
+             cur = conn.execute(
+                 "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, kaynak_id, "
+-                "kaynak_sahne, sube_id, created_by, sirket_id) VALUES(?,?,?,?,?,?,?,?,?)",
++                "kaynak_sahne, fis_tipi, sube_id, created_by, sirket_id) "
++                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                 (fis_no, bugun, f"Red fişi ({f['fatura_no']})", "Fatura", f["id"], "red",
+-                 orig["sube_id"], req.user["id"], sid))
++                 muhasebe.fis_tipi_bul("Fatura", "red", ""), orig["sube_id"],
++                 req.user["id"], sid))
+             for k in kalemler:
+                 conn.execute("INSERT INTO yevmiye_kalem(yevmiye_id, hesap_id, borc, alacak, "
+                              "aciklama, sirket_id) VALUES(?,?,?,?,?,?)",
+diff --git a/kod/irsaliye.py b/kod/irsaliye.py
+index 136e5d8..0c68507 100644
+--- a/kod/irsaliye.py
++++ b/kod/irsaliye.py
+@@ -1175,9 +1175,11 @@ def irsaliye_red_fisi(req, iid):
+                                      datetime.date.today().year, sid)
+         cur = conn.execute(
+             "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, kaynak_id, "
+-            "kaynak_sahne, sube_id, created_by, sirket_id) VALUES(?,?,?,?,?,?,?,?,?)",
++            "kaynak_sahne, fis_tipi, sube_id, created_by, sirket_id) "
++            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+             (fis_no, bugun, f"Red fişi ({r['irsaliye_no']})", "Irsaliye", r["id"], "red",
+-             orig["sube_id"], req.user["id"], sid))
++             muhasebe.fis_tipi_bul("Irsaliye", "red", ""), orig["sube_id"],
++             req.user["id"], sid))
+         for k in kalemler:
+             conn.execute("INSERT INTO yevmiye_kalem(yevmiye_id, hesap_id, borc, alacak, "
+                          "aciklama, sirket_id) VALUES(?,?,?,?,?,?)",
+diff --git a/kod/muhasebe.py b/kod/muhasebe.py
+index e610cab..8423ddb 100644
+--- a/kod/muhasebe.py
++++ b/kod/muhasebe.py
+@@ -9,12 +9,44 @@ import datetime
+ 
+ from core import route, render_template, redirect, flash, audit, notify, izole_sube
+ import db
++import cari
+ 
+ MUH_WRITE = ("Admin", "Muhasebe")
+ 
+ TIP_LABEL = {"Aktif": "Aktif", "Pasif": "Pasif", "Ozkaynak": "Özkaynak", "Gelir": "Gelir", "Gider": "Gider"}
+ TIP_BADGE = {"Aktif": "b-info", "Pasif": "b-warn", "Ozkaynak": "b-muted", "Gelir": "b-ok", "Gider": "b-danger"}
+ 
++# D022-M1 — fiş tipi motoru (yevmiye.fis_tipi CHECK ile birebir).
++FIS_TIPLERI = ("Açılış", "Tahsilat", "Tediye", "Mahsup", "Kapanış", "Muhtelif", "Red", "Otomatik")
++FIS_TIPI_BADGE = {"Otomatik": "b-muted", "Tahsilat": "b-ok", "Tediye": "b-warn", "Red": "b-danger",
++                  "Mahsup": "b-info", "Açılış": "b-primary", "Kapanış": "b-primary",
++                  "Muhtelif": "b-muted"}
++TERS_IZINLI = ("Muhtelif", "Mahsup", "Tahsilat", "Tediye")
++
++
++def fis_tipi_bul(modul, sahne=None, belge_no="", ozel=None):
++    """D022-M1 madde 3 — fiş tipinin TEK KAYNAĞI.
++
++    Tüm yevmiye INSERT noktaları tipi buradan alır. `ozel` verilirse (açılış/
++    kapanış/mahsup/muhtelif/kopya/özel durumlar) doğrulanıp aynen döndürülür;
++    verilmezse (modul, sahne, belge_no) üçlüsünden kural işletilir.
++    """
++    if ozel is not None:
++        if ozel not in FIS_TIPLERI:
++            raise ValueError(f"geçersiz fiş tipi: {ozel!r}")
++        return ozel
++    if (sahne or "") == "red":
++        return "Red"
++    if modul in ("Fatura", "Irsaliye", "CekSenet", "Demirbas"):
++        return "Otomatik"
++    if modul in ("Kasa", "Banka"):
++        _no = (belge_no or "").upper()
++        if _no.startswith("THS-"):
++            return "Tahsilat"
++        if _no.startswith("ODM-"):
++            return "Tediye"
++    return "Muhtelif"
++
+ 
+ def _f(v, default=0.0):
+     try:
+@@ -241,6 +273,7 @@ def fis_uret(conn, kaynak_modul, kaynak_id, sahne=None):
+         return var["id"]
+     satirlar = None
+     aciklama = ""
++    _belge_no = ""
+     tarih = datetime.date.today().isoformat()
+     sube_id = None
+     sid = None
+@@ -260,6 +293,7 @@ def fis_uret(conn, kaynak_modul, kaynak_id, sahne=None):
+             return None
+         satirlar = _kasa_satirlar(conn, h)
+         aciklama = f"Kasa {h['islem_tipi']} — {h['aciklama'] or ''}".strip(" —")
++        _belge_no = h["belge_no"] or ""
+         tarih = h["tarih"] or tarih
+         k = conn.execute("SELECT sube_id FROM kasa WHERE id=?", (h["kasa_id"],)).fetchone()
+         sube_id = k["sube_id"] if k else None
+@@ -270,6 +304,7 @@ def fis_uret(conn, kaynak_modul, kaynak_id, sahne=None):
+             return None
+         satirlar = _banka_satirlar(conn, h)
+         aciklama = f"Banka {h['islem_tipi']} — {h['aciklama'] or ''}".strip(" —")
++        _belge_no = h["belge_no"] or ""
+         tarih = h["tarih"] or tarih
+         k = conn.execute("SELECT sube_id FROM banka_hesap WHERE id=?", (h["banka_hesap_id"],)).fetchone()
+         sube_id = k["sube_id"] if k else None
+@@ -313,9 +348,10 @@ def fis_uret(conn, kaynak_modul, kaynak_id, sahne=None):
+     fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "FIS", datetime.date.today().year, sid)
+     cur = conn.execute(
+         "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, kaynak_id, kaynak_sahne, "
+-        "sube_id, durum, sirket_id) "
+-        "VALUES(?,?,?,?,?,?,?,'Onaylandı',?)",
+-        (fis_no, tarih, aciklama, kaynak_modul, int(kaynak_id), sahne, sube_id,
++        "fis_tipi, sube_id, durum, sirket_id) "
++        "VALUES(?,?,?,?,?,?,?,?,'Onaylandı',?)",
++        (fis_no, tarih, aciklama, kaynak_modul, int(kaynak_id), sahne,
++         fis_tipi_bul(kaynak_modul, sahne, _belge_no), sube_id,
+          sid if sid is not None else 1))
+     _kalem_yaz(conn, cur.lastrowid, satirlar, sid)
+     return cur.lastrowid
+@@ -506,9 +542,10 @@ def acilis_fisi(conn, created_by, sid=None):
+         return None, False
+     fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "FIS", yil, sid)
+     cur = conn.execute(
+-        "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, durum, created_by, sirket_id) "
+-        "VALUES(?,?,?,'Muhasebe','Onaylandı',?,?)",
+-        (fis_no, datetime.date.today().isoformat(), f"Dönem Açılış Fişi {yil}", created_by,
++        "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, fis_tipi, durum, created_by, sirket_id) "
++        "VALUES(?,?,?,'Muhasebe',?,'Onaylandı',?,?)",
++        (fis_no, datetime.date.today().isoformat(), f"Dönem Açılış Fişi {yil}",
++         fis_tipi_bul("Muhasebe", ozel="Açılış"), created_by,
+          sid if sid is not None else 1))
+     _kalem_yaz(conn, cur.lastrowid, satirlar, sid)
+     return cur.lastrowid, True
+@@ -527,23 +564,26 @@ def kapanis_fisi(conn, created_by, sid=None):
+     for r in conn.execute(f"SELECT kod, tip FROM hesap {h_where} ORDER BY kod", h_args).fetchall():
+         b = _hesap_bakiyesi(conn, r["kod"], sid)
+         if abs(b) > 0.005:
+-            # gelir: alacak bakiyeli → borç yazarak kapat; gider: borç bakiyeli → alacak yazarak kapat
+-            if r["tip"] == "Gelir":
+-                satirlar.append((r["kod"], b, 0.0))
+-            else:
++            # Kapatma: bakiyenin TERS tarafına mutlak değer (işaret varsayımı yok —
++            # iade/red sonrası gelir borç, gider alacak bakiyeli kalabilir).
++            if b > 0:
+                 satirlar.append((r["kod"], 0.0, b))
++            else:
++                satirlar.append((r["kod"], -b, 0.0))
+     borc_top = sum(s[1] for s in satirlar)
+     alacak_top = sum(s[2] for s in satirlar)
+     fark = round(borc_top - alacak_top, 2)
+     if abs(fark) > 0.005:
+-        satirlar.append(("590", fark, 0.0) if fark > 0 else ("591", 0.0, -fark))
++        # fark>0: kapatılan alacak bakiyeleri fazla (kâr) → 590 alacak; tersi 591 borç.
++        satirlar.append(("590", 0.0, fark) if fark > 0 else ("591", -fark, 0.0))
+     if not satirlar:
+         return None, False
+     fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "FIS", yil, sid)
+     cur = conn.execute(
+-        "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, durum, created_by, sirket_id) "
+-        "VALUES(?,?,?,'Muhasebe','Onaylandı',?,?)",
+-        (fis_no, datetime.date.today().isoformat(), f"Dönem Kapanış Fişi {yil}", created_by,
++        "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, fis_tipi, durum, created_by, sirket_id) "
++        "VALUES(?,?,?,'Muhasebe',?,'Onaylandı',?,?)",
++        (fis_no, datetime.date.today().isoformat(), f"Dönem Kapanış Fişi {yil}",
++         fis_tipi_bul("Muhasebe", ozel="Kapanış"), created_by,
+          sid if sid is not None else 1))
+     _kalem_yaz(conn, cur.lastrowid, satirlar, sid)
+     return cur.lastrowid, True
+@@ -565,6 +605,12 @@ def muhasebe_liste(req):
+     if km:
+         where.append("y.kaynak_modul=?")
+         args.append(km)
++    ft = req.q("tip")
++    if ft in FIS_TIPLERI:
++        where.append("y.fis_tipi=?")
++        args.append(ft)
++    else:
++        ft = ""
+     if izole_sube(req):
+         where.append("y.sube_id=?")
+         args.append(izole_sube(req))
+@@ -580,9 +626,10 @@ def muhasebe_liste(req):
+              for d in ("Taslak", "Onaylandı", "İptal")}
+     conn.close()
+     return render_template("muhasebe/liste.html", rows=rows, sayac=sayac, q=req.q("q"),
+-                           km=km, KAYNAK_LABEL={"Fatura": "Fatura", "Kasa": "Kasa", "Banka": "Banka",
+-                                                "CekSenet": "Çek/Senet", "Muhasebe": "Manüel",
+-                                                "Irsaliye": "İrsaliye"})
++                           km=km, ft=ft, FIS_TIPLERI=FIS_TIPLERI, FIS_TIPI_BADGE=FIS_TIPI_BADGE,
++                           KAYNAK_LABEL={"Fatura": "Fatura", "Kasa": "Kasa", "Banka": "Banka",
++                                         "CekSenet": "Çek/Senet", "Muhasebe": "Manüel",
++                                         "Irsaliye": "İrsaliye"})
+ 
+ 
+ @route(r"/muhasebe/yeni", methods=("GET", "POST"), roles=MUH_WRITE)
+@@ -617,9 +664,10 @@ def muhasebe_yeni(req):
+                                    tarih=tarih, aciklama=aciklama)
+         fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "FIS", datetime.date.today().year, sid)
+         cur = conn.execute(
+-            "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, durum, created_by, sirket_id) "
+-            "VALUES(?,?,?,'Muhasebe','Onaylandı',?,?)",
+-            (fis_no, tarih, aciklama, req.user["id"], sid))
++            "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, fis_tipi, durum, created_by, sirket_id) "
++            "VALUES(?,?,?,'Muhasebe',?,'Onaylandı',?,?)",
++            (fis_no, tarih, aciklama, fis_tipi_bul("Muhasebe", ozel="Muhtelif"),
++             req.user["id"], sid))
+         for hid, b, a in satirlar:
+             conn.execute("INSERT INTO yevmiye_kalem(yevmiye_id, hesap_id, borc, alacak, sirket_id) "
+                          "VALUES(?,?,?,?,?)",
+@@ -754,9 +802,25 @@ def muhasebe_detay(req, fid):
+                           (int(fid),)).fetchall()
+     bt = round(sum(k["borc"] or 0 for k in kalemler), 2)
+     at = round(sum(k["alacak"] or 0 for k in kalemler), 2)
++    # D022-M1/T1 — mahsup kartı + ters fiş çapraz linkleri.
++    mahsup = conn.execute(
++        "SELECT h.*, c.unvan AS cari_unvan, c.kod AS cari_kod FROM cari_hareket h "
++        "LEFT JOIN cari_kart c ON c.id=h.cari_id "
++        "WHERE h.ilgili_modul='Mahsup' AND h.ilgili_kayit_id=? ORDER BY h.id",
++        (int(fid),)).fetchall() if (y["fis_tipi"] or "") == "Mahsup" else []
++    tersler = conn.execute(
++        "SELECT id, fis_no, tarih, fis_tipi FROM yevmiye WHERE kaynak_modul='Muhasebe' "
++        "AND kaynak_id=? AND COALESCE(kaynak_sahne,'')='ters' ORDER BY id",
++        (int(fid),)).fetchall()
++    ters_edilen = None
++    if (y["kaynak_sahne"] or "") == "ters" and y["kaynak_id"]:
++        ters_edilen = conn.execute("SELECT id, fis_no FROM yevmiye WHERE id=?",
++                                   (y["kaynak_id"],)).fetchone()
+     conn.close()
+     return render_template("muhasebe/detay.html", yevmiye=y, kalemler=kalemler, loglar=loglar,
+-                           bt=bt, at=at, TIP_LABEL=TIP_LABEL, TIP_BADGE=TIP_BADGE)
++                           bt=bt, at=at, TIP_LABEL=TIP_LABEL, TIP_BADGE=TIP_BADGE,
++                           FIS_TIPI_BADGE=FIS_TIPI_BADGE, TERS_IZINLI=TERS_IZINLI,
++                           mahsup=mahsup, tersler=tersler, ters_edilen=ters_edilen)
+ 
+ 
+ @route(r"/muhasebe/(?P<fid>\d+)/durum", methods=("POST",), roles=MUH_WRITE)
+@@ -791,3 +855,165 @@ def muhasebe_durum(req, fid):
+     conn.close()
+     flash(req, f"Fiş '{hedef}' olarak güncellendi.", "ok")
+     return redirect(f"/muhasebe/{fid}")
++
++
++def _cari_bakiye(conn, cari_id):
++    """D022-T1 — cari net bakiye (borç − alacak, TL). Pozitif = bize borçlu."""
++    r = conn.execute("SELECT COALESCE(SUM(borc),0)-COALESCE(SUM(alacak),0) AS b "
++                     "FROM cari_hareket WHERE cari_id=?", (cari_id,)).fetchone()
++    return r["b"] or 0.0
++
++
++@route(r"/muhasebe/(?P<fid>\d+)/ters", methods=("POST",), roles=MUH_WRITE)
++def muhasebe_ters(req, fid):
++    """D022-M1 madde 5 — ters fiş (storno): borç↔alacak takası, aynı tip.
++
++    Yalnız Muhtelif/Mahsup/Tahsilat/Tediye; tersinin tersi yok. Mahsup'ta cari
++    hareketleri de takas edilir (D019 deseni) → bakiyeler aynen geri döner.
++    """
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    y = conn.execute("SELECT * FROM yevmiye WHERE id=? AND sirket_id=?",
++                     (int(fid), sid)).fetchone()
++    if not y:
++        conn.close()
++        flash(req, "Fiş bulunamadı.", "danger")
++        return redirect("/muhasebe")
++    if (y["kaynak_sahne"] or "") == "ters":
++        conn.close()
++        flash(req, "Ters fişin tersi oluşturulamaz.", "danger")
++        return redirect(f"/muhasebe/{fid}")
++    if (y["fis_tipi"] or "") not in TERS_IZINLI:
++        conn.close()
++        flash(req, "Bu tip fiş buradan tersine çevrilemez; otomatik fişleri kaynak "
++                   "belgenin red fişiyle tersine çevirin.", "danger")
++        return redirect(f"/muhasebe/{fid}")
++    kalemler = conn.execute("SELECT * FROM yevmiye_kalem WHERE yevmiye_id=? ORDER BY id",
++                            (y["id"],)).fetchall()
++    fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "FIS",
++                                 datetime.date.today().year, sid)
++    bugun = datetime.date.today().isoformat()
++    cur = conn.execute(
++        "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, kaynak_id, kaynak_sahne, "
++        "fis_tipi, sube_id, durum, created_by, sirket_id) "
++        "VALUES(?,?,?,'Muhasebe',?,'ters',?,?,'Onaylandı',?,?)",
++        (fis_no, bugun, f"Ters fiş ({y['fis_no']})", y["id"],
++         fis_tipi_bul("Muhasebe", ozel=y["fis_tipi"]), y["sube_id"], req.user["id"], sid))
++    for k in kalemler:
++        conn.execute("INSERT INTO yevmiye_kalem(yevmiye_id, hesap_id, borc, alacak, aciklama, sirket_id) "
++                     "VALUES(?,?,?,?,?,?)",
++                     (cur.lastrowid, k["hesap_id"], k["alacak"], k["borc"], k["aciklama"], sid))
++    if (y["fis_tipi"] or "") == "Mahsup":
++        for h in conn.execute("SELECT * FROM cari_hareket WHERE ilgili_modul='Mahsup' "
++                              "AND ilgili_kayit_id=? ORDER BY id", (y["id"],)).fetchall():
++            cari.hareket_ekle(conn, h["cari_id"], bugun, "Mahsup", y["fis_no"],
++                              f"Ters fiş ({fis_no})", borc=h["alacak"] or 0.0,
++                              alacak=h["borc"] or 0.0, ilgili_modul="Mahsup",
++                              ilgili_kayit_id=y["id"], created_by=req.user["id"],
++                              para_birimi="TRY", doviz_kur=1)
++    conn.commit()
++    audit(req, "yevmiye", cur.lastrowid, "yevmiye-ters", {"kaynak": y["fis_no"], "fis_no": fis_no})
++    conn.close()
++    flash(req, f"Ters fiş oluşturuldu: {fis_no}", "ok")
++    return redirect(f"/muhasebe/{cur.lastrowid}")
++
++
++@route(r"/muhasebe/(?P<fid>\d+)/kopyala", methods=("POST",), roles=MUH_WRITE)
++def muhasebe_kopyala(req, fid):
++    """D022-M1 madde 6 — fişi yeni Muhtelif fiş olarak kopyala (orijinale dokunulmaz)."""
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    y = conn.execute("SELECT * FROM yevmiye WHERE id=? AND sirket_id=?",
++                     (int(fid), sid)).fetchone()
++    if not y:
++        conn.close()
++        flash(req, "Fiş bulunamadı.", "danger")
++        return redirect("/muhasebe")
++    kalemler = conn.execute("SELECT * FROM yevmiye_kalem WHERE yevmiye_id=? ORDER BY id",
++                            (y["id"],)).fetchall()
++    fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "FIS",
++                                 datetime.date.today().year, sid)
++    cur = conn.execute(
++        "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, fis_tipi, sube_id, durum, "
++        "created_by, sirket_id) VALUES(?,?,?,'Muhasebe',?,?,'Onaylandı',?,?)",
++        (fis_no, datetime.date.today().isoformat(), f"Kopya: {y['fis_no']}",
++         fis_tipi_bul("Muhasebe", ozel="Muhtelif"), y["sube_id"], req.user["id"], sid))
++    for k in kalemler:
++        conn.execute("INSERT INTO yevmiye_kalem(yevmiye_id, hesap_id, borc, alacak, aciklama, sirket_id) "
++                     "VALUES(?,?,?,?,?,?)",
++                     (cur.lastrowid, k["hesap_id"], k["borc"], k["alacak"], k["aciklama"], sid))
++    conn.commit()
++    audit(req, "yevmiye", cur.lastrowid, "kopyala", {"kaynak": y["fis_no"], "fis_no": fis_no})
++    conn.close()
++    flash(req, f"Fiş kopyalandı: {fis_no}", "ok")
++    return redirect(f"/muhasebe/{cur.lastrowid}")
++
++
++@route(r"/muhasebe/mahsup", methods=("GET", "POST"), roles=MUH_WRITE)
++def muhasebe_mahsup(req):
++    """D022-T1 — gerçek mahsup fişi: alacaklı cari ↔ borçlu cari takası.
++
++    Alacaklı = bize borçlu (borç bakiyeli, örn. müşteri); borçlu = bizim
++    borçlumuz (alacak bakiyeli, örn. tedarikçi). Tutar ≤ min(bakiyeler).
++    """
++    conn = db.get_conn()
++    sid = db.sirket_id(req)
++    cariler = conn.execute("SELECT id, kod, unvan FROM cari_kart WHERE sirket_id=? AND aktif=1 "
++                           "ORDER BY unvan", (sid,)).fetchall()
++    bak = {c["id"]: _cari_bakiye(conn, c["id"]) for c in cariler}
++    alacaklilar = [dict(c, bakiye=bak[c["id"]]) for c in cariler if bak[c["id"]] > 0.005]
++    borclular = [dict(c, bakiye=-bak[c["id"]]) for c in cariler if bak[c["id"]] < -0.005]
++    if req.method == "POST":
++        aid = _i(req.form.get("alacakli_id"))
++        bid = _i(req.form.get("borclu_id"))
++        tutar = round(_f(req.form.get("tutar")), 2)
++        tarih = req.form.get("tarih") or datetime.date.today().isoformat()
++        aciklama = (req.form.get("aciklama") or "").strip()
++        hata = None
++        if not aid or not bid:
++            hata = "Alacaklı ve borçlu cari seçin."
++        elif aid == bid:
++            hata = "Alacaklı ve borçlu cari aynı olamaz."
++        elif tutar <= 0:
++            hata = "Tutar sıfırdan büyük olmalı."
++        else:
++            _a = conn.execute("SELECT id FROM cari_kart WHERE id=? AND sirket_id=? AND aktif=1",
++                              (aid, sid)).fetchone()
++            _b = conn.execute("SELECT id FROM cari_kart WHERE id=? AND sirket_id=? AND aktif=1",
++                              (bid, sid)).fetchone()
++            if not _a or not _b:
++                hata = "Geçersiz cari seçimi."
++            else:
++                _lim = round(min(_cari_bakiye(conn, aid), -_cari_bakiye(conn, bid)), 2)
++                if tutar - _lim > 0.005:
++                    hata = f"Tutar bakiyeyi aşamaz (en fazla {_lim:,.2f} ₺)."
++        if hata:
++            conn.close()
++            flash(req, hata, "danger")
++            return render_template("muhasebe/mahsup.html", alacaklilar=alacaklilar,
++                                   borclular=borclular, aid=aid, bid=bid, tutar=tutar,
++                                   tarih=tarih, aciklama=aciklama, bugun=tarih)
++        fis_no = db.sonraki_belge_no(conn, "yevmiye", "fis_no", "MHS",
++                                     datetime.date.today().year, sid)
++        cur = conn.execute(
++            "INSERT INTO yevmiye(fis_no, tarih, aciklama, kaynak_modul, fis_tipi, sube_id, durum, "
++            "created_by, sirket_id) VALUES(?,?,?,'Muhasebe',?,?,'Onaylandı',?,?)",
++            (fis_no, tarih, aciklama or f"Mahsup ({fis_no})",
++             fis_tipi_bul("Muhasebe", ozel="Mahsup"), None, req.user["id"], sid))
++        yid = cur.lastrowid
++        _kalem_yaz(conn, yid, [("320", tutar, 0.0), ("120", 0.0, tutar)], sid)
++        cari.hareket_ekle(conn, aid, tarih, "Mahsup", fis_no, aciklama or f"Mahsup ({fis_no})",
++                          borc=0.0, alacak=tutar, ilgili_modul="Mahsup", ilgili_kayit_id=yid,
++                          created_by=req.user["id"], para_birimi="TRY", doviz_kur=1)
++        cari.hareket_ekle(conn, bid, tarih, "Mahsup", fis_no, aciklama or f"Mahsup ({fis_no})",
++                          borc=tutar, alacak=0.0, ilgili_modul="Mahsup", ilgili_kayit_id=yid,
++                          created_by=req.user["id"], para_birimi="TRY", doviz_kur=1)
++        conn.commit()
++        audit(req, "yevmiye", yid, "mahsup", {"fis_no": fis_no, "tutar": tutar})
++        conn.close()
++        flash(req, f"Mahsup fişi oluşturuldu: {fis_no}", "ok")
++        return redirect(f"/muhasebe/{yid}")
++    conn.close()
++    return render_template("muhasebe/mahsup.html", alacaklilar=alacaklilar, borclular=borclular,
++                           aid=None, bid=None, tutar="", tarih=datetime.date.today().isoformat(),
++                           aciklama="", bugun=datetime.date.today().isoformat())
+diff --git a/kod/regresyon_runner.py b/kod/regresyon_runner.py
+index 237b8b5..4cfee5a 100644
+--- a/kod/regresyon_runner.py
++++ b/kod/regresyon_runner.py
+@@ -51,8 +51,8 @@ for t in tests:
+     rows.append((t, exitc, summary))
+ 
+ report = []
+-report.append(f"===== D021 (v1.52.0) — TAM REGRESYON =====")
+-report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.52.0")
++report.append(f"===== D022 (v1.53.0) — TAM REGRESYON =====")
++report.append(f"Tarih: (canlı) | Sunucu: 127.0.0.1:8080 | SURUM: 1.53.0")
+ report.append("")
+ for t, e, s in rows:
+     report.append(f"[{t:<32}] exit={e} | {s}")
+diff --git a/kod/templates/muhasebe/detay.html b/kod/templates/muhasebe/detay.html
+index 8d7fb0a..0edd1ed 100644
+--- a/kod/templates/muhasebe/detay.html
++++ b/kod/templates/muhasebe/detay.html
+@@ -7,11 +7,29 @@
+   <div>
+     <h1>{{ yevmiye.fis_no }} <span class="muted">· {{ yevmiye.tarih|tarih }}</span></h1>
+     <div class="desc">{{ yevmiye.aciklama }}
++      <span class="badge {{ FIS_TIPI_BADGE.get(yevmiye.fis_tipi, 'b-muted') }}">{{ yevmiye.fis_tipi or 'Muhtelif' }}</span>
+       <span class="badge {{ 'b-ok' if yevmiye.durum=='Onaylandı' else 'b-warn' if yevmiye.durum=='Taslak' else 'b-danger' }}">{{ yevmiye.durum }}</span>
+     </div>
++    {% if ters_edilen %}
++    <div class="muted" style="margin-top:4px;">↩ Ters edilen fiş: <a href="/muhasebe/{{ ters_edilen.id }}"><b>{{ ters_edilen.fis_no }}</b></a></div>
++    {% endif %}
++    {% if tersler %}
++    <div class="muted" style="margin-top:4px;">↩ Ters: {% for t in tersler %}<a href="/muhasebe/{{ t.id }}"><b>{{ t.fis_no }}</b></a> ({{ t.tarih|tarih }}){% if not loop.last %} · {% endif %}{% endfor %}</div>
++    {% endif %}
+   </div>
+   <div class="page-actions">
+     <a class="btn" href="/muhasebe">← Liste</a>
++    {% if user.rol in ['Admin','Muhasebe'] %}
++      {% if yevmiye.fis_tipi in TERS_IZINLI and yevmiye.kaynak_sahne != 'ters' %}
++      <form method="post" action="/muhasebe/{{ yevmiye.id }}/ters" style="display:inline;"
++            onsubmit="return confirm('Bu fişin ters fişi oluşturulsun mu?');">
++        <input type="hidden" name="csrf" value="{{ csrf_token }}">
++        <button class="btn warn" type="submit">↩ Ters Fiş</button></form>
++      {% endif %}
++      <form method="post" action="/muhasebe/{{ yevmiye.id }}/kopyala" style="display:inline;">
++        <input type="hidden" name="csrf" value="{{ csrf_token }}">
++        <button class="btn" type="submit">⧉ Kopyala</button></form>
++    {% endif %}
+     {% if user.rol in ['Admin','Muhasebe'] and (not yevmiye.kaynak_modul or yevmiye.kaynak_modul == 'Muhasebe') %}
+       {% if yevmiye.durum == 'Taslak' %}
+       <form method="post" action="/muhasebe/{{ yevmiye.id }}/durum" style="display:inline;">
+@@ -47,12 +65,32 @@
+     <tfoot><tr><td colspan="3" class="right strong">Toplam</td>
+       <td class="num strong">{{ bt|para }}</td><td class="num strong">{{ at|para }}</td></tr></tfoot>
+   </table></div>
+-  {% if yevmiye.kaynak_modul %}
++  {% if yevmiye.kaynak_modul and yevmiye.kaynak_modul != 'Muhasebe' %}
+   <div class="hint" style="margin-top:8px;">🔗 Bu fiş <b>{{ yevmiye.kaynak_modul }} #{{ yevmiye.kaynak_id }}</b> kaynağından otomatik üretildi;
+     durumu kaynak belgeden yönetilir (iptal → fiş geri alınır).</div>
+   {% endif %}
+ </div>
+ 
++{% if mahsup %}
++<div class="card" style="border-left:4px solid var(--info);">
++  <div class="card-head"><h2>⇄ Mahsup Carileri</h2></div>
++  <div class="tbl-wrap"><table class="tbl">
++    <thead><tr><th>Cari</th><th class="num">Borç</th><th class="num">Alacak</th><th></th></tr></thead>
++    <tbody>
++      {% for h in mahsup %}
++      <tr>
++        <td class="strong"><a href="/cari/{{ h.cari_id }}">{{ h.cari_unvan }}</a> <span class="muted">{{ h.cari_kod }}</span></td>
++        <td class="num">{{ h.borc|para }}</td>
++        <td class="num">{{ h.alacak|para }}</td>
++        <td class="right"><a class="btn sm ghost" href="/cari/{{ h.cari_id }}/ekstre">Ekstre</a></td>
++      </tr>
++      {% endfor %}
++    </tbody>
++  </table></div>
++  <div class="hint" style="margin-top:8px;">Her iki carinin ekstresinde <b>{{ yevmiye.fis_no }}</b> satırı görünür (çapraz referans).</div>
++</div>
++{% endif %}
++
+ {% if loglar %}
+ <div class="card"><div class="card-head"><h2>Geçmiş (audit)</h2></div>
+   <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tarih</th><th>İşlem</th><th>Detay</th></tr></thead>
+diff --git a/kod/templates/muhasebe/liste.html b/kod/templates/muhasebe/liste.html
+index b53baf0..36f3ea8 100644
+--- a/kod/templates/muhasebe/liste.html
++++ b/kod/templates/muhasebe/liste.html
+@@ -15,6 +15,7 @@
+     <a class="btn" href="/muhasebe/hesaplar">🗃 Hesap Planı</a>
+     {% if user.rol in ['Admin','Muhasebe'] %}
+     <a class="btn primary" href="/muhasebe/yeni">+ Yeni Fiş</a>
++    <a class="btn" href="/muhasebe/mahsup">⇄ Yeni Mahsup</a>
+     {% endif %}
+   </div>
+ </div>
+@@ -57,12 +58,17 @@
+         {% for k, v in KAYNAK_LABEL.items() %}
+         <option value="{{ k }}" {{ 'selected' if km == k }}>{{ v }}</option>{% endfor %}
+       </select>
++      <select name="tip" style="max-width:130px;">
++        <option value="">Tüm tipler</option>
++        {% for t in FIS_TIPLERI %}
++        <option value="{{ t }}" {{ 'selected' if ft == t }}>{{ t }}</option>{% endfor %}
++      </select>
+       <button class="btn primary sm" type="submit">Filtrele</button>
+     </form>
+   </div>
+   <div class="tbl-wrap">
+   <table class="tbl">
+-    <thead><tr><th>Fiş No</th><th>Tarih</th><th>Açıklama</th><th>Kaynak</th>
++    <thead><tr><th>Fiş No</th><th>Tarih</th><th>Açıklama</th><th>Tip</th><th>Kaynak</th>
+           <th class="num">Borç</th><th class="num">Alacak</th><th>Durum</th><th></th></tr></thead>
+     <tbody>
+       {% for y in rows %}
+@@ -70,6 +76,7 @@
+         <td class="strong"><a href="/muhasebe/{{ y.id }}">{{ y.fis_no }}</a></td>
+         <td class="muted">{{ y.tarih|tarih }}</td>
+         <td class="muted">{{ y.aciklama|kisa(38) }}</td>
++        <td><span class="badge {{ FIS_TIPI_BADGE.get(y.fis_tipi, 'b-muted') }}">{{ y.fis_tipi or 'Muhtelif' }}</span></td>
+         <td><span class="badge b-muted">{{ KAYNAK_LABEL.get(y.kaynak_modul, 'Manüel') }}</span></td>
+         <td class="num">{{ y.borc_top|para }}</td>
+         <td class="num">{{ y.alacak_top|para }}</td>
+@@ -77,7 +84,7 @@
+         <td class="right"><a class="btn sm ghost" href="/muhasebe/{{ y.id }}">Detay</a></td>
+       </tr>
+       {% else %}
+-      <tr><td colspan="8"><div class="empty">Henüz fiş yok. <a href="/muhasebe/toplu-uret" onclick="event.preventDefault();document.getElementById('tu').submit()">Toplu üret</a> veya <a href="/muhasebe/yeni">yeni fiş</a> oluşturun.</div></td></tr>
++      <tr><td colspan="9"><div class="empty">Henüz fiş yok. <a href="/muhasebe/toplu-uret" onclick="event.preventDefault();document.getElementById('tu').submit()">Toplu üret</a> veya <a href="/muhasebe/yeni">yeni fiş</a> oluşturun.</div></td></tr>
+       {% endfor %}
+     </tbody>
+   </table>
+diff --git a/kod/test_d010_yedekleme.py b/kod/test_d010_yedekleme.py
+index 7c10c8f..c860d41 100644
+--- a/kod/test_d010_yedekleme.py
++++ b/kod/test_d010_yedekleme.py
+@@ -183,7 +183,7 @@ print("=" * 70)
+ s2, _ = giris()
+ r = s2.get(BASE + "/api/saglik", allow_redirects=False)
+ js = r.json()
+-check("13. /api/saglik canlı + sürüm 1.52.0", r.status_code == 200 and js.get("surum") == "1.52.0",
++check("13. /api/saglik canlı + sürüm 1.53.0", r.status_code == 200 and js.get("surum") == "1.53.0",
+       f"status={r.status_code}, surum={js.get('surum')}")
+ 
+ r = s2.get(BASE + "/api/bildirimler", allow_redirects=False)
+diff --git a/kod/test_d015_toplu_yardim_sistem.py b/kod/test_d015_toplu_yardim_sistem.py
+index 58cb92e..4a57a32 100644
+--- a/kod/test_d015_toplu_yardim_sistem.py
++++ b/kod/test_d015_toplu_yardim_sistem.py
+@@ -166,7 +166,7 @@ sv, _ = giris("satis", "1234")
+ r403 = sv.get(BASE + "/sistem/bilgi", allow_redirects=False)
+ import re as _re
+ check("11. admin 200 (sürüm+hash+integrity+FK+saglik) + satis 403",
+-      "v1.52.0" in h and _re.search(r"[0-9a-f]{40}", h) is not None
++      "v1.53.0" in h and _re.search(r"[0-9a-f]{40}", h) is not None
+       and "Integrity Check" in h and ">ok<" in h and "0 sorun" in h
+       and "api/saglik" in h and 'href="/sistem/bilgi"' in h0 and r403.status_code == 403,
+       f"satis={r403.status_code}")
+diff --git a/kod/test_f6_cila.py b/kod/test_f6_cila.py
+index ba41b05..8c8e3d4 100644
+--- a/kod/test_f6_cila.py
++++ b/kod/test_f6_cila.py
+@@ -166,7 +166,7 @@ check("13. test_saglik", r.status_code == 200 and '"durum":"ok"' in r.text,
+ # 14) test_api_saglik ----------------------------------------------------------
+ d = admin.get(BASE + "/api/saglik").json()
+ check("14. test_api_saglik",
+-      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.52.0",
++      all(k in d for k in ("durum", "surum", "db")) and d["surum"] == "1.53.0",
+       f"surum={d.get('surum')}, db={d.get('db')}")
+ 
+ # 15) test_f5c_korundu ---------------------------------------------------------

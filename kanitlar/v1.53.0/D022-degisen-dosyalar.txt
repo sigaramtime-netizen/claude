@@ -1,0 +1,38 @@
+=== D022 DEĞİŞEN DOSYALAR — 2026-09-18T11:44:09Z ===
+
+ M DURUM.md
+ M kod/CHANGELOG.md
+ M kod/cari.py
+ M kod/config.py
+ M kod/db.py
+ M kod/fatura.py
+ M kod/irsaliye.py
+ M kod/muhasebe.py
+ M kod/regresyon_runner.py
+ M kod/templates/muhasebe/detay.html
+ M kod/templates/muhasebe/liste.html
+ M kod/test_d010_yedekleme.py
+ M kod/test_d015_toplu_yardim_sistem.py
+ M kod/test_f6_cila.py
+?? coder-raporlari/R022-fis-tipi-motoru-mahsup.md
+?? kanitlar/v1.53.0/
+?? kod/templates/muhasebe/mahsup.html
+?? kod/test_d022_fis_motoru_mahsup.py
+?? teslim/D022-v1.53.0.zip
+
+--- diff --stat (kanıt/teslim hariç) ---
+ DURUM.md                             |   2 +-
+ kod/CHANGELOG.md                     |  43 ++++++
+ kod/cari.py                          |   5 +-
+ kod/config.py                        |   4 +-
+ kod/db.py                            |  46 ++++++
+ kod/fatura.py                        |   6 +-
+ kod/irsaliye.py                      |   6 +-
+ kod/muhasebe.py                      | 268 ++++++++++++++++++++++++++++++++---
+ kod/regresyon_runner.py              |   4 +-
+ kod/templates/muhasebe/detay.html    |  40 +++++-
+ kod/templates/muhasebe/liste.html    |  11 +-
+ kod/test_d010_yedekleme.py           |   2 +-
+ kod/test_d015_toplu_yardim_sistem.py |   2 +-
+ kod/test_f6_cila.py                  |   2 +-
+ 14 files changed, 404 insertions(+), 37 deletions(-)

@@ -1,0 +1,34 @@
+=== D022 TEST ÇIKTISI (v1.53.0) — 2026-09-18T11:43:17Z ===
+
+BÖLÜM 1 — Migrasyon
+  ✅ 1. migrasyon: fis_tipi + 6 kural etiketi + idempotent + sayı/FK  → {'FIS-2026-001': 'Açılış', 'FIS-2026-002': 'Tahsilat', 'FIS-2026-003': 'Tediye', 'FIS-2026-004': 'Otomatik', 'FIS-2026-005': 'Red', 'FIS-2026-006': 'Muhtelif'}
+BÖLÜM KURULUM
+BÖLÜM 3 — Manuel + Açılış/Kapanış
+  ✅ 3. manuel Muhtelif + açılış/kapanış etiketli + dengeli + idempotent  → manuel=Muhtelif, ac=FIS-2026-041, ka=FIS-2026-042
+BÖLÜM 4 — THS/ODM etiketi (akış değişmedi)
+  ✅ 4. THS→Tahsilat + ODM→Tediye; makbuz/cari/yevmiye aynı  → A=100, B=-60, Tahsilat/Tediye
+BÖLÜM 5 — Mahsup
+  ✅ 5. mahsup 50: A:50 + B:-10 + MHS-2026-001 UNIQUE + 320/120 denge  → MHS-2026-001, A=50, B=-10
+BÖLÜM 6 — Mahsup limitleri
+  ✅ 6. limit 51 + aynı cari bloke (UI max/ipucu + DB, fiş yok)  → form=200/200
+BÖLÜM 7 — Çapraz referans
+  ✅ 7. iki ekstrede MHS satırı + /muhasebe linki  → A/B ekstre
+BÖLÜM 8 — Mahsup tersi
+  ✅ 8. ters: bakiye 100/-60 + 'Ters:' linki + tersin-tersi bloke  → FIS-2026-045, A=100, B=-60
+BÖLÜM 2 — Liste filtresi + rozetler
+  ✅ 2. tip filtresi doğru satırlar + rozetler  → Otomatik/Mahsup/Tahsilat
+BÖLÜM 9 — Kopyala
+  ✅ 9. kopya: yeni FIS + birebir satırlar + Kopya + bugün  → FIS-2026-046
+BÖLÜM 10 — Otomatik fişe ters engeli
+  ✅ 10. Otomatik ters engeli (flash + redirect, sayı değişmez)  → sayı=47→47
+BÖLÜM 11 — İzolasyon
+  ✅ 11. şirket dışı cari formda yok + POST reddi  → form=200
+BÖLÜM 12 — Yetki
+  ✅ 12. satis 403 (mahsup GET/POST + ters + kopyala)  → 403/403/403/403
+BÖLÜM 13 — USD caride mahsup
+  ✅ 13. USD mahsup: K18 TRY/1 + ekstre $ detayı sağlam  → U=375
+BÖLÜM 14 — Temizlik
+  ✅ 14. FK bütünlüğü 0 + kalıntı yok  → fk=0, kalıntı=0
+
+=== SONUÇ: 14 başarılı / 0 başarısız (toplam 14) ===
+TÜM D022 TESTLERİ GEÇTİ ✅

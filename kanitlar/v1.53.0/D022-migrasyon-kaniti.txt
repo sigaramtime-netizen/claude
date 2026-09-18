@@ -1,0 +1,31 @@
+=== D022 MİGRASYON KANITI (v1.52.0 → v1.53.0) — 2026-09-18T11:43:27Z ===
+
+--- ADIM 1: v1.52.0 şeması (fis_tipi YOK) + 9 örnek fiş ---
+fis_tipi kolonu var mı: False (beklenen: False)
+fiş sayısı: 9
+
+--- ADIM 2: _migrate_d022 (2× — idempotent) ---
+idempotent (2. çağrı no-op): True (beklenen: True)
+
+--- ADIM 3: ETİKET DAĞILIMI (kural doğrulaması) ---
+  FIS-2026-001 → Açılış
+  FIS-2026-002 → Tahsilat
+  FIS-2026-003 → Tediye
+  FIS-2026-004 → Tahsilat
+  FIS-2026-005 → Muhtelif
+  FIS-2026-006 → Otomatik
+  FIS-2026-007 → Red
+  FIS-2026-008 → Kapanış
+  FIS-2026-009 → Muhtelif
+tüm kurallar doğru: True (beklenen: True)
+dağılım: {'Açılış': 1, 'Kapanış': 1, 'Muhtelif': 2, 'Otomatik': 1, 'Red': 1, 'Tahsilat': 2, 'Tediye': 1}
+CHECK: True (beklenen: True)
+veri korundu: True (beklenen: True)
+FK check: [] (beklenen: [])
+index: 1 (beklenen: 1)
+
+--- ADIM 4: canlı demo DB (sunucu açılışında otomatik migrate) ---
+fis_tipi kolonu: True | dağılım: {'Muhtelif': 23, 'Otomatik': 13}
+canlı mizan dengesi: 0.0 (beklenen: 0.0) | FK: []
+
+MİGRASYON KANITI TAMAM ✅
